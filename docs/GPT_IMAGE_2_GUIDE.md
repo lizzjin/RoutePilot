@@ -2,6 +2,25 @@
 
 这份文档用于指导 ModelPort 后续接入 `gpt-image-2`。当前 ModelPort 的主路径是 Claude Code / VS Code Claude 使用的 Anthropic-compatible `/v1/messages` 文本协议；`gpt-image-2` 应作为独立图像能力扩展，不建议混入 Claude Code 文本中转主链路。
 
+## README 图示策略
+
+README 里的项目含义图和快速上手图采用“图像模型出方向稿，仓库提交可编辑 SVG”的方式维护：
+
+- `docs/assets/modelport-overview.svg`：解释 ModelPort 在 Claude Code、VS Code Claude 和上游 provider 之间的位置。
+- `docs/assets/modelport-quickstart.svg`：解释从 `.env` 到 VS Code Claude 连通 Mimo 的四步流程。
+
+这种方式比直接引用外部生成图片更稳：GitHub 能长期渲染，文字可搜索，后续改模型名、端口、provider 时可以直接编辑 SVG。
+
+可用于 `gpt-image-2` 重新生成方向稿的 prompt：
+
+```text
+Create a clean technical README hero infographic for an open source developer tool called "ModelPort". Wide aspect ratio 16:9, modern GitHub README style, crisp readable labels. Visual concept: VS Code Claude / Claude Code on the left sends Anthropic Messages API to a local gateway box labeled "ModelPort" in the center, then routes to providers on the right: Mimo v2.5 Pro, DeepSeek, OpenAI-compatible, OpenRouter, Ollama, Custom. Show key ideas as small labeled badges: Local token auth, Fast routing, Streaming SSE, Model aliases, Provider fallback. Use a professional light theme with white background, deep teal and graphite accents, small orange highlight for Mimo. Avoid clutter, no fake UI screenshots, no tiny unreadable text, no logos except simple generic icons.
+```
+
+```text
+Create a clean GitHub README quick-start infographic for a developer tool named "ModelPort". Wide 16:9 but simple and readable. Show four numbered steps as a horizontal flow: 1 Copy .env, 2 Start ModelPort, 3 Configure VS Code Claude, 4 Ask with Mimo v2.5 Pro. Include minimal command snippets: cp .env.example .env, scripts/start.sh, ANTHROPIC_BASE_URL=http://127.0.0.1:17878, model=mimo-v2.5-pro. Use professional light theme, teal and graphite accents, orange highlight for Mimo. Add small status chips: health ok, auth ok, upstream ok. No fake logos, no clutter, no tiny text.
+```
+
 ## 官方能力边界
 
 根据 OpenAI 官方模型页，`gpt-image-2` 是图像生成和编辑模型，支持文本和图片输入、图片输出，并可用于 Images generation 与 Images edit 端点。官方模型页同时标明它不支持 streaming、function calling、structured outputs 或 fine-tuning。

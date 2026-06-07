@@ -6,6 +6,8 @@
 
 它在本机暴露 Anthropic-compatible `/v1/messages` 接口，让 Claude Code / VS Code Claude 插件可以在不改变编辑器工作流的前提下，路由到 Mimo、DeepSeek、Anthropic、OpenAI-compatible provider、OpenRouter、Ollama 或自定义上游。
 
+![ModelPort 项目含义图](docs/assets/modelport-overview.svg)
+
 ## 投产结论
 
 当前代码可以进入**个人长期使用、本机常驻、内网小团队试生产**阶段。它已经具备长期运行所需的核心能力：
@@ -73,6 +75,8 @@ scripts/bench.sh --upstream
 DeepSeek 官方 Anthropic base URL 是 `https://api.deepseek.com/anthropic`。默认模型列表包含 `deepseek-v4-pro`、`deepseek-v4-flash`，并保留旧的 `deepseek-chat`、`deepseek-reasoner` 用于兼容。
 
 ## 快速开始
+
+![ModelPort 快速上手图](docs/assets/modelport-quickstart.svg)
 
 ### 1. 安装依赖
 

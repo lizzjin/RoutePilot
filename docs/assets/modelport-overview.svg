@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">ModelPort overview</title>
+  <desc id="desc">VS Code Claude and Claude Code send Anthropic Messages requests to the local ModelPort gateway, which routes to Mimo, DeepSeek, OpenAI-compatible providers, OpenRouter, Ollama, and custom upstreams.</desc>
+  <defs>
+    <linearGradient id="hero" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#f7fbfb"/>
+      <stop offset="58%" stop-color="#edf7f6"/>
+      <stop offset="100%" stop-color="#fff7ef"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#163433" flood-opacity="0.14"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" orient="auto">
+      <path d="M2 2 L10 6 L2 10 Z" fill="#17716d"/>
+    </marker>
+    <style>
+      .bg { fill: url(#hero); }
+      .panel { fill: #ffffff; stroke: #d7e7e5; stroke-width: 2; filter: url(#shadow); }
+      .soft { fill: #f2f8f7; stroke: #c9dedb; stroke-width: 2; }
+      .title { fill: #102a2a; font: 800 54px ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; letter-spacing: 0; }
+      .subtitle { fill: #4b6260; font: 500 25px ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; letter-spacing: 0; }
+      .label { fill: #102a2a; font: 800 31px ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; letter-spacing: 0; }
+      .small { fill: #526865; font: 600 21px ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; letter-spacing: 0; }
+      .tiny { fill: #526865; font: 700 18px ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; letter-spacing: 0; }
+      .chip { fill: #ffffff; stroke: #c9dedb; stroke-width: 2; }
+      .chipText { fill: #244946; font: 750 19px ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; letter-spacing: 0; }
+      .provider { fill: #ffffff; stroke: #dbe8e6; stroke-width: 2; }
+      .mimo { fill: #fff6ed; stroke: #ffb86b; stroke-width: 2; }
+      .line { fill: none; stroke: #17716d; stroke-width: 6; stroke-linecap: round; marker-end: url(#arrow); }
+      .mutedLine { fill: none; stroke: #9abbb8; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 12 12; }
+      .iconStroke { fill: none; stroke: #17716d; stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; }
+      .iconFill { fill: #17716d; }
+      .orange { fill: #ef7d24; }
+      .graphite { fill: #243735; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1600" height="900"/>
+  <circle cx="1360" cy="120" r="220" fill="#fff1e3" opacity="0.65"/>
+  <circle cx="190" cy="760" r="240" fill="#dff1ef" opacity="0.7"/>
+
+  <text class="title" x="100" y="106">ModelPort</text>
+  <text class="subtitle" x="102" y="150">Local Anthropic-compatible gateway for Claude Code and VS Code Claude</text>
+
+  <g transform="translate(78 225)">
+    <rect class="panel" width="360" height="405" rx="24"/>
+    <text class="label" x="42" y="66">Developer tools</text>
+    <text class="small" x="42" y="105">Keep the Claude workflow</text>
+    <g transform="translate(42 148)">
+      <rect class="soft" width="276" height="82" rx="18"/>
+      <path class="iconStroke" d="M36 42h42m-21-21v42"/>
+      <text class="small" x="102" y="38">VS Code Claude</text>
+      <text class="tiny" x="102" y="64">editor extension</text>
+    </g>
+    <g transform="translate(42 255)">
+      <rect class="soft" width="276" height="82" rx="18"/>
+      <path class="iconStroke" d="M34 28h44v36H34zM44 42h24"/>
+      <text class="small" x="102" y="38">Claude Code</text>
+      <text class="tiny" x="102" y="64">terminal agent</text>
+    </g>
+  </g>
+
+  <path class="line" d="M455 430 C520 430 552 430 604 430"/>
+  <text class="tiny" x="480" y="392">Anthropic Messages</text>
+  <text class="tiny" x="508" y="418">/v1/messages</text>
+
+  <g transform="translate(610 195)">
+    <rect class="panel" width="390" height="465" rx="28"/>
+    <g transform="translate(48 52)">
+      <circle cx="48" cy="48" r="48" fill="#e8f6f4"/>
+      <path class="iconStroke" d="M30 53l18 18 34-46"/>
+      <text class="label" x="118" y="40">ModelPort</text>
+      <text class="small" x="118" y="73">local model gateway</text>
+    </g>
+    <g transform="translate(42 175)">
+      <rect class="chip" width="142" height="44" rx="22"/>
+      <text class="chipText" x="26" y="29">Token auth</text>
+      <rect class="chip" x="164" width="142" height="44" rx="22"/>
+      <text class="chipText" x="194" y="29">Routing</text>
+      <rect class="chip" y="66" width="142" height="44" rx="22"/>
+      <text class="chipText" x="28" y="95">SSE stream</text>
+      <rect class="chip" x="164" y="66" width="142" height="44" rx="22"/>
+      <text class="chipText" x="186" y="95">Aliases</text>
+      <rect class="chip" y="132" width="306" height="44" rx="22"/>
+      <text class="chipText" x="57" y="161">Provider fallback ready</text>
+    </g>
+    <g transform="translate(42 390)">
+      <rect width="306" height="48" rx="16" fill="#132f2e"/>
+      <circle cx="34" cy="24" r="8" fill="#4ade80"/>
+      <text x="58" y="31" fill="#e7fffb" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="20" font-weight="800">127.0.0.1:17878</text>
+    </g>
+  </g>
+
+  <path class="line" d="M1012 430 C1064 430 1096 430 1166 430"/>
+  <text class="tiny" x="1039" y="392">OpenAI-compatible</text>
+  <text class="tiny" x="1068" y="418">or Anthropic</text>
+
+  <g transform="translate(1172 182)">
+    <rect class="panel" width="350" height="490" rx="24"/>
+    <text class="label" x="42" y="66">Upstream models</text>
+    <text class="small" x="42" y="105">Switch providers by model name</text>
+
+    <g transform="translate(42 143)">
+      <rect class="mimo" width="266" height="58" rx="17"/>
+      <circle cx="34" cy="29" r="11" class="orange"/>
+      <text class="small" x="62" y="37">Mimo v2.5 Pro</text>
+    </g>
+    <g transform="translate(42 215)">
+      <rect class="provider" width="266" height="52" rx="16"/>
+      <circle cx="34" cy="26" r="10" class="iconFill"/>
+      <text class="small" x="62" y="34">DeepSeek</text>
+    </g>
+    <g transform="translate(42 281)">
+      <rect class="provider" width="266" height="52" rx="16"/>
+      <circle cx="34" cy="26" r="10" class="graphite"/>
+      <text class="small" x="62" y="34">OpenAI-compatible</text>
+    </g>
+    <g transform="translate(42 347)">
+      <rect class="provider" width="266" height="52" rx="16"/>
+      <circle cx="34" cy="26" r="10" fill="#6b7dff"/>
+      <text class="small" x="62" y="34">OpenRouter</text>
+    </g>
+    <g transform="translate(42 413)">
+      <rect class="provider" width="266" height="52" rx="16"/>
+      <circle cx="34" cy="26" r="10" fill="#4b5563"/>
+      <text class="small" x="62" y="34">Ollama / Custom</text>
+    </g>
+  </g>
+
+  <g transform="translate(165 720)">
+    <rect class="chip" width="244" height="50" rx="25"/>
+    <text class="chipText" x="32" y="32">No public exposure</text>
+  </g>
+  <g transform="translate(430 720)">
+    <rect class="chip" width="226" height="50" rx="25"/>
+    <text class="chipText" x="32" y="32">Keys stay local</text>
+  </g>
+  <g transform="translate(678 720)">
+    <rect class="chip" width="250" height="50" rx="25"/>
+    <text class="chipText" x="32" y="32">Fast local hop</text>
+  </g>
+  <g transform="translate(950 720)">
+    <rect class="chip" width="300" height="50" rx="25"/>
+    <text class="chipText" x="32" y="32">Model aliases and prefixes</text>
+  </g>
+</svg>

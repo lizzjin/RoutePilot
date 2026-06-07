@@ -1,0 +1,59 @@
+name: Bug report
+description: Report a reproducible ModelPort problem
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请不要粘贴真实 API key、token、完整 `.env` 或敏感日志。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题描述
+      description: 简要说明发生了什么。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 写出可以复现的命令、请求或 VS Code 操作。
+      placeholder: |
+        1. scripts/start.sh
+        2. scripts/smoke-test.sh
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 可以贴脱敏后的错误响应、状态码或日志。
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: commit / version
+      placeholder: "git rev-parse --short HEAD"
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      options:
+        - mimo
+        - deepseek
+        - anthropic
+        - openai
+        - openrouter
+        - gemini
+        - dashscope
+        - custom
+        - other

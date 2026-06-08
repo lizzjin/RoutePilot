@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/tiammomo/ModelPort/actions/workflows/ci.yml/badge.svg)](https://github.com/tiammomo/ModelPort/actions/workflows/ci.yml)
 
+[中文](#modelport) | [English](#english-readme)
+
 **ModelPort 是 Claude Code / VS Code Claude 的本地模型端口。**
 
 它在本机暴露 Anthropic-compatible `/v1/messages` 接口，让 Claude Code / VS Code Claude 插件可以在不改变编辑器工作流的前提下，路由到 Mimo、DeepSeek、Anthropic、OpenAI-compatible provider、OpenRouter、Ollama 或自定义上游。
@@ -10,7 +12,7 @@
 
 ## 投产结论
 
-当前代码可以进入**个人长期使用、本机常驻、内网小团队试生产**阶段。它已经具备长期运行所需的核心能力：
+当前项目已经进入**可投产阶段**，适合个人长期使用、本机常驻、内网小团队生产/试生产。它已经具备长期运行所需的核心能力：
 
 - 本地 token 鉴权，默认禁止无鉴权启动。
 - 原生 reqwest/rustls HTTP 传输，不再依赖系统 `curl`。
@@ -601,3 +603,464 @@ HTTP 传输层使用原生 reqwest/rustls 客户端，支持连接池、真实 H
 | `scripts/build-release.sh` | 构建 `target/release/model-port`。 |
 | `scripts/check.sh` | 运行 fmt、test、clippy。 |
 | `scripts/install-deps-ubuntu.sh` | 在 Ubuntu / WSL 上安装 `build-essential pkg-config jq`。 |
+
+---
+
+## English README
+
+**ModelPort is a local model gateway for Claude Code and VS Code Claude.**
+
+It exposes an Anthropic-compatible `/v1/messages` endpoint on your machine, while routing requests to Mimo, DeepSeek, Anthropic, OpenAI-compatible providers, OpenRouter, Ollama, or a custom upstream without changing your Claude Code workflow.
+
+### Production Status
+
+ModelPort is now ready for production use within its intended scope:
+
+- Personal long-running local usage.
+- A persistent local gateway for VS Code Claude / Claude Code.
+- Small internal team production or pilot deployments behind a trusted network boundary.
+
+The production boundary is intentional:
+
+- Bind to `127.0.0.1` for local development by default.
+- Use a reverse proxy if you deploy it for a small internal team.
+- Do not expose it directly to the public internet.
+- It is not a multi-tenant SaaS gateway. It does not provide user accounts, billing, quotas, audit retention, or fine-grained RBAC.
+- Real availability still depends on valid upstream API keys.
+
+Production-ready capabilities include:
+
+- Local token authentication, with unauthenticated startup disabled by default.
+- Native `reqwest` / `rustls` HTTP transport.
+- Connection pooling, connect timeout, request timeout, stream idle timeout, and response body limits.
+- Upstream HTTP status propagation and Anthropic SSE error conversion.
+- Request IDs, route logs, and upstream status logs.
+- Request body limits and concurrency limits.
+- Mimo third-party base URL support: `BASE_URL=https://w.ciykj.cn/v1`.
+- Mimo model support: `mimo-v2.5-pro`.
+- CI, production scripts, doctor checks, Docker Compose, and systemd templates.
+
+### Project Positioning
+
+ModelPort is not a full model aggregation platform. It is a lightweight, local, controllable model routing and protocol adaptation layer.
+
+- For users: a local port that lets Claude Code use popular coding models.
+- For developers: a lightweight gateway from Anthropic Messages API to multiple providers.
+- For long-term evolution: a minimal local AI provider control plane for model naming, routing, protocol conversion, key isolation, and fallback behavior.
+
+Core routing modes:
+
+- Anthropic-compatible pass-through providers, such as Anthropic and DeepSeek Anthropic format.
+- OpenAI-compatible providers, such as Mimo, OpenAI, OpenRouter, Gemini, Qwen/DashScope, Kimi, GLM, Grok, Groq, Mistral, Doubao/Ark, Ollama, and custom relays.
+- `provider:model` routing, aliases, model prefixes, and unknown-model passthrough for fast model switching.
+
+### Documentation
+
+- [docs/PROJECT_GUIDE.md](docs/PROJECT_GUIDE.md): positioning, architecture boundaries, and roadmap.
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md): gateway efficiency, benchmarks, and production tuning.
+- [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md): GitHub repository setup, branch protection, and release suggestions.
+- [docs/GPT_IMAGE_2_GUIDE.md](docs/GPT_IMAGE_2_GUIDE.md): future image capability extension notes.
+
+### Quick Start
+
+Install dependencies on Linux / WSL:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential pkg-config jq
+```
+
+Prepare the environment file:
+
+```bash
+cd /home/tiammomo/projects/dev/ModelPort
+cp .env.example .env
+```
+
+Edit `.env` and set at least:
+
+```bash
+MODELPORT_BIND=127.0.0.1:17878
+MODELPORT_AUTH_TOKEN=replace-with-a-long-random-local-token
+MODELPORT_DEFAULT_PROVIDER=mimo
+
+BASE_URL=https://w.ciykj.cn/v1
+MIMO_OPENAI_API_KEY=replace-with-real-mimo-api-key
+MIMO_MODEL=mimo-v2.5-pro
+
+ANTHROPIC_BASE_URL=http://127.0.0.1:17878
+ANTHROPIC_AUTH_TOKEN=replace-with-the-same-local-router-token
+ANTHROPIC_MODEL=mimo-v2.5-pro
+ANTHROPIC_DEFAULT_OPUS_MODEL=mimo-v2.5-pro
+ANTHROPIC_DEFAULT_SONNET_MODEL=mimo-v2.5-pro
+ANTHROPIC_DEFAULT_HAIKU_MODEL=mimo-v2.5-pro
+ANTHROPIC_SMALL_FAST_MODEL=mimo-v2.5-pro
+CLAUDE_CODE_SUBAGENT_MODEL=mimo-v2.5-pro
+```
+
+Important notes:
+
+- `MODELPORT_AUTH_TOKEN` is the local token used by Claude Code to call ModelPort.
+- `ANTHROPIC_AUTH_TOKEN` must match `MODELPORT_AUTH_TOKEN`.
+- `MIMO_OPENAI_API_KEY` must be a real upstream key.
+- `.env` is ignored by git. Never commit real secrets.
+
+Start the service:
+
+```bash
+scripts/start.sh
+```
+
+Check status:
+
+```bash
+scripts/status.sh
+```
+
+Restart or stop:
+
+```bash
+scripts/restart.sh
+scripts/stop.sh
+```
+
+### Verification
+
+Run the local doctor check:
+
+```bash
+scripts/doctor.sh
+```
+
+Run gateway smoke tests:
+
+```bash
+scripts/smoke-test.sh
+```
+
+After setting a real Mimo key, verify the real upstream route:
+
+```bash
+scripts/doctor.sh --upstream
+scripts/smoke-test.sh --upstream
+```
+
+Health check:
+
+```bash
+curl http://127.0.0.1:17878/health
+```
+
+Authenticated model list:
+
+```bash
+curl -sS \
+  -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+  http://127.0.0.1:17878/v1/models
+```
+
+Non-streaming message test:
+
+```bash
+curl -sS \
+  -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  http://127.0.0.1:17878/v1/messages \
+  -d '{
+    "model": "mimo-v2.5-pro",
+    "max_tokens": 128,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Reply in one short sentence: ModelPort is connected."
+      }
+    ]
+  }'
+```
+
+Streaming message test:
+
+```bash
+curl -N -sS \
+  -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  http://127.0.0.1:17878/v1/messages \
+  -d '{
+    "model": "mimo-v2.5-pro",
+    "max_tokens": 128,
+    "stream": true,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Stream a short hello."
+      }
+    ]
+  }'
+```
+
+If the upstream returns:
+
+```json
+{"code":"INVALID_API_KEY","message":"Invalid API key"}
+```
+
+ModelPort has reached the configured upstream `BASE_URL`, but the upstream key is invalid or still a placeholder.
+
+### VS Code Claude Setup
+
+Configure Claude Code extension environment variables in your VS Code user `settings.json`.
+
+Common Linux / WSL path:
+
+```bash
+/home/tiammomo/.config/Code/User/settings.json
+```
+
+Common Windows path from WSL:
+
+```bash
+/mnt/c/Users/pearf/AppData/Roaming/Code/User/settings.json
+```
+
+Recommended configuration:
+
+```json
+{
+  "claudeCode.selectedModel": "mimo-v2.5-pro",
+  "claudeCode.environmentVariables": [
+    {
+      "name": "ANTHROPIC_BASE_URL",
+      "value": "http://127.0.0.1:17878"
+    },
+    {
+      "name": "ANTHROPIC_AUTH_TOKEN",
+      "value": "replace-with-the-same-local-router-token"
+    },
+    {
+      "name": "ANTHROPIC_MODEL",
+      "value": "mimo-v2.5-pro"
+    },
+    {
+      "name": "ANTHROPIC_DEFAULT_OPUS_MODEL",
+      "value": "mimo-v2.5-pro"
+    },
+    {
+      "name": "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "value": "mimo-v2.5-pro"
+    },
+    {
+      "name": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "value": "mimo-v2.5-pro"
+    },
+    {
+      "name": "ANTHROPIC_SMALL_FAST_MODEL",
+      "value": "mimo-v2.5-pro"
+    },
+    {
+      "name": "CLAUDE_CODE_SUBAGENT_MODEL",
+      "value": "mimo-v2.5-pro"
+    }
+  ]
+}
+```
+
+Then:
+
+1. Start ModelPort.
+2. Reload VS Code or the Claude Code extension window.
+3. Use `mimo-v2.5-pro`.
+4. Ask a simple question and check ModelPort logs for `routing message request`.
+
+### Long-Running Deployment
+
+Foreground mode for debugging:
+
+```bash
+RUST_LOG=model_port=info,tower_http=info scripts/dev.sh
+```
+
+Background mode for local production:
+
+```bash
+scripts/start.sh
+scripts/status.sh
+tail -f .modelport/model-port.log
+```
+
+Docker Compose:
+
+```bash
+docker compose up -d --build
+docker compose logs -f modelport
+```
+
+The Compose file binds the host port to `127.0.0.1:17878` while using `0.0.0.0:17878` inside the container.
+
+systemd on a standard Linux host:
+
+```bash
+cargo build --release
+sudo install -m 0755 target/release/model-port /usr/local/bin/model-port
+sudo mkdir -p /etc/modelport
+sudo cp deploy/systemd/modelport.env.example /etc/modelport/modelport.env
+sudo nano /etc/modelport/modelport.env
+sudo chmod 600 /etc/modelport/modelport.env
+sudo cp deploy/systemd/modelport.service /etc/systemd/system/modelport.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now modelport
+sudo systemctl status modelport
+```
+
+Follow logs:
+
+```bash
+journalctl -u modelport -f
+```
+
+WSL may not have systemd enabled by default. Use the background scripts or `tmux` if systemd is unavailable.
+
+### Model Switching
+
+Set a direct model name:
+
+```bash
+export ANTHROPIC_MODEL=mimo-v2.5-pro
+export ANTHROPIC_MODEL=deepseek-v4-pro
+export ANTHROPIC_MODEL=qwen-plus
+```
+
+Force a specific provider with `provider:model`:
+
+```bash
+export ANTHROPIC_MODEL=mimo:mimo-v2.5-pro
+export ANTHROPIC_MODEL=openrouter:anthropic/claude-sonnet-4
+export ANTHROPIC_MODEL=gemini:gemini-2.5-flash
+export ANTHROPIC_MODEL=custom:any-model-name-from-your-upstream
+```
+
+Use aliases in `~/.config/modelport/config.toml`:
+
+```toml
+[aliases]
+sonnet = "openrouter:anthropic/claude-sonnet-4"
+qwen = "dashscope:qwen-plus"
+mimo = "mimo:mimo-v2.5-pro"
+```
+
+Then:
+
+```bash
+export ANTHROPIC_MODEL=sonnet
+```
+
+`openrouter`, `custom`, and `ollama` are the best choices for arbitrary model passthrough.
+
+### Providers
+
+| Provider | Protocol | Key Variables |
+| --- | --- | --- |
+| `mimo` | OpenAI-compatible | `MIMO_OPENAI_API_KEY`, `MIMO_MODEL` |
+| `deepseek` | Anthropic-compatible | `DEEPSEEK_ANTHROPIC_AUTH_TOKEN`, `DEEPSEEK_MODEL` |
+| `anthropic` | Anthropic-compatible | `ANTHROPIC_API_KEY`, `ANTHROPIC_UPSTREAM_MODEL` |
+| `openai` | OpenAI-compatible | `OPENAI_API_KEY`, `OPENAI_MODEL` |
+| `openrouter` | OpenAI-compatible | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` |
+| `gemini` | OpenAI-compatible | `GEMINI_API_KEY`, `GEMINI_MODEL` |
+| `xai` | OpenAI-compatible | `XAI_API_KEY`, `XAI_MODEL` |
+| `groq` | OpenAI-compatible | `GROQ_API_KEY`, `GROQ_MODEL` |
+| `dashscope` | OpenAI-compatible | `DASHSCOPE_API_KEY`, `DASHSCOPE_MODEL` |
+| `kimi` | OpenAI-compatible | `MOONSHOT_API_KEY`, `KIMI_MODEL` |
+| `zhipu` | OpenAI-compatible | `ZHIPU_API_KEY`, `ZHIPU_MODEL` |
+| `mistral` | OpenAI-compatible | `MISTRAL_API_KEY`, `MISTRAL_MODEL` |
+| `ark` | OpenAI-compatible | `ARK_API_KEY`, `ARK_MODEL` |
+| `ollama` | OpenAI-compatible | `MODELPORT_ENABLE_OLLAMA`, `OLLAMA_MODEL` |
+| `custom` | OpenAI-compatible | `CUSTOM_OPENAI_BASE_URL`, `CUSTOM_OPENAI_MODEL` |
+
+### API
+
+- `GET /health`
+- `GET /v1/models`
+- `POST /v1/messages`
+
+`POST /v1/messages` supports both non-streaming requests and `stream: true`.
+
+Authentication requires either:
+
+```http
+x-api-key: <MODELPORT_AUTH_TOKEN>
+```
+
+or:
+
+```http
+Authorization: Bearer <MODELPORT_AUTH_TOKEN>
+```
+
+### Troubleshooting
+
+Recommended logs:
+
+```bash
+RUST_LOG=model_port=info,tower_http=info
+```
+
+Debug logs:
+
+```bash
+RUST_LOG=model_port=debug,tower_http=info
+```
+
+| Symptom | Meaning | Fix |
+| --- | --- | --- |
+| Startup fails with missing token | `MODELPORT_AUTH_TOKEN` or `ANTHROPIC_AUTH_TOKEN` is not set | Set a long random local token in `.env`. |
+| `/v1/models` returns 401 | Client token is missing or mismatched | Check `x-api-key` and `ANTHROPIC_AUTH_TOKEN`. |
+| Upstream returns `INVALID_API_KEY` | ModelPort reached the upstream, but the upstream key is invalid | Replace `MIMO_OPENAI_API_KEY`. |
+| VS Code Claude does not use ModelPort | Extension did not load the environment variables | Restart VS Code and verify `ANTHROPIC_BASE_URL`. |
+| Request times out | Upstream or network is slow | Increase `MODELPORT_HTTP_REQUEST_TIMEOUT_SECS` or check upstream health. |
+| Stream returns `event: error` | Upstream streaming request failed | Check the error message and ModelPort logs. |
+| Large request returns 413 | Request body exceeds the configured limit | Increase `MODELPORT_MAX_REQUEST_BODY_BYTES`. |
+
+### Upgrade And Rollback
+
+Before upgrading:
+
+```bash
+scripts/check.sh
+scripts/doctor.sh --upstream
+```
+
+Upgrade:
+
+```bash
+git pull
+scripts/build-release.sh
+scripts/restart.sh
+```
+
+For systemd:
+
+```bash
+sudo install -m 0755 target/release/model-port /usr/local/bin/model-port
+sudo systemctl restart modelport
+journalctl -u modelport -f
+```
+
+Rollback by checking out a previous commit or restoring a previous binary, then rebuild and restart.
+
+### Script Reference
+
+| Script | Purpose |
+| --- | --- |
+| `scripts/start.sh` | Build the release binary if needed and start ModelPort in the background. |
+| `scripts/stop.sh` | Stop ModelPort processes for this project. |
+| `scripts/restart.sh` | Stop and start the background service. |
+| `scripts/status.sh` | Show PID, log path, listener, and `/health` status. |
+| `scripts/doctor.sh` | Check `.env`, local service, auth, VS Code settings, and key configuration. |
+| `scripts/doctor.sh --upstream` | Run doctor plus a real Mimo upstream message call. |
+| `scripts/bench.sh` | Measure local `/health` and `/v1/models` latency. |
+| `scripts/bench.sh --upstream` | Measure real `/v1/messages` upstream latency. This may incur model cost. |
+| `scripts/dev.sh` | Load `.env` and run `cargo run` in the foreground. |
+| `scripts/smoke-test.sh` | Verify local gateway and authentication. |
+| `scripts/smoke-test.sh --upstream` | Verify a real upstream model reply. |
+| `scripts/build-release.sh` | Build `target/release/model-port`. |
+| `scripts/check.sh` | Run fmt, tests, and clippy. |
+| `scripts/install-deps-ubuntu.sh` | Install `build-essential`, `pkg-config`, and `jq` on Ubuntu / WSL. |

@@ -1,10 +1,13 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use axum::{
     Json, Router,
     extract::DefaultBodyLimit,
     extract::State,
-    http::{HeaderMap, header::HeaderName},
+    http::{
+        HeaderMap,
+        header::{CONTENT_TYPE, HeaderName},
+    },
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -20,16 +23,19 @@ use crate::{
     config::{AppConfig, ProviderProtocol},
     error::AppError,
     http::HttpTransport,
+    metrics::Metrics,
     providers,
     types::AnthropicRequest,
 };
 
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
+const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<AppConfig>,
     pub transport: HttpTransport,
+    pub metrics: Arc<Metrics>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -38,6 +44,7 @@ pub fn router(state: AppState) -> Router {
 
     Router::new()
         .route("/health", get(health))
+        .route("/metrics", get(metrics))
         .route("/v1/models", get(models))
         .route("/v1/messages", post(messages))
         .layer(
@@ -55,6 +62,11 @@ pub fn router(state: AppState) -> Router {
 }
 
 async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let started = Instant::now();
+    state
+        .metrics
+        .record_route("health", true, started.elapsed());
+
     Json(json!({
         "status": "ok",
         "service": "model-port",
@@ -62,30 +74,60 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     }))
 }
 
+async fn metrics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, AppError> {
+    let started = Instant::now();
+
+    if let Err(err) = state.config.validate_client_auth(&headers) {
+        state
+            .metrics
+            .record_route("metrics", false, started.elapsed());
+        return Err(err);
+    }
+
+    state
+        .metrics
+        .record_route("metrics", true, started.elapsed());
+    Ok((
+        [(CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)],
+        state.metrics.render_prometheus(),
+    ))
+}
+
 async fn models(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
-    let data = state
-        .config
-        .model_list()
-        .into_iter()
-        .map(|(id, display_name)| {
-            json!({
-                "id": id,
-                "type": "model",
-                "display_name": display_name,
+    let started = Instant::now();
+    let result = (|| {
+        state.config.validate_client_auth(&headers)?;
+        let data = state
+            .config
+            .model_list()
+            .into_iter()
+            .map(|(id, display_name)| {
+                json!({
+                    "id": id,
+                    "type": "model",
+                    "display_name": display_name,
+                })
             })
-        })
-        .collect::<Vec<_>>();
+            .collect::<Vec<_>>();
 
-    Ok(Json(json!({
-        "data": data,
-        "has_more": false,
-        "first_id": data.first().and_then(|model| model.get("id")).cloned(),
-        "last_id": data.last().and_then(|model| model.get("id")).cloned(),
-    })))
+        Ok(Json(json!({
+            "data": data,
+            "has_more": false,
+            "first_id": data.first().and_then(|model| model.get("id")).cloned(),
+            "last_id": data.last().and_then(|model| model.get("id")).cloned(),
+        })))
+    })();
+
+    state
+        .metrics
+        .record_route("models", result.is_ok(), started.elapsed());
+    result
 }
 
 async fn messages(
@@ -93,8 +135,24 @@ async fn messages(
     headers: HeaderMap,
     Json(request): Json<AnthropicRequest>,
 ) -> Result<Response, AppError> {
-    state.config.validate_client_auth(&headers)?;
-    let resolved = state.config.resolve(&request.model)?;
+    let started = Instant::now();
+    if let Err(err) = state.config.validate_client_auth(&headers) {
+        state
+            .metrics
+            .record_route("messages", false, started.elapsed());
+        return Err(err);
+    }
+
+    let resolved = match state.config.resolve(&request.model) {
+        Ok(resolved) => resolved,
+        Err(err) => {
+            state
+                .metrics
+                .record_route("messages", false, started.elapsed());
+            return Err(err);
+        }
+    };
+    let stream = request.stream.unwrap_or(false);
     info!(
         request_id = headers
             .get(&X_REQUEST_ID)
@@ -103,20 +161,32 @@ async fn messages(
         requested_model = request.model.as_str(),
         provider = resolved.provider_id.as_str(),
         upstream_model = resolved.model.as_str(),
-        stream = request.stream.unwrap_or(false),
+        stream,
         "routing message request"
     );
 
-    match resolved.provider.protocol {
-        ProviderProtocol::Anthropic => providers::anthropic::messages(state, resolved, request)
-            .await
-            .map(IntoResponse::into_response),
-        ProviderProtocol::OpenaiCompat => {
-            providers::openai_compat::messages(state, resolved, request)
+    let provider_id = resolved.provider_id.clone();
+    let upstream_model = resolved.model.clone();
+    let result = match resolved.provider.protocol {
+        ProviderProtocol::Anthropic => {
+            providers::anthropic::messages(state.clone(), resolved, request)
                 .await
                 .map(IntoResponse::into_response)
         }
-    }
+        ProviderProtocol::OpenaiCompat => {
+            providers::openai_compat::messages(state.clone(), resolved, request)
+                .await
+                .map(IntoResponse::into_response)
+        }
+    };
+    let success = result.is_ok();
+    let duration = started.elapsed();
+
+    state.metrics.record_route("messages", success, duration);
+    state
+        .metrics
+        .record_message(&provider_id, &upstream_model, stream, success, duration);
+    result
 }
 
 #[cfg(test)]
@@ -135,7 +205,10 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::config::{MaxTokensField, ProviderConfig};
+    use crate::{
+        config::{MaxTokensField, ProviderConfig},
+        metrics::Metrics,
+    };
 
     const CLIENT_TOKEN: &str = "client-token";
 
@@ -243,6 +316,70 @@ data: [DONE]
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     }
 
+    #[tokio::test]
+    async fn metrics_endpoint_requires_auth() {
+        let upstream = spawn_openai_upstream(StatusCode::OK, "{}", "application/json").await;
+        let app = router(test_state(upstream, 1024 * 1024));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn metrics_endpoint_records_message_requests() {
+        let upstream = spawn_openai_upstream(
+            StatusCode::OK,
+            r#"{
+                "id": "chatcmpl_test",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "hello from upstream"
+                        },
+                        "finish_reason": "stop"
+                    }
+                ]
+            }"#,
+            "application/json",
+        )
+        .await;
+        let app = router(test_state(upstream, 1024 * 1024));
+
+        let (message_status, _) = post_message(app.clone(), message_body(false)).await;
+        assert_eq!(message_status, StatusCode::OK);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/metrics")
+                    .header("x-api-key", CLIENT_TOKEN)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.contains(r#"modelport_route_requests_total{route="messages"} 1"#));
+        assert!(body.contains(
+            r#"modelport_message_requests_total{provider="mimo",model="mimo-v2.5-pro",stream="false"} 1"#
+        ));
+    }
+
     async fn post_message(app: Router, body: Value) -> (StatusCode, String) {
         let response = app
             .oneshot(
@@ -308,6 +445,7 @@ data: [DONE]
                 aliases: HashMap::new(),
             }),
             transport: HttpTransport::new().unwrap(),
+            metrics: Arc::new(Metrics::new()),
         }
     }
 

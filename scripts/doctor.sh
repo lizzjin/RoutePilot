@@ -194,6 +194,21 @@ check_gateway() {
     fail "authenticated /v1/models returned HTTP ${status:-unknown}"
     sed -n '1,20p' "$body_file" >&2 || true
   fi
+
+  status="$(
+    curl_local -sS -m 5 \
+      -o "$body_file" \
+      -w '%{http_code}' \
+      -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+      "$(base_url)/metrics" || true
+  )"
+
+  if [[ "$status" == "200" ]] && grep -q '^modelport_uptime_seconds ' "$body_file"; then
+    ok "authenticated /metrics returned Prometheus text"
+  else
+    fail "authenticated /metrics returned HTTP ${status:-unknown} or invalid body"
+    sed -n '1,20p' "$body_file" >&2 || true
+  fi
 }
 
 check_vscode_settings_text() {

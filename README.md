@@ -512,10 +512,19 @@ provider 配置支持这些路由字段：
 ## API 接口
 
 - `GET /health`
+- `GET /metrics`
 - `GET /v1/models`
 - `POST /v1/messages`
 
 `POST /v1/messages` 同时支持非流式和 `stream: true`。DeepSeek provider 直接转发 Anthropic SSE；OpenAI-compatible provider 会把 OpenAI SSE chunk 转换为 Anthropic SSE event。
+
+`GET /metrics` 输出 Prometheus 文本格式，包含 route 和 message provider/model 维度的请求数、成功/失败数和耗时累计。该接口需要和 `/v1/models` 一样携带本地 token：
+
+```bash
+curl -sS \
+  -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+  http://127.0.0.1:17878/metrics
+```
 
 ### 鉴权
 
@@ -1006,10 +1015,19 @@ export ANTHROPIC_MODEL=sonnet
 ### API
 
 - `GET /health`
+- `GET /metrics`
 - `GET /v1/models`
 - `POST /v1/messages`
 
 `POST /v1/messages` supports both non-streaming requests and `stream: true`.
+
+`GET /metrics` returns Prometheus text metrics for route and message provider/model counters, success/failure counters, and accumulated duration. It requires the same local token as `/v1/models`:
+
+```bash
+curl -sS \
+  -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+  http://127.0.0.1:17878/metrics
+```
 
 Authentication requires either:
 

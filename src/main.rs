@@ -1,6 +1,7 @@
 mod config;
 mod error;
 mod http;
+mod metrics;
 mod providers;
 mod routes;
 mod types;
@@ -10,6 +11,7 @@ use std::sync::Arc;
 use config::AppConfig;
 use error::AppError;
 use http::HttpTransport;
+use metrics::Metrics;
 use routes::AppState;
 use tokio::net::TcpListener;
 use tracing::info;
@@ -29,6 +31,7 @@ async fn main() -> Result<(), AppError> {
     let state = AppState {
         config: Arc::new(config),
         transport: HttpTransport::new()?,
+        metrics: Arc::new(Metrics::new()),
     };
 
     let listener = TcpListener::bind(bind_addr).await?;

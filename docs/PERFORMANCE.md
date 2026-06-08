@@ -48,6 +48,30 @@ scripts/bench.sh --upstream -n 5
 - `/v1/models`：本机鉴权、路由配置和 JSON 响应开销。
 - `/v1/messages`：真实上游耗时，主要反映 provider 质量。
 
+## 运行指标
+
+ModelPort 提供带鉴权的 Prometheus 文本指标：
+
+```bash
+curl -sS \
+  -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+  http://127.0.0.1:17878/metrics
+```
+
+当前指标包括：
+
+- `modelport_uptime_seconds`
+- `modelport_route_requests_total`
+- `modelport_route_successes_total`
+- `modelport_route_failures_total`
+- `modelport_route_duration_ms_total`
+- `modelport_message_requests_total`
+- `modelport_message_successes_total`
+- `modelport_message_failures_total`
+- `modelport_message_duration_ms_total`
+
+`modelport_message_*` 会按 `provider`、`model`、`stream` 打标签。对流式请求而言，当前耗时统计的是 ModelPort 建立响应和上游流式请求初始化阶段，不代表完整模型生成耗时；完整生成体验仍要结合客户端感知、日志和 provider 自身状态判断。
+
 ## 投产调优
 
 常用参数：

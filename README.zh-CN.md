@@ -39,7 +39,7 @@ ModelPort 已经进入当前定位下的**可投产阶段**：
 - 原生 `reqwest` / `rustls` HTTP 传输，不依赖系统 `curl` 子进程。
 - 上游连接池、连接超时、请求超时、流式空闲超时。
 - 请求体、响应体和并发上限。
-- Mimo 流式文本去重，避免重复片段污染 Claude Code 输出。
+- Mimo 稳定流式输出，避免重放片段污染 Claude Code。
 - `doctor` 运行态自检、`config validate` 静态配置校验、provider matrix 实测。
 - Prometheus 文本 `/metrics`。
 - Docker Compose、systemd、快速启动脚本、GitHub Actions CI。
@@ -432,6 +432,7 @@ MODELPORT_CONFIG=/path/to/config.toml model-port config validate
 - `passthrough_unknown_models`：未知模型是否透传。
 - `max_tokens_field`：OpenAI-compatible token 字段策略。
 - `deduplicate_stream_text`：处理会重放文本片段的流式上游，Mimo 默认开启。
+- `buffer_stream_text`：把不稳定上游流转换为稳定下游 SSE，Mimo 默认开启。
 - `[aliases]`：模型别名，可指向 provider、模型名或 `provider:model`。
 
 服务级变量：

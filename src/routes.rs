@@ -344,6 +344,43 @@ data: [DONE]
     }
 
     #[tokio::test]
+    async fn buffers_stream_text_from_non_stream_openai_response() {
+        let upstream = spawn_openai_upstream(
+            StatusCode::OK,
+            r#"{
+                "id": "chatcmpl_buffered",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "| 项目 | 状态 |\n|------|------|\n| 前端 | 正常 |"
+                        },
+                        "finish_reason": "stop"
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 4
+                }
+            }"#,
+            "application/json",
+        )
+        .await;
+        let app = router(test_state_with_flags(upstream, 1024 * 1024, true, true));
+
+        let (status, body) = post_message(app, message_body(true)).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("event: message_start"));
+        assert!(body.contains(r#""text":"| 项目 | 状态 |\n""#));
+        assert!(body.contains(r#""text":"|------|------|\n""#));
+        assert!(body.contains(r#""text":"| 前端 | 正常 |""#));
+        assert!(body.contains(r#""output_tokens":4"#));
+        assert!(body.contains("event: message_stop"));
+        assert!(!body.contains("event: error"));
+    }
+
+    #[tokio::test]
     async fn rejects_oversized_message_request_body() {
         let upstream = spawn_openai_upstream(StatusCode::OK, "{}", "application/json").await;
         let app = router(test_state(upstream, 16));
@@ -455,6 +492,15 @@ data: [DONE]
     }
 
     fn test_state(base_url: String, max_request_body_bytes: usize) -> AppState {
+        test_state_with_flags(base_url, max_request_body_bytes, true, false)
+    }
+
+    fn test_state_with_flags(
+        base_url: String,
+        max_request_body_bytes: usize,
+        deduplicate_stream_text: bool,
+        buffer_stream_text: bool,
+    ) -> AppState {
         let provider = ProviderConfig {
             display_name: "Mimo".to_owned(),
             protocol: ProviderProtocol::OpenaiCompat,
@@ -467,7 +513,8 @@ data: [DONE]
             model_prefixes: vec!["mimo-".to_owned()],
             passthrough_unknown_models: false,
             max_tokens_field: MaxTokensField::MaxCompletionTokens,
-            deduplicate_stream_text: true,
+            deduplicate_stream_text,
+            buffer_stream_text,
         };
 
         AppState {

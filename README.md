@@ -39,7 +39,7 @@ Verified baseline:
 - Native `reqwest` / `rustls` HTTP transport, with no system `curl` subprocess.
 - Upstream connection pooling, connection timeout, request timeout, and stream idle timeout.
 - Request body, response body, and concurrency limits.
-- Mimo streaming text de-duplication to avoid repeated fragments in Claude Code output.
+- Mimo stable streaming output to avoid replayed fragments in Claude Code.
 - Runtime `doctor`, static `config validate`, provider matrix checks, and Prometheus `/metrics`.
 - Docker Compose, systemd, quick-start scripts, and GitHub Actions CI.
 
@@ -431,6 +431,7 @@ Important provider fields:
 - `passthrough_unknown_models`: whether unknown models are passed through.
 - `max_tokens_field`: OpenAI-compatible token field strategy.
 - `deduplicate_stream_text`: handles streaming upstreams that replay text fragments; enabled for Mimo by default.
+- `buffer_stream_text`: converts unstable upstream streaming into stable downstream SSE; enabled for Mimo by default.
 - `[aliases]`: model aliases that can target a provider, a model name, or `provider:model`.
 
 Service-level variables:

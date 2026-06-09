@@ -39,6 +39,7 @@ pub struct ProviderConfig {
     pub passthrough_unknown_models: bool,
     pub max_tokens_field: MaxTokensField,
     pub deduplicate_stream_text: bool,
+    pub buffer_stream_text: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -112,6 +113,7 @@ struct ProviderSection {
     passthrough_unknown_models: Option<bool>,
     max_tokens_field: Option<MaxTokensField>,
     deduplicate_stream_text: Option<bool>,
+    buffer_stream_text: Option<bool>,
 }
 
 struct ProviderSpec {
@@ -561,6 +563,7 @@ impl AppConfig {
                         .max_tokens_field
                         .unwrap_or(MaxTokensField::MaxCompletionTokens),
                     deduplicate_stream_text: section.deduplicate_stream_text.unwrap_or(false),
+                    buffer_stream_text: section.buffer_stream_text.unwrap_or(false),
                 },
             );
         }
@@ -1036,8 +1039,19 @@ fn insert_spec(
             passthrough_unknown_models: spec.passthrough_unknown_models,
             max_tokens_field: spec.max_tokens_field,
             deduplicate_stream_text: spec.deduplicate_stream_text,
+            buffer_stream_text: default_buffer_stream_text(spec.id),
         },
     );
+}
+
+fn default_buffer_stream_text(provider_id: &str) -> bool {
+    env_bool(
+        &format!(
+            "MODELPORT_{}_BUFFER_STREAM_TEXT",
+            env_key_fragment(provider_id)
+        ),
+        provider_id == "mimo",
+    )
 }
 
 fn insert_provider(
@@ -1127,6 +1141,16 @@ fn env_flag(name: &str) -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+fn env_bool(name: &str, default: bool) -> bool {
+    env::var(name)
+        .map(|value| match value.as_str() {
+            "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON" => true,
+            "0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF" => false,
+            _ => default,
+        })
+        .unwrap_or(default)
 }
 
 fn env_key_fragment(id: &str) -> String {
@@ -1283,6 +1307,12 @@ fn validate_provider(
             "provider `mimo` should keep deduplicate_stream_text=true for stable streaming output",
         ));
     }
+
+    if id == "mimo" && !provider.buffer_stream_text {
+        issues.push(ConfigIssue::warning(
+            "provider `mimo` should keep buffer_stream_text=true for stable Claude streaming output",
+        ));
+    }
 }
 
 fn is_placeholder_value(value: &str) -> bool {
@@ -1350,6 +1380,7 @@ mod tests {
             passthrough_unknown_models: false,
             max_tokens_field: MaxTokensField::MaxCompletionTokens,
             deduplicate_stream_text: true,
+            buffer_stream_text: true,
         };
         let openrouter = ProviderConfig {
             display_name: "OpenRouter".to_owned(),
@@ -1364,6 +1395,7 @@ mod tests {
             passthrough_unknown_models: true,
             max_tokens_field: MaxTokensField::MaxCompletionTokens,
             deduplicate_stream_text: false,
+            buffer_stream_text: false,
         };
 
         AppConfig {

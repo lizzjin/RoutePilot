@@ -59,6 +59,7 @@ model_prefixes = ["mimo-"]
 passthrough_unknown_models = false
 max_tokens_field = "max_completion_tokens"
 deduplicate_stream_text = true
+buffer_stream_text = true
 
 [providers.openrouter]
 display_name = "OpenRouter"

@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::{
     config::ResolvedProvider,
     error::AppError,
-    http::{Header, SseFrameStream},
+    http::{Header, HttpTransport, SseFrameStream},
     routes::AppState,
     types::{
         AnthropicRequest, anthropic_error_event, anthropic_event, anthropic_to_openai_request,
@@ -33,6 +33,25 @@ pub async fn messages(
     let url = resolved.provider.endpoint("/chat/completions");
 
     if request.stream.unwrap_or(false) {
+        if resolved.provider.buffer_stream_text {
+            let body = anthropic_to_openai_request(
+                &request,
+                &resolved.model,
+                false,
+                resolved.provider.max_tokens_field,
+            )?;
+            let events = openai_complete_to_anthropic_stream(
+                state.transport.clone(),
+                url,
+                headers,
+                body,
+                request.model.clone(),
+            );
+            return Ok(Sse::new(events)
+                .keep_alive(KeepAlive::default())
+                .into_response());
+        }
+
         let deduplicate_stream_text = resolved.provider.deduplicate_stream_text;
         let body = anthropic_to_openai_request(
             &request,
@@ -55,6 +74,134 @@ pub async fn messages(
         )?;
         let response = state.transport.post_json(&url, &headers, &body).await?;
         Ok(Json(openai_response_to_anthropic(&response, &request.model)?).into_response())
+    }
+}
+
+fn openai_complete_to_anthropic_stream(
+    transport: HttpTransport,
+    url: String,
+    headers: Vec<Header>,
+    body: Value,
+    requested_model: String,
+) -> impl Stream<Item = Result<Event, AppError>> + Send {
+    try_stream! {
+        let response = match transport.post_json(&url, &headers, &body).await {
+            Ok(response) => response,
+            Err(err) => {
+                yield anthropic_error_event(&err)?;
+                return;
+            }
+        };
+        let message = match openai_response_to_anthropic(&response, &requested_model) {
+            Ok(message) => message,
+            Err(err) => {
+                yield anthropic_error_event(&err)?;
+                return;
+            }
+        };
+
+        let message_id = message
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("msg_modelport");
+        yield message_start_event(message_id, &requested_model)?;
+
+        if let Some(blocks) = message.get("content").and_then(Value::as_array) {
+            for (index, block) in blocks.iter().enumerate() {
+                match block.get("type").and_then(Value::as_str) {
+                    Some("text") => {
+                        let text = block.get("text").and_then(Value::as_str).unwrap_or("");
+                        yield anthropic_event("content_block_start", json!({
+                            "type": "content_block_start",
+                            "index": index,
+                            "content_block": {
+                                "type": "text",
+                                "text": ""
+                            }
+                        }))?;
+
+                        for chunk in stable_text_chunks(text) {
+                            yield anthropic_event("content_block_delta", json!({
+                                "type": "content_block_delta",
+                                "index": index,
+                                "delta": {
+                                    "type": "text_delta",
+                                    "text": chunk
+                                }
+                            }))?;
+                        }
+
+                        yield anthropic_event("content_block_stop", json!({
+                            "type": "content_block_stop",
+                            "index": index
+                        }))?;
+                    }
+                    Some("tool_use") => {
+                        let id = block
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_else(|| format!("toolu_{}", Uuid::new_v4().simple()));
+                        let name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
+                        let input = block.get("input").cloned().unwrap_or_else(|| json!({}));
+
+                        yield anthropic_event("content_block_start", json!({
+                            "type": "content_block_start",
+                            "index": index,
+                            "content_block": {
+                                "type": "tool_use",
+                                "id": id,
+                                "name": name,
+                                "input": {}
+                            }
+                        }))?;
+
+                        if input != json!({}) {
+                            let partial_json = serde_json::to_string(&input)?;
+                            yield anthropic_event("content_block_delta", json!({
+                                "type": "content_block_delta",
+                                "index": index,
+                                "delta": {
+                                    "type": "input_json_delta",
+                                    "partial_json": partial_json
+                                }
+                            }))?;
+                        }
+
+                        yield anthropic_event("content_block_stop", json!({
+                            "type": "content_block_stop",
+                            "index": index
+                        }))?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let stop_reason = message
+            .get("stop_reason")
+            .and_then(Value::as_str)
+            .unwrap_or("end_turn");
+        let output_tokens = message
+            .get("usage")
+            .and_then(|usage| usage.get("output_tokens"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+
+        yield anthropic_event("message_delta", json!({
+            "type": "message_delta",
+            "delta": {
+                "stop_reason": stop_reason,
+                "stop_sequence": null
+            },
+            "usage": {
+                "output_tokens": output_tokens
+            }
+        }))?;
+
+        yield anthropic_event("message_stop", json!({
+            "type": "message_stop"
+        }))?;
     }
 }
 
@@ -333,6 +480,72 @@ fn message_start_event(message_id: &str, model: &str) -> Result<Event, AppError>
     )
 }
 
+fn stable_text_chunks(text: &str) -> Vec<String> {
+    const MAX_CHARS: usize = 240;
+
+    let mut chunks = Vec::new();
+    let mut line_start = 0;
+    for (index, ch) in text.char_indices() {
+        if ch == '\n' {
+            push_wrapped_text_chunk(&text[line_start..index + ch.len_utf8()], &mut chunks);
+            line_start = index + ch.len_utf8();
+        }
+    }
+
+    if line_start < text.len() {
+        push_wrapped_text_chunk(&text[line_start..], &mut chunks);
+    }
+
+    if chunks.is_empty() && !text.is_empty() {
+        chunks.push(text.to_owned());
+    }
+
+    chunks
+        .into_iter()
+        .flat_map(|chunk| wrap_long_chunk(&chunk, MAX_CHARS))
+        .collect()
+}
+
+fn push_wrapped_text_chunk(chunk: &str, chunks: &mut Vec<String>) {
+    if !chunk.is_empty() {
+        chunks.push(chunk.to_owned());
+    }
+}
+
+fn wrap_long_chunk(chunk: &str, max_chars: usize) -> Vec<String> {
+    if chunk.chars().count() <= max_chars {
+        return vec![chunk.to_owned()];
+    }
+
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut count = 0usize;
+    let mut last_boundary = None;
+
+    for (index, ch) in chunk.char_indices() {
+        count += 1;
+        if ch.is_whitespace() || matches!(ch, '。' | '，' | ',' | '.' | ';' | '；' | '、') {
+            last_boundary = Some(index + ch.len_utf8());
+        }
+
+        if count >= max_chars {
+            let end = last_boundary
+                .filter(|boundary| *boundary > start)
+                .unwrap_or(index + ch.len_utf8());
+            chunks.push(chunk[start..end].to_owned());
+            start = end;
+            count = 0;
+            last_boundary = None;
+        }
+    }
+
+    if start < chunk.len() {
+        chunks.push(chunk[start..].to_owned());
+    }
+
+    chunks
+}
+
 fn text_delta(seen: &mut String, content: &str, deduplicate: bool) -> String {
     if content.is_empty() {
         return String::new();
@@ -499,7 +712,7 @@ fn collect_complete_json_objects(source: &str, best: &mut Option<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{best_complete_json_object, text_delta};
+    use super::{best_complete_json_object, stable_text_chunks, text_delta};
 
     #[test]
     fn cumulative_stream_text_is_reduced_to_suffix() {
@@ -592,6 +805,18 @@ mod tests {
         assert_eq!(
             best_complete_json_object(sources),
             Some("{\"description\": \"scan\", \"prompt\": \"list project files\"}".to_owned())
+        );
+    }
+
+    #[test]
+    fn stable_text_chunks_preserve_markdown_lines() {
+        assert_eq!(
+            stable_text_chunks("| A | B |\n| --- | --- |\n| x | y |"),
+            vec![
+                "| A | B |\n".to_owned(),
+                "| --- | --- |\n".to_owned(),
+                "| x | y |".to_owned()
+            ]
         );
     }
 }

@@ -34,12 +34,13 @@ pub async fn messages(
 
     if request.stream.unwrap_or(false) {
         if resolved.provider.buffer_stream_text {
-            let body = anthropic_to_openai_request(
+            let mut body = anthropic_to_openai_request(
                 &request,
                 &resolved.model,
                 false,
                 resolved.provider.max_tokens_field,
             )?;
+            apply_buffered_generation_defaults(&mut body);
             let events = openai_complete_to_anthropic_stream(
                 state.transport.clone(),
                 url,
@@ -111,6 +112,7 @@ fn openai_complete_to_anthropic_stream(
                 match block.get("type").and_then(Value::as_str) {
                     Some("text") => {
                         let text = block.get("text").and_then(Value::as_str).unwrap_or("");
+                        let text = suppress_repeated_output(text);
                         yield anthropic_event("content_block_start", json!({
                             "type": "content_block_start",
                             "index": index,
@@ -120,7 +122,7 @@ fn openai_complete_to_anthropic_stream(
                             }
                         }))?;
 
-                        for chunk in stable_text_chunks(text) {
+                        for chunk in stable_text_chunks(&text) {
                             yield anthropic_event("content_block_delta", json!({
                                 "type": "content_block_delta",
                                 "index": index,
@@ -203,6 +205,14 @@ fn openai_complete_to_anthropic_stream(
             "type": "message_stop"
         }))?;
     }
+}
+
+fn apply_buffered_generation_defaults(body: &mut Value) {
+    let Some(body) = body.as_object_mut() else {
+        return;
+    };
+
+    body.entry("temperature".to_owned()).or_insert(json!(0.2));
 }
 
 fn headers(provider: &crate::config::ProviderConfig) -> Result<Vec<Header>, AppError> {
@@ -480,6 +490,99 @@ fn message_start_event(message_id: &str, model: &str) -> Result<Event, AppError>
     )
 }
 
+fn suppress_repeated_output(text: &str) -> String {
+    let mut current = collapse_repeated_lines(text);
+
+    for _ in 0..4 {
+        let next = collapse_repeated_char_sequences(&current);
+        if next == current {
+            break;
+        }
+        current = next;
+    }
+
+    current
+}
+
+fn collapse_repeated_lines(text: &str) -> String {
+    let lines = text.split_inclusive('\n').collect::<Vec<_>>();
+    if lines.is_empty() {
+        return text.to_owned();
+    }
+
+    let mut output = String::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        let mut count = 1;
+        while index + count < lines.len() && lines[index + count] == line {
+            count += 1;
+        }
+
+        let kept = if count >= 3 { 1 } else { count };
+        for _ in 0..kept {
+            output.push_str(line);
+        }
+        index += count;
+    }
+
+    output
+}
+
+fn collapse_repeated_char_sequences(text: &str) -> String {
+    const MAX_UNIT_CHARS: usize = 48;
+
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut output = String::new();
+    let mut index = 0usize;
+
+    while index < chars.len() {
+        let max_width = MAX_UNIT_CHARS.min((chars.len() - index) / 3);
+        let mut repeated = None;
+
+        for width in 2..=max_width {
+            let unit = &chars[index..index + width];
+            if !is_repetition_unit(unit) {
+                continue;
+            }
+
+            let mut count = 1usize;
+            while index + (count + 1) * width <= chars.len()
+                && unit == &chars[index + count * width..index + (count + 1) * width]
+            {
+                count += 1;
+            }
+
+            let min_count = if width <= 2 { 4 } else { 3 };
+            if count >= min_count {
+                repeated = Some((width, count));
+                break;
+            }
+        }
+
+        if let Some((width, count)) = repeated {
+            for ch in &chars[index..index + width] {
+                output.push(*ch);
+            }
+            index += width * count;
+        } else {
+            output.push(chars[index]);
+            index += 1;
+        }
+    }
+
+    output
+}
+
+fn is_repetition_unit(chars: &[char]) -> bool {
+    chars
+        .iter()
+        .filter(|ch| ch.is_alphanumeric())
+        .take(2)
+        .count()
+        >= 2
+}
+
 fn stable_text_chunks(text: &str) -> Vec<String> {
     const MAX_CHARS: usize = 240;
 
@@ -712,7 +815,9 @@ fn collect_complete_json_objects(source: &str, best: &mut Option<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{best_complete_json_object, stable_text_chunks, text_delta};
+    use super::{
+        best_complete_json_object, stable_text_chunks, suppress_repeated_output, text_delta,
+    };
 
     #[test]
     fn cumulative_stream_text_is_reduced_to_suffix() {
@@ -817,6 +922,34 @@ mod tests {
                 "| --- | --- |\n".to_owned(),
                 "| x | y |".to_owned()
             ]
+        );
+    }
+
+    #[test]
+    fn suppresses_short_phrase_stutter() {
+        assert_eq!(
+            suppress_repeated_output(
+                "上次构建被中断了，让我重新验证一下：一下：一下：一下：一下：一下："
+            ),
+            "上次构建被中断了，让我重新验证一下："
+        );
+    }
+
+    #[test]
+    fn suppresses_replayed_status_phrases() {
+        assert_eq!(
+            suppress_repeated_output(
+                "构建通过，生成之前删除，生成之前删除，生成之前删除，所有页面正常"
+            ),
+            "构建通过，生成之前删除，所有页面正常"
+        );
+    }
+
+    #[test]
+    fn preserves_two_repeated_lines() {
+        assert_eq!(
+            suppress_repeated_output("same\nsame\nnext\n"),
+            "same\nsame\nnext\n"
         );
     }
 }

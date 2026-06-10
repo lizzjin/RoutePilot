@@ -1,4 +1,4 @@
-import type { User, ApiKey } from '@/types'
+import type { User, CreateUserInput, ApiKey } from '@/types'
 import { api } from '@/lib/api-client'
 
 export const usersService = {
@@ -11,9 +11,7 @@ export const usersService = {
     return user
   },
 
-  createUser: (
-    data: Omit<User, 'id' | 'createdAt' | 'lastLoginAt' | 'apiKeyCount' | 'requestCount24h'>
-  ): Promise<User> => api.post('/admin/users', data),
+  createUser: (data: CreateUserInput): Promise<User> => api.post('/admin/users', data),
 
   updateUser: async (id: string, data: Partial<User>): Promise<User> => {
     void id

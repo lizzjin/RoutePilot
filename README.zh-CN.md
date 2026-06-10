@@ -89,6 +89,8 @@ cp .env.example .env
 ```bash
 MODELPORT_BIND=127.0.0.1:17878
 MODELPORT_AUTH_TOKEN=replace-with-a-long-random-local-token
+MODELPORT_ADMIN_USERNAME=admin
+MODELPORT_ADMIN_PASSWORD=replace-with-a-long-random-admin-password
 MODELPORT_DEFAULT_PROVIDER=mimo
 
 BASE_URL=https://w.ciykj.cn/v1
@@ -109,6 +111,7 @@ CLAUDE_CODE_SUBAGENT_MODEL=mimo-v2.5-pro
 
 - `MODELPORT_AUTH_TOKEN` 是 Claude Code 调用本地 ModelPort 的 token。
 - `ANTHROPIC_AUTH_TOKEN` 必须和 `MODELPORT_AUTH_TOKEN` 一致。
+- `MODELPORT_ADMIN_USERNAME` 和 `MODELPORT_ADMIN_PASSWORD` 只用于管理后台登录。
 - `MIMO_OPENAI_API_KEY` 必须是真实上游 key，不能是占位符。
 - `.env` 已被 `.gitignore` 忽略，不要提交真实密钥。
 
@@ -348,6 +351,8 @@ x-api-key: <MODELPORT_AUTH_TOKEN>
 ```http
 Authorization: Bearer <MODELPORT_AUTH_TOKEN>
 ```
+
+管理后台使用账号登录，不再直接使用网关 token。第一个管理员会从 `MODELPORT_ADMIN_USERNAME` 和 `MODELPORT_ADMIN_PASSWORD` 初始化；如果没有配置后台密码，ModelPort 仅为了本地迁移会回退使用 `MODELPORT_AUTH_TOKEN` 作为初始密码。
 
 ## 模型切换
 

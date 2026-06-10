@@ -1,3 +1,4 @@
+mod auth;
 mod config;
 mod error;
 mod http;
@@ -8,6 +9,7 @@ mod types;
 
 use std::sync::Arc;
 
+use auth::AuthStore;
 use config::{AppConfig, ConfigIssueSeverity};
 use error::AppError;
 use http::HttpTransport;
@@ -32,8 +34,10 @@ async fn main() -> Result<(), AppError> {
 
     let config = AppConfig::load()?;
     let bind_addr = config.bind_addr;
+    let auth = Arc::new(AuthStore::load_or_bootstrap(&config)?);
     let state = AppState {
         config: Arc::new(config),
+        auth,
         transport: HttpTransport::new()?,
         metrics: Arc::new(Metrics::new()),
     };

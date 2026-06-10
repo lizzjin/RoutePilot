@@ -1,24 +1,25 @@
 import type { User } from '@/types'
 import { api } from '@/lib/api-client'
 
+interface LoginResponse {
+  user: User
+  expiresAt: string
+}
+
 export const authService = {
-  login: async (token: string): Promise<User> => {
-    if (!token.trim()) {
-      throw new Error('无效的认证令牌')
+  login: async (username: string, password: string): Promise<User> => {
+    if (!username.trim() || !password) {
+      throw new Error('无效的账号或密码')
     }
 
-    localStorage.setItem('modelport_token', token)
-    try {
-      const users = await api.get<User[]>('/admin/users')
-      return users[0]
-    } catch (error) {
-      localStorage.removeItem('modelport_token')
-      throw error
-    }
+    const response = await api.post<LoginResponse>('/admin/auth/login', {
+      username: username.trim(),
+      password,
+    })
+    return response.user
   },
 
-  getCurrentUser: async (): Promise<User> => {
-    const users = await api.get<User[]>('/admin/users')
-    return users[0]
-  },
+  logout: (): Promise<{ ok: boolean }> => api.post('/admin/auth/logout'),
+
+  getCurrentUser: (): Promise<User> => api.get('/admin/auth/me'),
 }

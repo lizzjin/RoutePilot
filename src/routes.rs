@@ -6,11 +6,10 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::DefaultBodyLimit,
-    extract::State,
+    extract::{DefaultBodyLimit, Path, State},
     http::{
-        HeaderMap,
-        header::{CONTENT_TYPE, HeaderName},
+        HeaderMap, HeaderValue,
+        header::{CONTENT_TYPE, HeaderName, SET_COOKIE},
     },
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
@@ -24,6 +23,7 @@ use tower_http::{
 use tracing::info;
 
 use crate::{
+    auth::{AuthStore, CreateUserInput, LoginInput, PublicUser},
     config::{AppConfig, ProviderProtocol},
     error::AppError,
     http::HttpTransport,
@@ -38,6 +38,7 @@ const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8"
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<AppConfig>,
+    pub auth: Arc<AuthStore>,
     pub transport: HttpTransport,
     pub metrics: Arc<Metrics>,
 }
@@ -51,6 +52,9 @@ pub fn router(state: AppState) -> Router {
         .route("/metrics", get(metrics))
         .route("/v1/models", get(models))
         .route("/v1/messages", post(messages))
+        .route("/admin/auth/login", post(admin_login))
+        .route("/admin/auth/logout", post(admin_logout))
+        .route("/admin/auth/me", get(admin_me))
         .route("/admin/dashboard", get(admin_dashboard))
         .route("/admin/providers", get(admin_providers))
         .route(
@@ -219,11 +223,62 @@ async fn messages(
     result
 }
 
+async fn admin_login(
+    State(state): State<AppState>,
+    Json(input): Json<LoginInput>,
+) -> Result<Response, AppError> {
+    let login = state.auth.login(input)?;
+    let mut response = Json(json!({
+        "user": login.user,
+        "expiresAt": login.expires_at_ms.to_string(),
+    }))
+    .into_response();
+    let cookie = state.auth.session_cookie(&login.session_token);
+    response.headers_mut().insert(
+        SET_COOKIE,
+        HeaderValue::from_str(&cookie)
+            .map_err(|err| AppError::Config(format!("invalid admin session cookie: {err}")))?,
+    );
+    Ok(response)
+}
+
+async fn admin_logout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    state.auth.logout(&headers);
+    let mut response = Json(json!({ "ok": true })).into_response();
+    let cookie = state.auth.clear_cookie();
+    response.headers_mut().insert(
+        SET_COOKIE,
+        HeaderValue::from_str(&cookie)
+            .map_err(|err| AppError::Config(format!("invalid admin session cookie: {err}")))?,
+    );
+    Ok(response)
+}
+
+async fn admin_me(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AppError> {
+    let user = state.auth.require_session(&headers)?;
+    Ok(Json(json!(user)))
+}
+
+fn require_admin_user(state: &AppState, headers: &HeaderMap) -> Result<PublicUser, AppError> {
+    let user = state.auth.require_session(headers)?;
+    if user.role == "admin" {
+        Ok(user)
+    } else {
+        Err(AppError::Forbidden("admin role required".to_owned()))
+    }
+}
+
 async fn admin_dashboard(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
 
     let snapshot = state.metrics.snapshot();
     let total_requests = snapshot
@@ -279,6 +334,7 @@ async fn admin_dashboard(
         .iter()
         .filter(|provider| provider.get("status").and_then(Value::as_str) == Some("active"))
         .count();
+    let active_users = state.auth.active_user_count();
     let now = now_millis_string();
 
     Ok(Json(json!({
@@ -287,7 +343,7 @@ async fn admin_dashboard(
         "successRate": success_rate,
         "activeProviders": active_providers,
         "totalProviders": providers.len(),
-        "activeUsers": 1,
+        "activeUsers": active_users,
         "totalModels": state.config.model_list().len(),
         "avgLatencyMs": avg_latency_ms,
         "requestTimeSeries": time_series(total_requests),
@@ -342,7 +398,7 @@ async fn admin_providers(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     Ok(Json(Value::Array(provider_rows(&state))))
 }
 
@@ -350,7 +406,7 @@ async fn admin_aliases(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     Ok(Json(Value::Array(alias_rows(&state))))
 }
 
@@ -359,7 +415,7 @@ async fn admin_create_alias(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     let alias = body.get("alias").and_then(Value::as_str).unwrap_or("");
     let target = body.get("target").and_then(Value::as_str).unwrap_or("");
     Ok(Json(alias_row(&state, alias, target)))
@@ -369,7 +425,7 @@ async fn admin_delete_alias(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -377,7 +433,7 @@ async fn admin_settings(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     Ok(Json(settings_row(&state)))
 }
 
@@ -386,7 +442,7 @@ async fn admin_update_settings(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     Ok(Json(if body.is_object() {
         body
     } else {
@@ -399,7 +455,7 @@ async fn admin_test_provider(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     let provider_id = body
         .get("providerId")
         .and_then(Value::as_str)
@@ -425,7 +481,7 @@ async fn admin_logs(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     let logs = log_rows(&state);
     Ok(Json(json!({
         "logs": logs,
@@ -437,7 +493,7 @@ async fn admin_latency(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     let snapshot = state.metrics.snapshot();
     let total_requests = snapshot
         .messages
@@ -467,7 +523,7 @@ async fn admin_users(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     let requests = state
         .metrics
         .snapshot()
@@ -475,33 +531,25 @@ async fn admin_users(
         .iter()
         .map(|message| message.requests_total)
         .sum::<u64>();
-    Ok(Json(json!([admin_user_row(requests)])))
+    Ok(Json(json!(state.auth.list_users(requests))))
 }
 
 async fn admin_create_user(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<Value>,
+    Json(body): Json<CreateUserInput>,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
-    Ok(Json(json!({
-        "id": format!("usr_{}", now_millis_string()),
-        "username": body.get("username").and_then(Value::as_str).unwrap_or("local-user"),
-        "email": body.get("email").and_then(Value::as_str).unwrap_or("local@modelport"),
-        "role": body.get("role").and_then(Value::as_str).unwrap_or("user"),
-        "status": body.get("status").and_then(Value::as_str).unwrap_or("active"),
-        "createdAt": now_millis_string(),
-        "lastLoginAt": now_millis_string(),
-        "apiKeyCount": 0,
-        "requestCount24h": 0,
-    })))
+    require_admin_user(&state, &headers)?;
+    Ok(Json(json!(state.auth.create_user(body)?)))
 }
 
 async fn admin_delete_user(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Path(user_id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    let current_user = require_admin_user(&state, &headers)?;
+    state.auth.delete_user(&user_id, &current_user.id)?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -509,7 +557,7 @@ async fn admin_user_api_keys(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     Ok(Json(json!([{
         "id": "key_modelport_local",
         "userId": "usr_local_admin",
@@ -527,7 +575,7 @@ async fn admin_create_api_key(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     Ok(Json(json!({
         "id": format!("key_{}", now_millis_string()),
         "userId": body.get("userId").and_then(Value::as_str).unwrap_or("usr_local_admin"),
@@ -544,7 +592,7 @@ async fn admin_revoke_api_key(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -552,7 +600,7 @@ async fn admin_quotas(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     Ok(Json(json!([])))
 }
 
@@ -561,7 +609,7 @@ async fn admin_create_quota(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     Ok(Json(body))
 }
 
@@ -570,7 +618,7 @@ async fn admin_update_quota(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     Ok(Json(body))
 }
 
@@ -578,7 +626,7 @@ async fn admin_delete_quota(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    state.config.validate_client_auth(&headers)?;
+    require_admin_user(&state, &headers)?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -692,20 +740,6 @@ fn log_rows(state: &AppState) -> Vec<Value> {
         .collect()
 }
 
-fn admin_user_row(requests: u64) -> Value {
-    json!({
-        "id": "usr_local_admin",
-        "username": "local-admin",
-        "email": "local@modelport",
-        "role": "admin",
-        "status": "active",
-        "createdAt": now_millis_string(),
-        "lastLoginAt": now_millis_string(),
-        "apiKeyCount": 1,
-        "requestCount24h": requests,
-    })
-}
-
 fn provider_protocol_value(protocol: ProviderProtocol) -> &'static str {
     match protocol {
         ProviderProtocol::Anthropic => "anthropic",
@@ -771,7 +805,7 @@ mod tests {
         body::{Body, to_bytes},
         http::{
             Request, StatusCode,
-            header::{CONTENT_TYPE, HeaderValue},
+            header::{CONTENT_TYPE, COOKIE, HeaderValue, SET_COOKIE},
         },
     };
     use serde_json::{Value, json};
@@ -780,6 +814,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        auth::{AuthStore, CreateUserInput},
         config::{MaxTokensField, ProviderConfig},
         metrics::Metrics,
     };
@@ -1028,6 +1063,64 @@ data: [DONE]
         ));
     }
 
+    #[tokio::test]
+    async fn admin_dashboard_requires_admin_session_not_router_token() {
+        let upstream = spawn_openai_upstream(StatusCode::OK, "{}", "application/json").await;
+        let app = router(test_state_with_admin(upstream, 1024 * 1024));
+
+        let token_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/admin/dashboard")
+                    .header("x-api-key", CLIENT_TOKEN)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(token_response.status(), StatusCode::UNAUTHORIZED);
+
+        let login_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/auth/login")
+                    .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+                    .body(Body::from(
+                        json!({
+                            "username": "admin",
+                            "password": "strong-password-123",
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(login_response.status(), StatusCode::OK);
+        let session_cookie = login_response
+            .headers()
+            .get(SET_COOKIE)
+            .expect("login should set a session cookie")
+            .clone();
+
+        let dashboard_response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/admin/dashboard")
+                    .header(COOKIE, session_cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dashboard_response.status(), StatusCode::OK);
+    }
+
     async fn post_message(app: Router, body: Value) -> (StatusCode, String) {
         let response = app
             .oneshot(
@@ -1069,6 +1162,21 @@ data: [DONE]
         test_state_with_flags(base_url, max_request_body_bytes, true, false)
     }
 
+    fn test_state_with_admin(base_url: String, max_request_body_bytes: usize) -> AppState {
+        let state = test_state(base_url, max_request_body_bytes);
+        state
+            .auth
+            .create_user(CreateUserInput {
+                username: "admin".to_owned(),
+                email: "admin@modelport.local".to_owned(),
+                password: "strong-password-123".to_owned(),
+                role: Some("admin".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        state
+    }
+
     fn test_state_with_flags(
         base_url: String,
         max_request_body_bytes: usize,
@@ -1102,6 +1210,7 @@ data: [DONE]
                 providers: HashMap::from([("mimo".to_owned(), provider)]),
                 aliases: HashMap::new(),
             }),
+            auth: Arc::new(AuthStore::for_tests()),
             transport: HttpTransport::new().unwrap(),
             metrics: Arc::new(Metrics::new()),
         }

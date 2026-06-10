@@ -12,6 +12,8 @@ pub enum AppError {
     Auth,
     #[error("configuration error: {0}")]
     Config(String),
+    #[error("forbidden: {0}")]
+    Forbidden(String),
     #[error("invalid request: {0}")]
     InvalidRequest(String),
     #[error("missing secret environment variable: {0}")]
@@ -47,6 +49,7 @@ impl IntoResponse for AppError {
         let status = match self {
             AppError::Auth => StatusCode::UNAUTHORIZED,
             AppError::Config(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
             AppError::MissingSecret(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::ProviderNotFound(_) => StatusCode::BAD_REQUEST,
@@ -59,6 +62,7 @@ impl IntoResponse for AppError {
 
         let kind = match status {
             StatusCode::UNAUTHORIZED => "authentication_error",
+            StatusCode::FORBIDDEN => "forbidden_error",
             StatusCode::BAD_REQUEST => "invalid_request_error",
             StatusCode::BAD_GATEWAY => "upstream_error",
             _ => "server_error",

@@ -182,6 +182,7 @@ pub fn anthropic_error_event(error: &AppError) -> Result<Event, AppError> {
     let kind = match error {
         AppError::InvalidRequest(_) | AppError::ProviderNotFound(_) => "invalid_request_error",
         AppError::Auth => "authentication_error",
+        AppError::Forbidden(_) => "permission_error",
         AppError::MissingSecret(_) | AppError::Config(_) => "server_error",
         AppError::Transport(_) | AppError::Upstream { .. } | AppError::UpstreamProtocol(_) => {
             "api_error"

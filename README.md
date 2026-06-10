@@ -88,6 +88,8 @@ Edit `.env`. At minimum, set:
 ```bash
 MODELPORT_BIND=127.0.0.1:17878
 MODELPORT_AUTH_TOKEN=replace-with-a-long-random-local-token
+MODELPORT_ADMIN_USERNAME=admin
+MODELPORT_ADMIN_PASSWORD=replace-with-a-long-random-admin-password
 MODELPORT_DEFAULT_PROVIDER=mimo
 
 BASE_URL=https://w.ciykj.cn/v1
@@ -108,6 +110,7 @@ Notes:
 
 - `MODELPORT_AUTH_TOKEN` is the local token used by Claude Code to call ModelPort.
 - `ANTHROPIC_AUTH_TOKEN` must match `MODELPORT_AUTH_TOKEN`.
+- `MODELPORT_ADMIN_USERNAME` and `MODELPORT_ADMIN_PASSWORD` are used only for the management dashboard.
 - `MIMO_OPENAI_API_KEY` must be a real upstream key, not a placeholder.
 - `.env` is ignored by `.gitignore`; do not commit real secrets.
 
@@ -347,6 +350,8 @@ or:
 ```http
 Authorization: Bearer <MODELPORT_AUTH_TOKEN>
 ```
+
+The management dashboard uses account login instead of this router token. The first admin user is bootstrapped from `MODELPORT_ADMIN_USERNAME` and `MODELPORT_ADMIN_PASSWORD`; if no admin password is configured, ModelPort falls back to `MODELPORT_AUTH_TOKEN` only for initial local migration.
 
 ## Model Switching
 

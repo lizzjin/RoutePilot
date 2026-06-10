@@ -12,6 +12,14 @@ export interface User {
   requestCount24h: number
 }
 
+export interface CreateUserInput {
+  username: string
+  email: string
+  password: string
+  role: UserRole
+  status: 'active' | 'disabled' | 'suspended'
+}
+
 export interface ApiKey {
   id: string
   userId: string

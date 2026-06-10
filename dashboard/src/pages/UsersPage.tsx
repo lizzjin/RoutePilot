@@ -27,7 +27,13 @@ export function UsersPage() {
   const [showDetailUser, setShowDetailUser] = useState<string | null>(null)
   const [newKeyResult, setNewKeyResult] = useState<string | null>(null)
 
-  const [form, setForm] = useState({ username: '', email: '', role: 'user' as UserRole, status: 'active' as 'active' | 'disabled' | 'suspended' })
+  const [form, setForm] = useState({
+    username: '',
+    email: '',
+    password: '',
+    role: 'user' as UserRole,
+    status: 'active' as 'active' | 'disabled' | 'suspended',
+  })
   const [keyName, setKeyName] = useState('')
 
   const { data: userApiKeys = [] } = useUserApiKeys(showDetailUser || '')
@@ -36,7 +42,7 @@ export function UsersPage() {
     createUser.mutate(form, {
       onSuccess: () => {
         setShowCreateDialog(false)
-        setForm({ username: '', email: '', role: 'user', status: 'active' })
+        setForm({ username: '', email: '', password: '', role: 'user', status: 'active' })
       },
     })
   }
@@ -142,6 +148,16 @@ export function UsersPage() {
             <div className="space-y-2">
               <Label>邮箱</Label>
               <Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="输入邮箱" />
+            </div>
+            <div className="space-y-2">
+              <Label>初始密码</Label>
+              <Input
+                type="password"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                placeholder="至少 12 个字符"
+                autoComplete="new-password"
+              />
             </div>
             <div className="space-y-2">
               <Label>角色</Label>

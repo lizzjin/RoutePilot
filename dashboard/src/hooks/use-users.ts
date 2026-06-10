@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { usersService } from '@/services/users.service'
 import { queryKeys } from './use-dashboard'
-import type { User } from '@/types'
+import type { User, CreateUserInput } from '@/types'
 
 export function useUsers() {
   return useQuery({
@@ -29,8 +29,7 @@ export function useUserApiKeys(userId: string) {
 export function useCreateUser() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (data: Omit<User, 'id' | 'createdAt' | 'lastLoginAt' | 'apiKeyCount' | 'requestCount24h'>) =>
-      usersService.createUser(data),
+    mutationFn: (data: CreateUserInput) => usersService.createUser(data),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.users }),
   })
 }

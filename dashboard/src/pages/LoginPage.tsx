@@ -8,7 +8,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Zap, Loader2 } from 'lucide-react'
 
 export function LoginPage() {
-  const [token, setToken] = useState('')
+  const [username, setUsername] = useState('admin')
+  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const login = useAuthStore((s) => s.login)
@@ -16,8 +17,8 @@ export function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!token.trim()) {
-      setError('请输入认证令牌')
+    if (!username.trim() || !password) {
+      setError('请输入用户名和密码')
       return
     }
 
@@ -25,10 +26,10 @@ export function LoginPage() {
     setError('')
 
     try {
-      await login(token.trim())
+      await login(username.trim(), password)
       navigate('/dashboard')
     } catch {
-      setError('认证失败，请检查令牌是否正确')
+      setError('登录失败，请检查用户名或密码')
     } finally {
       setLoading(false)
     }
@@ -42,19 +43,32 @@ export function LoginPage() {
             <Zap className="h-6 w-6 text-primary" />
           </div>
           <CardTitle className="text-2xl">ModelPort 管理后台</CardTitle>
-          <CardDescription>请输入您的认证令牌以登录系统</CardDescription>
+          <CardDescription>请输入管理员账号和密码</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="token">认证令牌</Label>
+              <Label htmlFor="username">用户名</Label>
               <Input
-                id="token"
-                type="password"
-                placeholder="请输入 MODELPORT_AUTH_TOKEN"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
+                id="username"
+                type="text"
+                placeholder="admin"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
                 disabled={loading}
+                autoComplete="username"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">密码</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="请输入密码"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
+                autoComplete="current-password"
               />
               {error && <p className="text-sm text-destructive">{error}</p>}
             </div>
@@ -63,7 +77,7 @@ export function LoginPage() {
               登录
             </Button>
             <p className="text-center text-xs text-muted-foreground">
-              使用当前后端的 MODELPORT_AUTH_TOKEN 登录
+              使用管理员账号登录
             </p>
           </form>
         </CardContent>

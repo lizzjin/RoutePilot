@@ -1,25 +1,18 @@
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = localStorage.getItem('modelport_token')
-
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
   }
 
-  if (token) {
-    headers['x-api-key'] = token
-    headers['Authorization'] = `Bearer ${token}`
-  }
-
   const response = await fetch(`${BASE_URL}${path}`, {
     ...options,
     headers,
+    credentials: 'include',
   })
 
   if (response.status === 401) {
-    localStorage.removeItem('modelport_token')
     window.location.href = '/login'
     throw new Error('Unauthorized')
   }

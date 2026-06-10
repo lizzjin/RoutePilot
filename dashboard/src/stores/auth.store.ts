@@ -3,40 +3,35 @@ import type { User } from '@/types'
 import { authService } from '@/services/auth.service'
 
 interface AuthState {
-  token: string | null
   currentUser: User | null
   isAuthenticated: boolean
-  login: (token: string) => Promise<void>
-  logout: () => void
-  initialize: () => void
+  isInitializing: boolean
+  login: (username: string, password: string) => Promise<void>
+  logout: () => Promise<void>
+  initialize: () => Promise<void>
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
-  token: null,
   currentUser: null,
   isAuthenticated: false,
+  isInitializing: true,
 
-  login: async (token: string) => {
-    const adminUser = await authService.login(token)
-    set({ token, currentUser: adminUser, isAuthenticated: true })
+  login: async (username: string, password: string) => {
+    const adminUser = await authService.login(username, password)
+    set({ currentUser: adminUser, isAuthenticated: true, isInitializing: false })
   },
 
-  logout: () => {
-    localStorage.removeItem('modelport_token')
-    set({ token: null, currentUser: null, isAuthenticated: false })
+  logout: async () => {
+    await authService.logout().catch(() => undefined)
+    set({ currentUser: null, isAuthenticated: false, isInitializing: false })
   },
 
-  initialize: () => {
-    const token = localStorage.getItem('modelport_token')
-    if (token) {
-      set({ token, isAuthenticated: true })
-      authService
-        .getCurrentUser()
-        .then((currentUser) => set({ currentUser }))
-        .catch(() => {
-          localStorage.removeItem('modelport_token')
-          set({ token: null, currentUser: null, isAuthenticated: false })
-        })
+  initialize: async () => {
+    try {
+      const currentUser = await authService.getCurrentUser()
+      set({ currentUser, isAuthenticated: true, isInitializing: false })
+    } catch {
+      set({ currentUser: null, isAuthenticated: false, isInitializing: false })
     }
   },
 }))

@@ -40,6 +40,7 @@ pub struct ProviderConfig {
     pub max_tokens_field: MaxTokensField,
     pub deduplicate_stream_text: bool,
     pub buffer_stream_text: bool,
+    pub fidelity_mode: FidelityMode,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -55,6 +56,14 @@ pub enum MaxTokensField {
     MaxCompletionTokens,
     MaxTokens,
     Both,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FidelityMode {
+    Strict,
+    BestEffort,
+    Stability,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +123,7 @@ struct ProviderSection {
     max_tokens_field: Option<MaxTokensField>,
     deduplicate_stream_text: Option<bool>,
     buffer_stream_text: Option<bool>,
+    fidelity_mode: Option<FidelityMode>,
 }
 
 struct ProviderSpec {
@@ -544,6 +554,9 @@ impl AppConfig {
                 continue;
             }
 
+            let deduplicate_stream_text = section.deduplicate_stream_text.unwrap_or(false);
+            let buffer_stream_text = section.buffer_stream_text.unwrap_or(false);
+
             insert_provider(
                 &mut providers,
                 &mut provider_order,
@@ -562,8 +575,11 @@ impl AppConfig {
                     max_tokens_field: section
                         .max_tokens_field
                         .unwrap_or(MaxTokensField::MaxCompletionTokens),
-                    deduplicate_stream_text: section.deduplicate_stream_text.unwrap_or(false),
-                    buffer_stream_text: section.buffer_stream_text.unwrap_or(false),
+                    deduplicate_stream_text,
+                    buffer_stream_text,
+                    fidelity_mode: section.fidelity_mode.unwrap_or_else(|| {
+                        default_fidelity_mode(&id, deduplicate_stream_text, buffer_stream_text)
+                    }),
                 },
             );
         }
@@ -1031,6 +1047,63 @@ const OPTIONAL_PROVIDER_SPECS: &[ProviderSpec] = &[
         max_tokens_field: MaxTokensField::MaxTokens,
         deduplicate_stream_text: false,
     },
+    ProviderSpec {
+        id: "local_sglang",
+        display_name: "Local SGLang",
+        protocol: ProviderProtocol::OpenaiCompat,
+        base_url_env: "SGLANG_BASE_URL",
+        base_url_env_fallbacks: &[],
+        default_base_url: "http://127.0.0.1:30000/v1",
+        api_key_env: Some("SGLANG_API_KEY"),
+        api_key_env_fallbacks: &[],
+        api_key_required: false,
+        default_model_env: "SGLANG_MODEL",
+        default_model: "local-model",
+        models_env: "SGLANG_MODELS",
+        models: &["local-model"],
+        model_prefixes: &[],
+        passthrough_unknown_models: true,
+        max_tokens_field: MaxTokensField::MaxTokens,
+        deduplicate_stream_text: false,
+    },
+    ProviderSpec {
+        id: "local_vllm",
+        display_name: "Local vLLM",
+        protocol: ProviderProtocol::OpenaiCompat,
+        base_url_env: "VLLM_BASE_URL",
+        base_url_env_fallbacks: &[],
+        default_base_url: "http://127.0.0.1:8000/v1",
+        api_key_env: Some("VLLM_API_KEY"),
+        api_key_env_fallbacks: &[],
+        api_key_required: false,
+        default_model_env: "VLLM_MODEL",
+        default_model: "local-model",
+        models_env: "VLLM_MODELS",
+        models: &["local-model"],
+        model_prefixes: &[],
+        passthrough_unknown_models: true,
+        max_tokens_field: MaxTokensField::MaxTokens,
+        deduplicate_stream_text: false,
+    },
+    ProviderSpec {
+        id: "local_llamacpp",
+        display_name: "Local llama.cpp",
+        protocol: ProviderProtocol::OpenaiCompat,
+        base_url_env: "LLAMACPP_BASE_URL",
+        base_url_env_fallbacks: &[],
+        default_base_url: "http://127.0.0.1:8080/v1",
+        api_key_env: Some("LLAMACPP_API_KEY"),
+        api_key_env_fallbacks: &[],
+        api_key_required: false,
+        default_model_env: "LLAMACPP_MODEL",
+        default_model: "local-model",
+        models_env: "LLAMACPP_MODELS",
+        models: &["local-model"],
+        model_prefixes: &[],
+        passthrough_unknown_models: true,
+        max_tokens_field: MaxTokensField::MaxTokens,
+        deduplicate_stream_text: false,
+    },
 ];
 
 const CUSTOM_OPENAI_SPEC: ProviderSpec = ProviderSpec {
@@ -1081,6 +1154,7 @@ fn insert_spec(
         .api_key_env
         .and_then(|name| env::var(name).ok())
         .or_else(|| first_env(spec.api_key_env_fallbacks));
+    let buffer_stream_text = default_buffer_stream_text(spec.id);
 
     insert_provider(
         providers,
@@ -1106,9 +1180,26 @@ fn insert_spec(
             passthrough_unknown_models: spec.passthrough_unknown_models,
             max_tokens_field: spec.max_tokens_field,
             deduplicate_stream_text: spec.deduplicate_stream_text,
-            buffer_stream_text: default_buffer_stream_text(spec.id),
+            buffer_stream_text,
+            fidelity_mode: default_fidelity_mode(
+                spec.id,
+                spec.deduplicate_stream_text,
+                buffer_stream_text,
+            ),
         },
     );
+}
+
+fn default_fidelity_mode(
+    provider_id: &str,
+    deduplicate_stream_text: bool,
+    buffer_stream_text: bool,
+) -> FidelityMode {
+    if provider_id == "mimo" || deduplicate_stream_text || buffer_stream_text {
+        FidelityMode::Stability
+    } else {
+        FidelityMode::BestEffort
+    }
 }
 
 fn default_buffer_stream_text(provider_id: &str) -> bool {
@@ -1376,6 +1467,14 @@ fn validate_provider(
             "provider `mimo` should keep buffer_stream_text=true for stable Claude streaming output",
         ));
     }
+
+    if provider.fidelity_mode == FidelityMode::Strict
+        && (provider.deduplicate_stream_text || provider.buffer_stream_text)
+    {
+        issues.push(ConfigIssue::error(format!(
+            "provider `{id}` cannot use fidelity_mode=strict together with stream text rewriting"
+        )));
+    }
 }
 
 fn is_placeholder_value(value: &str) -> bool {
@@ -1443,6 +1542,7 @@ mod tests {
             max_tokens_field: MaxTokensField::MaxCompletionTokens,
             deduplicate_stream_text: true,
             buffer_stream_text: true,
+            fidelity_mode: FidelityMode::Stability,
         };
         let openrouter = ProviderConfig {
             display_name: "OpenRouter".to_owned(),
@@ -1458,6 +1558,7 @@ mod tests {
             max_tokens_field: MaxTokensField::MaxCompletionTokens,
             deduplicate_stream_text: false,
             buffer_stream_text: false,
+            fidelity_mode: FidelityMode::BestEffort,
         };
 
         AppConfig {
@@ -1494,6 +1595,46 @@ mod tests {
 
         assert_eq!(resolved.provider.display_name, "OpenRouter");
         assert_eq!(resolved.model, "anthropic/claude-sonnet-4");
+    }
+
+    #[test]
+    fn parses_local_openai_compatible_provider_from_toml() {
+        let file: FileConfig = toml::from_str(
+            r#"
+            default_provider = "local_vllm"
+            provider_order = ["local_vllm"]
+
+            [server]
+            bind = "127.0.0.1:17878"
+
+            [providers.local_vllm]
+            display_name = "Local vLLM"
+            protocol = "openai-compat"
+            base_url = "http://127.0.0.1:8000/v1"
+            api_key_required = false
+            default_model = "qwen2.5-coder"
+            models = ["qwen2.5-coder"]
+            passthrough_unknown_models = true
+            max_tokens_field = "max_tokens"
+            fidelity_mode = "strict"
+            "#,
+        )
+        .unwrap();
+
+        let provider = file
+            .providers
+            .as_ref()
+            .and_then(|providers| providers.get("local_vllm"))
+            .unwrap();
+
+        assert_eq!(provider.protocol, ProviderProtocol::OpenaiCompat);
+        assert_eq!(
+            provider.base_url.as_deref(),
+            Some("http://127.0.0.1:8000/v1")
+        );
+        assert_eq!(provider.api_key_required, Some(false));
+        assert_eq!(provider.max_tokens_field, Some(MaxTokensField::MaxTokens));
+        assert_eq!(provider.fidelity_mode, Some(FidelityMode::Strict));
     }
 
     #[test]

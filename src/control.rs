@@ -12,7 +12,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::error::AppError;
+use crate::{error::AppError, pricing};
 
 const DEFAULT_USAGE_LIMIT: usize = 5_000;
 const DAY_MS: u64 = 24 * 60 * 60 * 1_000;
@@ -133,9 +133,13 @@ struct UsageRecord {
     username: String,
     api_key_id: Option<String>,
     api_key_name: Option<String>,
+    #[serde(default)]
+    api_key_group: Option<String>,
     model: String,
     resolved_model: String,
     provider: String,
+    #[serde(default = "default_protocol")]
+    protocol: String,
     stream: bool,
     status: String,
     status_code: u16,
@@ -147,6 +151,14 @@ struct UsageRecord {
     cache_read_tokens: u64,
     cost_estimate: f64,
     latency_ms: u64,
+    #[serde(default)]
+    first_byte_latency_ms: Option<u64>,
+    #[serde(default)]
+    retry_count: u32,
+    #[serde(default)]
+    client_ip: Option<String>,
+    #[serde(default)]
+    request_path: Option<String>,
     error_message: Option<String>,
 }
 
@@ -227,6 +239,7 @@ pub struct ClientIdentity {
     pub username: String,
     pub api_key_id: Option<String>,
     pub api_key_name: Option<String>,
+    pub api_key_group: Option<String>,
     pub enforce_quotas: bool,
 }
 
@@ -236,11 +249,16 @@ pub struct UsageEventInput {
     pub model: String,
     pub resolved_model: String,
     pub provider: String,
+    pub protocol: String,
     pub stream: bool,
     pub success: bool,
     pub status_code: u16,
     pub estimate: UsageEstimate,
     pub latency: Duration,
+    pub first_byte_latency: Option<Duration>,
+    pub retry_count: u32,
+    pub client_ip: Option<String>,
+    pub request_path: String,
     pub error_message: Option<String>,
 }
 
@@ -516,6 +534,7 @@ impl ControlStore {
             username: record.username.clone(),
             api_key_id: Some(record.id.clone()),
             api_key_name: Some(record.name.clone()),
+            api_key_group: record.group.clone(),
             enforce_quotas: true,
         };
         self.save_locked(&inner)?;
@@ -528,6 +547,7 @@ impl ControlStore {
             username: "local-admin".to_owned(),
             api_key_id: None,
             api_key_name: Some("MODELPORT_AUTH_TOKEN".to_owned()),
+            api_key_group: Some("legacy".to_owned()),
             enforce_quotas: false,
         }
     }
@@ -728,9 +748,11 @@ impl ControlStore {
             username: input.identity.username,
             api_key_id: input.identity.api_key_id,
             api_key_name: input.identity.api_key_name,
+            api_key_group: input.identity.api_key_group,
             model: input.model,
             resolved_model: input.resolved_model,
             provider: input.provider,
+            protocol: input.protocol,
             stream: input.stream,
             status: if input.success { "success" } else { "error" }.to_owned(),
             status_code: input.status_code,
@@ -740,6 +762,10 @@ impl ControlStore {
             cache_read_tokens: input.estimate.cache_read_tokens,
             cost_estimate: input.estimate.cost_estimate,
             latency_ms: duration_ms(input.latency),
+            first_byte_latency_ms: input.first_byte_latency.map(duration_ms),
+            retry_count: input.retry_count,
+            client_ip: input.client_ip,
+            request_path: Some(input.request_path),
             error_message: input.error_message,
         });
         let overflow = inner.usage.len().saturating_sub(self.usage_limit);
@@ -756,6 +782,38 @@ impl ControlStore {
             .iter()
             .rev()
             .map(|record| {
+                let pricing = pricing::pricing_for_model(&record.resolved_model);
+                let input_cost =
+                    pricing::cost_component(record.input_tokens, pricing.input_per_million);
+                let output_cost =
+                    pricing::cost_component(record.output_tokens, pricing.output_per_million);
+                let cache_write_cost = pricing::cost_component(
+                    record.cache_write_tokens,
+                    pricing.cache_write_per_million,
+                );
+                let cache_read_cost = pricing::cost_component(
+                    record.cache_read_tokens,
+                    pricing.cache_read_per_million,
+                );
+                let billed_input_tokens = record
+                    .input_tokens
+                    .saturating_add(record.cache_write_tokens)
+                    .saturating_add(record.cache_read_tokens);
+                let total_tokens = billed_input_tokens.saturating_add(record.output_tokens);
+                let cache_total = record
+                    .cache_write_tokens
+                    .saturating_add(record.cache_read_tokens);
+                let cache_hit_rate = if billed_input_tokens == 0 {
+                    0.0
+                } else {
+                    (cache_total as f64 / billed_input_tokens as f64) * 100.0
+                };
+                let first_byte_latency_ms =
+                    record.first_byte_latency_ms.unwrap_or(record.latency_ms);
+                let request_path = record
+                    .request_path
+                    .clone()
+                    .unwrap_or_else(|| "/v1/messages".to_owned());
                 json!({
                     "id": record.id,
                     "timestamp": record.timestamp_ms.to_string(),
@@ -763,10 +821,16 @@ impl ControlStore {
                     "username": record.username,
                     "apiKeyId": record.api_key_id,
                     "apiKeyName": record.api_key_name,
+                    "apiKeyGroup": record.api_key_group,
+                    "tokenName": record.api_key_name,
+                    "group": record.api_key_group,
+                    "channelId": record.provider,
+                    "channelName": record.provider,
                     "model": record.model,
                     "resolvedModel": record.resolved_model,
                     "provider": record.provider,
-                    "protocol": "openai-compat",
+                    "protocol": record.protocol,
+                    "requestType": if record.status == "success" { "consume" } else { "error" },
                     "stream": if record.stream { "stream" } else { "non-stream" },
                     "status": record.status,
                     "statusCode": record.status_code,
@@ -774,8 +838,31 @@ impl ControlStore {
                     "outputTokens": record.output_tokens,
                     "cacheWriteTokens": record.cache_write_tokens,
                     "cacheReadTokens": record.cache_read_tokens,
+                    "billedInputTokens": billed_input_tokens,
+                    "totalTokens": total_tokens,
+                    "cacheHitRate": cache_hit_rate,
                     "costEstimate": record.cost_estimate,
+                    "modelPricing": pricing,
+                    "costBreakdown": {
+                        "inputCost": input_cost,
+                        "outputCost": output_cost,
+                        "cacheWriteCost": cache_write_cost,
+                        "cacheReadCost": cache_read_cost,
+                        "totalCost": record.cost_estimate,
+                    },
                     "latencyMs": record.latency_ms,
+                    "firstByteLatencyMs": first_byte_latency_ms,
+                    "retryCount": record.retry_count,
+                    "clientIp": record.client_ip,
+                    "requestPath": request_path,
+                    "billingMode": "upstream-returned",
+                    "detail": format!(
+                        "模型: {} · 缓存创建: ${:.6}/1M · 缓存命中: ${:.6}/1M · 分组: {}",
+                        record.resolved_model,
+                        pricing.cache_write_per_million,
+                        pricing.cache_read_per_million,
+                        record.api_key_group.as_deref().unwrap_or("default"),
+                    ),
                     "errorMessage": record.error_message,
                 })
             })
@@ -1005,6 +1092,10 @@ fn effective_aliases_locked(
     aliases
 }
 
+fn default_protocol() -> String {
+    "openai-compat".to_owned()
+}
+
 fn public_quota(record: &QuotaRecord) -> PublicQuota {
     PublicQuota {
         id: record.id.clone(),
@@ -1153,6 +1244,7 @@ mod tests {
             username: "test-user".to_owned(),
             api_key_id: Some("key_test".to_owned()),
             api_key_name: Some("local".to_owned()),
+            api_key_group: Some("test".to_owned()),
             enforce_quotas: true,
         };
         store
@@ -1175,11 +1267,16 @@ mod tests {
                 model: "mimo-v2.5-pro".to_owned(),
                 resolved_model: "mimo-v2.5-pro".to_owned(),
                 provider: "mimo".to_owned(),
+                protocol: "openai-compat".to_owned(),
                 stream: false,
                 success: true,
                 status_code: 200,
                 estimate: UsageEstimate::default(),
                 latency: Duration::from_millis(10),
+                first_byte_latency: Some(Duration::from_millis(10)),
+                retry_count: 0,
+                client_ip: Some("127.0.0.1".to_owned()),
+                request_path: "/v1/messages".to_owned(),
                 error_message: None,
             })
             .unwrap();

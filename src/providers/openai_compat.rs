@@ -14,14 +14,14 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
-    config::ResolvedProvider,
+    config::{FidelityMode, ResolvedProvider},
     error::AppError,
     http::{Header, HttpTransport, SseFrameStream},
     pricing::{self, USAGE_HEADER},
     routes::AppState,
     types::{
         AnthropicRequest, anthropic_error_event, anthropic_event, anthropic_to_openai_request,
-        openai_response_to_anthropic,
+        openai_response_to_anthropic, validate_anthropic_to_openai_fidelity,
     },
 };
 
@@ -32,6 +32,15 @@ pub async fn messages(
 ) -> Result<Response, AppError> {
     let headers = headers(&resolved.provider)?;
     let url = resolved.provider.endpoint("/chat/completions");
+
+    if resolved.provider.fidelity_mode == FidelityMode::Strict {
+        if resolved.provider.buffer_stream_text || resolved.provider.deduplicate_stream_text {
+            return Err(AppError::Config(
+                "fidelity_mode=strict cannot be combined with stream text rewriting".to_owned(),
+            ));
+        }
+        validate_anthropic_to_openai_fidelity(&request)?;
+    }
 
     if request.stream.unwrap_or(false) {
         if resolved.provider.buffer_stream_text {

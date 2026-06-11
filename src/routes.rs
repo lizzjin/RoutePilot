@@ -228,9 +228,10 @@ async fn messages(
 
     let provider_id = resolved.provider_id.clone();
     let upstream_model = resolved.model.clone();
+    let protocol = provider_protocol_value(resolved.provider.protocol).to_owned();
     let result = match resolved.provider.protocol {
         ProviderProtocol::Anthropic => {
-            providers::anthropic::messages(state.clone(), resolved, request)
+            providers::anthropic::messages(state.clone(), resolved, request, &headers)
                 .await
                 .map(IntoResponse::into_response)
         }
@@ -269,11 +270,16 @@ async fn messages(
         model: requested_model,
         resolved_model: upstream_model,
         provider: provider_id,
+        protocol,
         stream,
         success,
         status_code,
         estimate: actual_estimate,
         latency: duration,
+        first_byte_latency: Some(duration),
+        retry_count: 0,
+        client_ip: client_ip(&headers),
+        request_path: "/v1/messages".to_owned(),
         error_message,
     })?;
     result
@@ -363,6 +369,18 @@ fn authenticate_client(state: &AppState, headers: &HeaderMap) -> Result<ClientId
     }
     state.config.validate_client_auth(headers)?;
     Ok(ControlStore::legacy_identity())
+}
+
+fn client_ip(headers: &HeaderMap) -> Option<String> {
+    for name in ["x-forwarded-for", "x-real-ip", "cf-connecting-ip"] {
+        if let Some(value) = headers.get(name).and_then(|value| value.to_str().ok()) {
+            let ip = value.split(',').next().unwrap_or(value).trim();
+            if !ip.is_empty() {
+                return Some(ip.to_owned());
+            }
+        }
+    }
+    None
 }
 
 fn estimate_usage(request: &AnthropicRequest) -> UsageEstimate {
@@ -978,6 +996,7 @@ fn provider_rows(state: &AppState) -> Vec<Value> {
                 "maxTokensField": max_tokens_field_value(provider.max_tokens_field),
                 "deduplicateStreamText": provider.deduplicate_stream_text,
                 "bufferStreamText": provider.buffer_stream_text,
+                "fidelityMode": fidelity_mode_value(provider.fidelity_mode),
                 "status": if has_api_key || !provider.api_key_required { "active" } else { "inactive" },
                 "hasApiKey": has_api_key,
                 "lastTest": provider_tests.get(id).cloned(),
@@ -1125,16 +1144,43 @@ fn log_rows(state: &AppState) -> Vec<Value> {
                 "timestamp": now_millis_string(),
                 "userId": "usr_local_admin",
                 "username": "local-admin",
+                "apiKeyId": null,
+                "apiKeyName": "MODELPORT_AUTH_TOKEN",
+                "apiKeyGroup": "legacy",
+                "tokenName": "MODELPORT_AUTH_TOKEN",
+                "group": "legacy",
+                "channelId": message.provider,
+                "channelName": message.provider,
                 "model": message.model,
                 "resolvedModel": message.model,
                 "provider": message.provider,
                 "protocol": protocol,
+                "requestType": if message.failures_total > 0 { "error" } else { "consume" },
                 "stream": if message.stream { "stream" } else { "non-stream" },
                 "status": if message.failures_total > 0 { "error" } else { "success" },
                 "statusCode": if message.failures_total > 0 { 502 } else { 200 },
                 "inputTokens": 0,
                 "outputTokens": 0,
+                "cacheWriteTokens": 0,
+                "cacheReadTokens": 0,
+                "billedInputTokens": 0,
+                "totalTokens": 0,
+                "cacheHitRate": 0.0,
+                "costEstimate": 0.0,
+                "costBreakdown": {
+                    "inputCost": 0.0,
+                    "outputCost": 0.0,
+                    "cacheWriteCost": 0.0,
+                    "cacheReadCost": 0.0,
+                    "totalCost": 0.0,
+                },
                 "latencyMs": average(message.duration_ms_total, requests),
+                "firstByteLatencyMs": average(message.duration_ms_total, requests),
+                "retryCount": 0,
+                "clientIp": null,
+                "requestPath": "/v1/messages",
+                "billingMode": "metrics-fallback",
+                "detail": format!("进程内指标回退日志 · provider={} · model={}", message.provider, message.model),
                 "errorMessage": if message.failures_total > 0 { Some(format!("{} failure(s) recorded", message.failures_total)) } else { None },
                 "sortIndex": index,
             })
@@ -1154,6 +1200,14 @@ fn max_tokens_field_value(field: crate::config::MaxTokensField) -> &'static str 
         crate::config::MaxTokensField::MaxCompletionTokens => "max_completion_tokens",
         crate::config::MaxTokensField::MaxTokens => "max_tokens",
         crate::config::MaxTokensField::Both => "both",
+    }
+}
+
+fn fidelity_mode_value(mode: crate::config::FidelityMode) -> &'static str {
+    match mode {
+        crate::config::FidelityMode::Strict => "strict",
+        crate::config::FidelityMode::BestEffort => "best_effort",
+        crate::config::FidelityMode::Stability => "stability",
     }
 }
 
@@ -1217,7 +1271,7 @@ mod tests {
     use super::*;
     use crate::{
         auth::{AuthStore, CreateUserInput},
-        config::{MaxTokensField, ProviderConfig},
+        config::{FidelityMode, MaxTokensField, ProviderConfig},
         metrics::Metrics,
     };
 
@@ -1689,6 +1743,11 @@ data: [DONE]
             max_tokens_field: MaxTokensField::MaxCompletionTokens,
             deduplicate_stream_text,
             buffer_stream_text,
+            fidelity_mode: if deduplicate_stream_text || buffer_stream_text {
+                FidelityMode::Stability
+            } else {
+                FidelityMode::BestEffort
+            },
         };
 
         AppState {

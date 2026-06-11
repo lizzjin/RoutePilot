@@ -1,5 +1,6 @@
 use axum::{
     Json,
+    http::HeaderMap,
     response::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
@@ -20,9 +21,10 @@ pub async fn messages(
     state: AppState,
     resolved: ResolvedProvider,
     request: AnthropicRequest,
+    client_headers: &HeaderMap,
 ) -> Result<Response, AppError> {
     let body = anthropic_request_value(&request, &resolved.model)?;
-    let headers = headers(&resolved.provider)?;
+    let headers = headers(&resolved.provider, client_headers)?;
     let url = resolved.provider.endpoint("/v1/messages");
 
     if request.stream.unwrap_or(false) {
@@ -46,24 +48,51 @@ pub async fn messages(
     }
 }
 
-fn headers(provider: &crate::config::ProviderConfig) -> Result<Vec<Header>, AppError> {
-    let Some(api_key) = provider.api_key()? else {
-        return Ok(vec![(
-            "anthropic-version".to_owned(),
-            "2023-06-01".to_owned(),
-        )]);
-    };
+fn headers(
+    provider: &crate::config::ProviderConfig,
+    client_headers: &HeaderMap,
+) -> Result<Vec<Header>, AppError> {
+    let mut headers = Vec::new();
 
-    Ok(vec![
-        ("x-api-key".to_owned(), api_key.to_owned()),
-        ("anthropic-version".to_owned(), "2023-06-01".to_owned()),
-    ])
+    if let Some(api_key) = provider.api_key()? {
+        headers.push(("x-api-key".to_owned(), api_key.to_owned()));
+    }
+
+    headers.push((
+        "anthropic-version".to_owned(),
+        client_header(client_headers, "anthropic-version")
+            .unwrap_or_else(|| "2023-06-01".to_owned()),
+    ));
+
+    for name in ["anthropic-beta", "x-request-id"] {
+        if let Some(value) = client_header(client_headers, name) {
+            headers.push((name.to_owned(), value));
+        }
+    }
+
+    Ok(headers)
+}
+
+fn client_header(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned)
 }
 
 fn frame_to_event(frame: SseFrame) -> Event {
     let mut event = Event::default().data(frame.data);
     if let Some(name) = frame.event {
         event = event.event(name);
+    }
+    if let Some(id) = frame.id {
+        event = event.id(id);
+    }
+    if let Some(retry) = frame.retry {
+        event = event.retry(retry);
+    }
+    for comment in frame.comments {
+        event = event.comment(comment);
     }
     event
 }

@@ -25,12 +25,13 @@ pub struct UsageCharge {
     pub cost_estimate: f64,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct ModelPricing {
-    input_per_million: f64,
-    output_per_million: f64,
-    cache_write_per_million: f64,
-    cache_read_per_million: f64,
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPricing {
+    pub input_per_million: f64,
+    pub output_per_million: f64,
+    pub cache_write_per_million: f64,
+    pub cache_read_per_million: f64,
 }
 
 pub fn charge_for_model(model: &str, usage: TokenUsageBreakdown) -> UsageCharge {
@@ -114,7 +115,7 @@ pub fn anthropic_usage(response: &Value) -> TokenUsageBreakdown {
     }
 }
 
-fn pricing_for_model(model: &str) -> ModelPricing {
+pub fn pricing_for_model(model: &str) -> ModelPricing {
     let normalized = model.to_ascii_lowercase();
     if normalized.contains("deepseek-v4-pro") {
         return ModelPricing {
@@ -264,7 +265,7 @@ fn pricing_for_model(model: &str) -> ModelPricing {
     }
 }
 
-fn cost_component(tokens: u64, price_per_million: f64) -> f64 {
+pub fn cost_component(tokens: u64, price_per_million: f64) -> f64 {
     (tokens as f64 / 1_000_000.0) * price_per_million
 }
 

@@ -31,6 +31,9 @@ pub struct HttpTransport {
 #[derive(Debug, Clone)]
 pub struct SseFrame {
     pub event: Option<String>,
+    pub id: Option<String>,
+    pub retry: Option<Duration>,
+    pub comments: Vec<String>,
     pub data: String,
 }
 
@@ -139,6 +142,9 @@ impl HttpTransport {
                 let mut chunks = response.bytes_stream();
                 let mut line_buffer = Vec::new();
                 let mut event: Option<String> = None;
+                let mut id: Option<String> = None;
+                let mut retry: Option<Duration> = None;
+                let mut comments = Vec::new();
                 let mut data = Vec::new();
                 let mut raw_body = Vec::new();
                 let mut yielded_frame = false;
@@ -168,6 +174,9 @@ impl HttpTransport {
                         if let Some(frame) = handle_sse_line(
                             &line,
                             &mut event,
+                            &mut id,
+                            &mut retry,
+                            &mut comments,
                             &mut data,
                             &mut raw_body,
                         ) {
@@ -181,6 +190,9 @@ impl HttpTransport {
                     && let Some(frame) = handle_sse_line(
                         &line_buffer,
                         &mut event,
+                        &mut id,
+                        &mut retry,
+                        &mut comments,
                         &mut data,
                         &mut raw_body,
                     )
@@ -193,6 +205,9 @@ impl HttpTransport {
                     yielded_frame = true;
                     yield SseFrame {
                         event,
+                        id,
+                        retry,
+                        comments,
                         data: data.join("\n"),
                     };
                 }
@@ -219,6 +234,9 @@ impl HttpTransport {
 fn handle_sse_line(
     line: &[u8],
     event: &mut Option<String>,
+    id: &mut Option<String>,
+    retry: &mut Option<Duration>,
+    comments: &mut Vec<String>,
     data: &mut Vec<String>,
     raw_body: &mut Vec<String>,
 ) -> Option<SseFrame> {
@@ -229,20 +247,36 @@ fn handle_sse_line(
         return None;
     }
 
+    if let Some(value) = line.strip_prefix("id:") {
+        *id = Some(value.trim_start().to_owned());
+        return None;
+    }
+
+    if let Some(value) = line.strip_prefix("retry:") {
+        if let Ok(millis) = value.trim().parse::<u64>() {
+            *retry = Some(Duration::from_millis(millis));
+        }
+        return None;
+    }
+
     if let Some(value) = line.strip_prefix("data:") {
         data.push(value.trim_start().to_owned());
+        return None;
+    }
+
+    if let Some(value) = line.strip_prefix(':') {
+        comments.push(value.trim_start().to_owned());
         return None;
     }
 
     if line.trim().is_empty() && !data.is_empty() {
         return Some(SseFrame {
             event: event.take(),
+            id: id.take(),
+            retry: retry.take(),
+            comments: std::mem::take(comments),
             data: data.join("\n"),
         });
-    }
-
-    if line.starts_with(':') || line.starts_with("id:") || line.starts_with("retry:") {
-        return None;
     }
 
     if !line.trim().is_empty() {
@@ -334,6 +368,9 @@ mod tests {
     #[test]
     fn parses_sse_frame() {
         let mut event = None;
+        let mut id = None;
+        let mut retry = None;
+        let mut comments = Vec::new();
         let mut data = Vec::new();
         let mut raw_body = Vec::new();
 
@@ -341,15 +378,36 @@ mod tests {
             handle_sse_line(
                 b"event: content_block_delta",
                 &mut event,
+                &mut id,
+                &mut retry,
+                &mut comments,
                 &mut data,
                 &mut raw_body
             )
             .is_none()
         );
         assert!(
-            handle_sse_line(b"data: {\"ok\":true}", &mut event, &mut data, &mut raw_body).is_none()
+            handle_sse_line(
+                b"data: {\"ok\":true}",
+                &mut event,
+                &mut id,
+                &mut retry,
+                &mut comments,
+                &mut data,
+                &mut raw_body
+            )
+            .is_none()
         );
-        let frame = handle_sse_line(b"", &mut event, &mut data, &mut raw_body).unwrap();
+        let frame = handle_sse_line(
+            b"",
+            &mut event,
+            &mut id,
+            &mut retry,
+            &mut comments,
+            &mut data,
+            &mut raw_body,
+        )
+        .unwrap();
 
         assert_eq!(frame.event.as_deref(), Some("content_block_delta"));
         assert_eq!(frame.data, r#"{"ok":true}"#);
@@ -357,8 +415,84 @@ mod tests {
     }
 
     #[test]
+    fn parses_sse_metadata_fields() {
+        let mut event = None;
+        let mut id = None;
+        let mut retry = None;
+        let mut comments = Vec::new();
+        let mut data = Vec::new();
+        let mut raw_body = Vec::new();
+
+        assert!(
+            handle_sse_line(
+                b": upstream keepalive",
+                &mut event,
+                &mut id,
+                &mut retry,
+                &mut comments,
+                &mut data,
+                &mut raw_body,
+            )
+            .is_none()
+        );
+        assert!(
+            handle_sse_line(
+                b"id: evt_123",
+                &mut event,
+                &mut id,
+                &mut retry,
+                &mut comments,
+                &mut data,
+                &mut raw_body,
+            )
+            .is_none()
+        );
+        assert!(
+            handle_sse_line(
+                b"retry: 2500",
+                &mut event,
+                &mut id,
+                &mut retry,
+                &mut comments,
+                &mut data,
+                &mut raw_body,
+            )
+            .is_none()
+        );
+        assert!(
+            handle_sse_line(
+                b"data: {\"ok\":true}",
+                &mut event,
+                &mut id,
+                &mut retry,
+                &mut comments,
+                &mut data,
+                &mut raw_body,
+            )
+            .is_none()
+        );
+        let frame = handle_sse_line(
+            b"",
+            &mut event,
+            &mut id,
+            &mut retry,
+            &mut comments,
+            &mut data,
+            &mut raw_body,
+        )
+        .unwrap();
+
+        assert_eq!(frame.id.as_deref(), Some("evt_123"));
+        assert_eq!(frame.retry, Some(Duration::from_millis(2500)));
+        assert_eq!(frame.comments, vec!["upstream keepalive"]);
+    }
+
+    #[test]
     fn captures_non_sse_body_lines() {
         let mut event = None;
+        let mut id = None;
+        let mut retry = None;
+        let mut comments = Vec::new();
         let mut data = Vec::new();
         let mut raw_body = Vec::new();
 
@@ -366,6 +500,9 @@ mod tests {
             handle_sse_line(
                 b"{\"error\":\"bad key\"}",
                 &mut event,
+                &mut id,
+                &mut retry,
+                &mut comments,
                 &mut data,
                 &mut raw_body
             )

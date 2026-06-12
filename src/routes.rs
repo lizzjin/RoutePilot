@@ -872,9 +872,7 @@ async fn admin_dashboard(
                 "down"
             } else if runtime_status == "cooldown" {
                 "cooldown"
-            } else if runtime_status == "degraded" {
-                "degraded"
-            } else if requests > 0 && success_rate < 99.0 {
+            } else if runtime_status == "degraded" || (requests > 0 && success_rate < 99.0) {
                 "degraded"
             } else {
                 "healthy"

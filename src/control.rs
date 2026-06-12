@@ -902,9 +902,9 @@ impl ControlStore {
             .as_deref()
             .and_then(|team_id| inner.teams.get(team_id).cloned());
         if record_snapshot.team_id.is_some()
-            && !team
+            && team
                 .as_ref()
-                .is_some_and(|team| team.status.as_str() == "active")
+                .is_none_or(|team| team.status.as_str() != "active")
         {
             return Err(AppError::Forbidden("API key team is not active".to_owned()));
         }
@@ -1258,9 +1258,9 @@ impl ControlStore {
         let now = now_millis();
         reset_expired_quotas_locked(&mut inner, now);
         if let Some(api_key_id) = &identity.api_key_id {
-            enforce_api_key_policy(
-                &identity.api_key_policy,
-                &inner.usage,
+            enforce_api_key_policy(ApiKeyPolicyCheck {
+                policy: &identity.api_key_policy,
+                usage: &inner.usage,
                 api_key_id,
                 estimate,
                 client_ip,
@@ -1268,7 +1268,7 @@ impl ControlStore {
                 resolved_model,
                 provider_id,
                 now,
-            )?;
+            })?;
         }
         for quota in inner
             .quotas
@@ -1846,17 +1846,31 @@ fn validate_ip_rule(value: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-fn enforce_api_key_policy(
-    policy: &ApiKeyPolicy,
-    usage: &[UsageRecord],
-    api_key_id: &str,
+struct ApiKeyPolicyCheck<'a> {
+    policy: &'a ApiKeyPolicy,
+    usage: &'a [UsageRecord],
+    api_key_id: &'a str,
     estimate: UsageEstimate,
-    client_ip: Option<&str>,
-    requested_model: &str,
-    resolved_model: &str,
-    provider_id: &str,
+    client_ip: Option<&'a str>,
+    requested_model: &'a str,
+    resolved_model: &'a str,
+    provider_id: &'a str,
     now: u64,
-) -> Result<(), AppError> {
+}
+
+fn enforce_api_key_policy(check: ApiKeyPolicyCheck<'_>) -> Result<(), AppError> {
+    let ApiKeyPolicyCheck {
+        policy,
+        usage,
+        api_key_id,
+        estimate,
+        client_ip,
+        requested_model,
+        resolved_model,
+        provider_id,
+        now,
+    } = check;
+
     enforce_ip_policy(policy, client_ip)?;
     enforce_model_policy(
         "API key",

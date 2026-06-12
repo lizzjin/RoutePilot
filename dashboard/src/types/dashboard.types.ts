@@ -23,7 +23,7 @@ export interface DashboardStats {
   providerHealth: Array<{
     providerId: string
     displayName: string
-    status: 'healthy' | 'degraded' | 'down'
+    status: 'healthy' | 'degraded' | 'down' | 'cooldown'
     requestsTotal: number
     successRate: number
     avgLatencyMs: number

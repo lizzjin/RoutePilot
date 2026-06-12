@@ -27,12 +27,13 @@ The script verifies:
 - Admin login works.
 - Authenticated `/v1/models` works.
 - A temporary user can be created.
-- A temporary API key can be created.
+- A temporary team/project can be created.
+- A temporary API key can be created and bound to that team/project.
 - API key IP restriction rejects a disallowed client IP.
 - API key spend limit rejects an over-limit request before upstream routing.
 - Audit events are recorded.
 - Full local backup export and validation work.
-- Temporary user and key are cleaned up.
+- Temporary user, team/project, and key are cleaned up.
 
 `--upstream` additionally verifies:
 

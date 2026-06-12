@@ -18,7 +18,21 @@ export interface Provider {
   bufferStreamText: boolean
   fidelityMode?: FidelityMode
   status: 'active' | 'inactive' | 'error'
+  runtimeStatus?: 'healthy' | 'degraded' | 'cooldown'
   hasApiKey: boolean
+  health?: {
+    providerId: string
+    requestsTotal: number
+    successesTotal: number
+    failuresTotal: number
+    consecutiveFailures: number
+    successRate: number
+    status: 'healthy' | 'degraded' | 'cooldown'
+    lastSuccessAt?: string | null
+    lastFailureAt?: string | null
+    cooldownUntil?: string | null
+    lastError?: string | null
+  } | null
   lastTest?: {
     testedAt: string
     success: boolean

@@ -1,5 +1,5 @@
 import { useMemo, useState, type ElementType } from 'react'
-import { useApiKeys, useCreateApiKey, useDeleteApiKey, useRevokeApiKey, useUpdateApiKey, useUsers } from '@/hooks'
+import { useApiKeys, useCreateApiKey, useDeleteApiKey, useRevokeApiKey, useTeams, useUpdateApiKey, useUpsertTeam, useUsers } from '@/hooks'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { Card, CardContent } from '@/components/ui/card'
@@ -13,11 +13,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { Progress } from '@/components/ui/progress'
 import { cn, formatDate, formatNumber } from '@/lib/utils'
-import { CalendarClock, Copy, DollarSign, KeyRound, Pencil, Plus, RotateCw, Search, ShieldCheck, ShieldOff, Trash2, Zap } from 'lucide-react'
-import type { ApiKey } from '@/types'
+import { CalendarClock, Copy, DollarSign, FolderKanban, KeyRound, Pencil, Plus, RotateCw, Search, ShieldCheck, ShieldOff, Trash2, Zap } from 'lucide-react'
+import type { ApiKey, Team } from '@/types'
 
 const ALL = '__all__'
 const NO_GROUP = '__none__'
+const NO_TEAM = '__none_team__'
 
 interface ConfirmAction {
   title: string
@@ -30,6 +31,9 @@ interface ConfirmAction {
 interface EditApiKeyForm {
   name: string
   group: string
+  teamId: string
+  allowedModels: string
+  allowedProviders: string
   status: ApiKey['status']
   expiresAt: string
   ipRestricted: boolean
@@ -42,9 +46,20 @@ interface EditApiKeyForm {
   monthlyLimitUsd: string
 }
 
+interface TeamForm {
+  name: string
+  dailyLimitUsd: string
+  monthlyLimitUsd: string
+  allowedModels: string
+  allowedProviders: string
+}
+
 const emptyEditForm: EditApiKeyForm = {
   name: '',
   group: '',
+  teamId: '',
+  allowedModels: '',
+  allowedProviders: '',
   status: 'active',
   expiresAt: '',
   ipRestricted: false,
@@ -60,7 +75,9 @@ const emptyEditForm: EditApiKeyForm = {
 export function ApiKeysPage() {
   const { data: apiKeys = [], isLoading, refetch } = useApiKeys()
   const { data: users = [] } = useUsers()
+  const { data: teams = [] } = useTeams()
   const createApiKey = useCreateApiKey()
+  const upsertTeam = useUpsertTeam()
   const revokeApiKey = useRevokeApiKey()
   const updateApiKey = useUpdateApiKey()
   const deleteApiKey = useDeleteApiKey()
@@ -76,6 +93,16 @@ export function ApiKeysPage() {
     userId: '',
     name: '',
     group: '',
+    teamId: '',
+    allowedModels: '',
+    allowedProviders: '',
+  })
+  const [teamForm, setTeamForm] = useState<TeamForm>({
+    name: '',
+    dailyLimitUsd: '',
+    monthlyLimitUsd: '',
+    allowedModels: '',
+    allowedProviders: '',
   })
   const [editForm, setEditForm] = useState<EditApiKeyForm>(emptyEditForm)
 
@@ -106,11 +133,28 @@ export function ApiKeysPage() {
       username: user.username,
       name: form.name.trim(),
       group: form.group.trim() || undefined,
+      teamId: form.teamId || undefined,
+      allowedModels: parsePolicyList(form.allowedModels),
+      allowedProviders: parsePolicyList(form.allowedProviders),
     }, {
       onSuccess: (key) => {
         setNewKey(key.key || null)
-        setForm({ userId: '', name: '', group: '' })
+        setForm({ userId: '', name: '', group: '', teamId: '', allowedModels: '', allowedProviders: '' })
       },
+    })
+  }
+
+  const handleCreateTeam = () => {
+    if (!teamForm.name.trim()) return
+    upsertTeam.mutate({
+      name: teamForm.name.trim(),
+      dailyLimitUsd: parseUsdLimit(teamForm.dailyLimitUsd),
+      monthlyLimitUsd: parseUsdLimit(teamForm.monthlyLimitUsd),
+      allowedModels: parsePolicyList(teamForm.allowedModels),
+      allowedProviders: parsePolicyList(teamForm.allowedProviders),
+      status: 'active',
+    }, {
+      onSuccess: () => setTeamForm({ name: '', dailyLimitUsd: '', monthlyLimitUsd: '', allowedModels: '', allowedProviders: '' }),
     })
   }
 
@@ -159,6 +203,9 @@ export function ApiKeysPage() {
       data: {
         name: editForm.name.trim(),
         group: editForm.group.trim(),
+        teamId: editForm.teamId,
+        allowedModels: parsePolicyList(editForm.allowedModels),
+        allowedProviders: parsePolicyList(editForm.allowedProviders),
         status: editForm.status,
         expiresAt: localDateTimeToMillis(editForm.expiresAt),
         ipRestricted: editForm.ipRestricted,
@@ -242,6 +289,16 @@ export function ApiKeysPage() {
       </div>
 
       <Card className="overflow-hidden">
+        <div className="border-b bg-muted/20 px-5 py-4">
+          <TeamStrip
+            teams={teams}
+            form={teamForm}
+            pending={upsertTeam.isPending}
+            error={errorMessage(upsertTeam.error)}
+            onChange={(patch) => setTeamForm((current) => ({ ...current, ...patch }))}
+            onCreate={handleCreateTeam}
+          />
+        </div>
         {mutationError && (
           <div className="border-b px-5 py-3">
             <ErrorNotice message={mutationError} />
@@ -254,7 +311,7 @@ export function ApiKeysPage() {
                 <TableHead className="sticky left-0 z-20 w-[190px] border-r bg-muted/95 px-5">名称</TableHead>
                 <TableHead className="w-[190px]">API 密钥</TableHead>
                 <TableHead className="w-[150px]">用户</TableHead>
-                <TableHead className="w-[220px]">分组</TableHead>
+                <TableHead className="w-[240px]">项目/分组</TableHead>
                 <TableHead className="w-[165px] text-right">用量</TableHead>
                 <TableHead className="w-[220px]">速率限制</TableHead>
                 <TableHead className="w-[150px]">过期时间</TableHead>
@@ -304,7 +361,7 @@ export function ApiKeysPage() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <GroupCell group={key.group} />
+                    <GroupCell group={key.group} teamName={key.teamName} />
                   </TableCell>
                   <TableCell className="text-right">
                     <UsageCell apiKey={key} />
@@ -406,6 +463,28 @@ export function ApiKeysPage() {
                 <Label>分组</Label>
                 <Input value={form.group} onChange={(event) => setForm({ ...form, group: event.target.value })} placeholder="研发池 / Claude Code / CI" />
               </div>
+              <div className="space-y-2">
+                <Label>项目/团队</Label>
+                <Select value={form.teamId || NO_TEAM} onValueChange={(value) => setForm({ ...form, teamId: value === NO_TEAM ? '' : value })}>
+                  <SelectTrigger><SelectValue placeholder="选择项目" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_TEAM}>不绑定项目</SelectItem>
+                    {teams.map((team) => (
+                      <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>允许模型</Label>
+                  <Input value={form.allowedModels} onChange={(event) => setForm({ ...form, allowedModels: event.target.value })} placeholder="mimo*, claude-sonnet*" />
+                </div>
+                <div className="space-y-2">
+                  <Label>允许供应商</Label>
+                  <Input value={form.allowedProviders} onChange={(event) => setForm({ ...form, allowedProviders: event.target.value })} placeholder="mimo, openai" />
+                </div>
+              </div>
             </div>
           )}
 
@@ -459,6 +538,45 @@ export function ApiKeysPage() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>项目/团队</Label>
+              <Select
+                value={editForm.teamId || NO_TEAM}
+                onValueChange={(value) => updateEditForm({ teamId: value === NO_TEAM ? '' : value })}
+              >
+                <SelectTrigger className="h-12 rounded-xl bg-background">
+                  <SelectValue placeholder="选择项目" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_TEAM}>不绑定项目</SelectItem>
+                  {teams.map((team) => (
+                    <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>允许模型</Label>
+                <Input
+                  className="h-12 rounded-xl"
+                  value={editForm.allowedModels}
+                  onChange={(event) => updateEditForm({ allowedModels: event.target.value })}
+                  placeholder="留空表示不限"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>允许供应商</Label>
+                <Input
+                  className="h-12 rounded-xl"
+                  value={editForm.allowedProviders}
+                  onChange={(event) => updateEditForm({ allowedProviders: event.target.value })}
+                  placeholder="留空表示不限"
+                />
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -595,8 +713,57 @@ function EndpointPill({
   )
 }
 
-function GroupCell({ group }: { group?: string | null }) {
-  if (!group) {
+function TeamStrip({
+  teams,
+  form,
+  pending,
+  error,
+  onChange,
+  onCreate,
+}: {
+  teams: Team[]
+  form: TeamForm
+  pending: boolean
+  error: string
+  onChange: (patch: Partial<TeamForm>) => void
+  onCreate: () => void
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold">项目/团队</h3>
+          <p className="text-xs text-muted-foreground">按项目管理预算、模型和供应商访问范围。</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {teams.slice(0, 4).map((team) => (
+            <Badge key={team.id} variant="outline" className="gap-1.5 rounded-md bg-background px-2.5 py-1">
+              <FolderKanban className="h-3.5 w-3.5" />
+              {team.name}
+              <span className="text-muted-foreground">{team.activeApiKeys} keys</span>
+            </Badge>
+          ))}
+          {teams.length === 0 && <span className="text-xs text-muted-foreground">暂无项目</span>}
+        </div>
+      </div>
+      {error && <ErrorNotice message={error} />}
+      <div className="grid gap-2 md:grid-cols-[1.1fr_.7fr_.7fr_1fr_1fr_auto]">
+        <Input value={form.name} onChange={(event) => onChange({ name: event.target.value })} placeholder="项目名称" />
+        <Input type="number" min="0" value={form.dailyLimitUsd} onChange={(event) => onChange({ dailyLimitUsd: event.target.value })} placeholder="日预算 USD" />
+        <Input type="number" min="0" value={form.monthlyLimitUsd} onChange={(event) => onChange({ monthlyLimitUsd: event.target.value })} placeholder="月预算 USD" />
+        <Input value={form.allowedModels} onChange={(event) => onChange({ allowedModels: event.target.value })} placeholder="模型白名单" />
+        <Input value={form.allowedProviders} onChange={(event) => onChange({ allowedProviders: event.target.value })} placeholder="供应商白名单" />
+        <Button onClick={onCreate} disabled={!form.name.trim() || pending}>
+          <Plus className="mr-2 h-4 w-4" />
+          添加
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function GroupCell({ group, teamName }: { group?: string | null; teamName?: string | null }) {
+  if (!group && !teamName) {
     return (
       <span className="text-sm text-muted-foreground">无分组</span>
     )
@@ -604,13 +771,24 @@ function GroupCell({ group }: { group?: string | null }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Badge
-        variant="outline"
-        className="border-emerald-200 bg-emerald-50 font-medium text-emerald-700 shadow-none dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
-      >
-        <KeyRound className="mr-1 h-3.5 w-3.5" />
-        {group}
-      </Badge>
+      {teamName && (
+        <Badge
+          variant="outline"
+          className="border-sky-200 bg-sky-50 font-medium text-sky-700 shadow-none dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-300"
+        >
+          <FolderKanban className="mr-1 h-3.5 w-3.5" />
+          {teamName}
+        </Badge>
+      )}
+      {group && (
+        <Badge
+          variant="outline"
+          className="border-emerald-200 bg-emerald-50 font-medium text-emerald-700 shadow-none dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
+        >
+          <KeyRound className="mr-1 h-3.5 w-3.5" />
+          {group}
+        </Badge>
+      )}
     </div>
   )
 }
@@ -807,6 +985,9 @@ function apiKeyToEditForm(apiKey: ApiKey): EditApiKeyForm {
   return {
     name: apiKey.name,
     group: apiKey.group || '',
+    teamId: apiKey.teamId || '',
+    allowedModels: (apiKey.allowedModels || []).join(', '),
+    allowedProviders: (apiKey.allowedProviders || []).join(', '),
     status: apiKey.status,
     expiresAt: dateTimeLocalFromValue(apiKey.expiresAt),
     ipRestricted: apiKey.ipRestricted ?? false,
@@ -832,6 +1013,10 @@ function parseUsdLimit(value: string): number {
 }
 
 function parseAllowedIps(value: string): string[] {
+  return Array.from(new Set(value.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean)))
+}
+
+function parsePolicyList(value: string): string[] {
   return Array.from(new Set(value.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean)))
 }
 

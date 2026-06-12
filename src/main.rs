@@ -253,12 +253,14 @@ fn backup_existing_state(path: &str, label: &str, value: Option<Value>) -> Resul
 
 fn default_control_json() -> Value {
     json!({
+        "teams": [],
         "apiKeys": [],
         "quotas": [],
         "usage": [],
         "routeConfig": {},
         "activities": [],
         "providerTests": [],
+        "providerHealth": [],
     })
 }
 

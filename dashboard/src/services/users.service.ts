@@ -1,4 +1,4 @@
-import type { User, CreateUserInput, UpdateUserInput, ApiKey } from '@/types'
+import type { User, CreateUserInput, UpdateUserInput, ApiKey, Team, UpsertTeamInput } from '@/types'
 import { api } from '@/lib/api-client'
 import { isMockMode, mockDelay, nextMockId } from '@/lib/mock-mode'
 import { mockApiKeys, mockUsers } from '@/mock'
@@ -8,11 +8,17 @@ export interface CreateApiKeyInput {
   username?: string
   name: string
   group?: string
+  teamId?: string
+  allowedModels?: string[]
+  allowedProviders?: string[]
 }
 
 export interface UpdateApiKeyInput {
   name?: string
   group?: string
+  teamId?: string
+  allowedModels?: string[]
+  allowedProviders?: string[]
   expiresAt?: string
   status?: ApiKey['status']
   ipRestricted?: boolean
@@ -27,11 +33,40 @@ export interface UpdateApiKeyInput {
 
 let mockUserStore = [...mockUsers]
 let mockApiKeyStore = [...mockApiKeys]
+let mockTeamStore: Team[] = [
+  {
+    id: 'team_default',
+    name: '默认项目',
+    slug: 'default',
+    description: '小团队默认项目',
+    status: 'active',
+    dailyLimitUsd: 20,
+    monthlyLimitUsd: 300,
+    dailySpendUsd: 0.34,
+    monthlySpendUsd: 8.2,
+    allowedModels: [],
+    allowedProviders: [],
+    activeApiKeys: 0,
+    requestsToday: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+]
 
 function withApiKeyCounts(users: User[]) {
   return users.map((user) => ({
     ...user,
     apiKeyCount: mockApiKeyStore.filter((key) => key.userId === user.id && key.status === 'active').length,
+  }))
+}
+
+function withTeamCounts(teams: Team[]) {
+  return teams.map((team) => ({
+    ...team,
+    activeApiKeys: mockApiKeyStore.filter((key) => key.teamId === team.id && key.status === 'active').length,
+    requestsToday: mockApiKeyStore
+      .filter((key) => key.teamId === team.id)
+      .reduce((sum, key) => sum + (key.requestsToday || 0), 0),
   }))
 }
 
@@ -89,6 +124,47 @@ export const usersService = {
   getApiKeys: (): Promise<ApiKey[]> =>
     isMockMode ? mockDelay(mockApiKeyStore) : api.get('/admin/api-keys'),
 
+  getTeams: (): Promise<Team[]> =>
+    isMockMode ? mockDelay(withTeamCounts(mockTeamStore)) : api.get('/admin/teams'),
+
+  upsertTeam: (data: UpsertTeamInput): Promise<Team> => {
+    if (!isMockMode) {
+      return data.id
+        ? api.put(`/admin/teams/${encodeURIComponent(data.id)}`, data)
+        : api.post('/admin/teams', data)
+    }
+    const now = new Date().toISOString()
+    const existing = data.id ? mockTeamStore.find((team) => team.id === data.id) : undefined
+    const row: Team = {
+      id: existing?.id || nextMockId('team'),
+      name: data.name,
+      slug: data.slug || data.name.toLowerCase().replace(/\s+/g, '-'),
+      description: data.description || null,
+      status: data.status || existing?.status || 'active',
+      dailyLimitUsd: data.dailyLimitUsd ?? existing?.dailyLimitUsd ?? 0,
+      monthlyLimitUsd: data.monthlyLimitUsd ?? existing?.monthlyLimitUsd ?? 0,
+      dailySpendUsd: existing?.dailySpendUsd ?? 0,
+      monthlySpendUsd: existing?.monthlySpendUsd ?? 0,
+      allowedModels: data.allowedModels ?? existing?.allowedModels ?? [],
+      allowedProviders: data.allowedProviders ?? existing?.allowedProviders ?? [],
+      activeApiKeys: existing?.activeApiKeys ?? 0,
+      requestsToday: existing?.requestsToday ?? 0,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+    }
+    mockTeamStore = existing
+      ? mockTeamStore.map((team) => team.id === row.id ? row : team)
+      : [row, ...mockTeamStore]
+    return mockDelay(row)
+  },
+
+  deleteTeam: (teamId: string): Promise<void> => {
+    if (!isMockMode) return api.delete(`/admin/teams/${encodeURIComponent(teamId)}`)
+    mockTeamStore = mockTeamStore.filter((team) => team.id !== teamId)
+    mockApiKeyStore = mockApiKeyStore.map((key) => key.teamId === teamId ? { ...key, teamId: null, teamName: null } : key)
+    return mockDelay(undefined)
+  },
+
   createApiKey: (data: CreateApiKeyInput): Promise<ApiKey> => {
     if (!isMockMode) return api.post('/admin/api-keys', data)
     const key = `sk-mp-demo-${Math.random().toString(36).slice(2, 18)}`
@@ -101,6 +177,10 @@ export const usersService = {
       keyPreview: `${key.slice(0, 12)}...${key.slice(-4)}`,
       key,
       group: data.group || null,
+      teamId: data.teamId || null,
+      teamName: mockTeamStore.find((team) => team.id === data.teamId)?.name || null,
+      allowedModels: data.allowedModels || [],
+      allowedProviders: data.allowedProviders || [],
       createdAt: new Date().toISOString(),
       lastUsedAt: null,
       expiresAt: null,
@@ -126,6 +206,12 @@ export const usersService = {
       ...key,
       ...(data.name !== undefined ? { name: data.name } : {}),
       ...(data.group !== undefined ? { group: data.group.trim() || null } : {}),
+      ...(data.teamId !== undefined ? {
+        teamId: data.teamId || null,
+        teamName: mockTeamStore.find((team) => team.id === data.teamId)?.name || null,
+      } : {}),
+      ...(data.allowedModels !== undefined ? { allowedModels: data.allowedModels } : {}),
+      ...(data.allowedProviders !== undefined ? { allowedProviders: data.allowedProviders } : {}),
       ...(data.expiresAt !== undefined ? { expiresAt: data.expiresAt || null } : {}),
       ...(data.status !== undefined ? { status: data.status } : {}),
       ...(data.ipRestricted !== undefined ? { ipRestricted: data.ipRestricted } : {}),

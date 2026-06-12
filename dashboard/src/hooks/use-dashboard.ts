@@ -6,6 +6,7 @@ export const queryKeys = {
   users: ['users'] as const,
   user: (id: string) => ['users', id] as const,
   apiKeys: ['api-keys'] as const,
+  teams: ['teams'] as const,
   userApiKeys: (userId: string) => ['users', userId, 'api-keys'] as const,
   quotas: ['quotas'] as const,
   providers: ['providers'] as const,

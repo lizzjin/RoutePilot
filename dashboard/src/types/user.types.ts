@@ -36,6 +36,10 @@ export interface ApiKey {
   keyPreview?: string
   key?: string
   group?: string | null
+  teamId?: string | null
+  teamName?: string | null
+  allowedModels?: string[]
+  allowedProviders?: string[]
   createdAt: string
   lastUsedAt: string | null
   expiresAt: string | null
@@ -50,4 +54,34 @@ export interface ApiKey {
   dailyLimitUsd?: number
   weeklyLimitUsd?: number
   monthlyLimitUsd?: number
+}
+
+export interface Team {
+  id: string
+  name: string
+  slug: string
+  description?: string | null
+  status: 'active' | 'archived' | 'disabled'
+  dailyLimitUsd: number
+  monthlyLimitUsd: number
+  dailySpendUsd: number
+  monthlySpendUsd: number
+  allowedModels: string[]
+  allowedProviders: string[]
+  activeApiKeys: number
+  requestsToday: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface UpsertTeamInput {
+  id?: string
+  name: string
+  slug?: string
+  description?: string
+  status?: Team['status']
+  dailyLimitUsd?: number
+  monthlyLimitUsd?: number
+  allowedModels?: string[]
+  allowedProviders?: string[]
 }

@@ -27,17 +27,21 @@ pub struct ControlStore {
 
 #[derive(Debug, Default)]
 struct ControlInner {
+    teams: BTreeMap<String, TeamRecord>,
     api_keys: BTreeMap<String, ApiKeyRecord>,
     quotas: BTreeMap<String, QuotaRecord>,
     usage: Vec<UsageRecord>,
     route_config: RouteConfigRecord,
     activities: Vec<ActivityRecord>,
     provider_tests: BTreeMap<String, ProviderTestRecord>,
+    provider_health: BTreeMap<String, ProviderHealthRecord>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ControlFile {
+    #[serde(default)]
+    teams: Vec<TeamRecord>,
     #[serde(default)]
     api_keys: Vec<ApiKeyRecord>,
     #[serde(default)]
@@ -50,6 +54,8 @@ struct ControlFile {
     activities: Vec<ActivityRecord>,
     #[serde(default)]
     provider_tests: Vec<ProviderTestRecord>,
+    #[serde(default)]
+    provider_health: Vec<ProviderHealthRecord>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -86,6 +92,48 @@ struct ProviderTestRecord {
     discovered_models: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TeamRecord {
+    id: String,
+    name: String,
+    slug: String,
+    description: Option<String>,
+    status: String,
+    #[serde(default)]
+    daily_limit_usd: f64,
+    #[serde(default)]
+    monthly_limit_usd: f64,
+    #[serde(default)]
+    allowed_models: Vec<String>,
+    #[serde(default)]
+    allowed_providers: Vec<String>,
+    created_at_ms: u64,
+    updated_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderHealthRecord {
+    provider_id: String,
+    #[serde(default)]
+    requests_total: u64,
+    #[serde(default)]
+    successes_total: u64,
+    #[serde(default)]
+    failures_total: u64,
+    #[serde(default)]
+    consecutive_failures: u32,
+    #[serde(default)]
+    last_success_at_ms: Option<u64>,
+    #[serde(default)]
+    last_failure_at_ms: Option<u64>,
+    #[serde(default)]
+    cooldown_until_ms: Option<u64>,
+    #[serde(default)]
+    last_error: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ActivityInput {
     pub activity_type: String,
@@ -93,6 +141,20 @@ pub struct ActivityInput {
     pub target: String,
     pub message: String,
     pub severity: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpsertTeamInput {
+    pub id: Option<String>,
+    pub name: String,
+    pub slug: Option<String>,
+    pub description: Option<String>,
+    pub status: Option<String>,
+    pub daily_limit_usd: Option<f64>,
+    pub monthly_limit_usd: Option<f64>,
+    pub allowed_models: Option<Vec<String>>,
+    pub allowed_providers: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,6 +168,14 @@ struct ApiKeyRecord {
     key_prefix: String,
     key_preview: String,
     group: Option<String>,
+    #[serde(default)]
+    team_id: Option<String>,
+    #[serde(default)]
+    team_name: Option<String>,
+    #[serde(default)]
+    allowed_models: Vec<String>,
+    #[serde(default)]
+    allowed_providers: Vec<String>,
     created_at_ms: u64,
     last_used_at_ms: Option<u64>,
     expires_at_ms: Option<u64>,
@@ -154,6 +224,10 @@ struct UsageRecord {
     api_key_name: Option<String>,
     #[serde(default)]
     api_key_group: Option<String>,
+    #[serde(default)]
+    team_id: Option<String>,
+    #[serde(default)]
+    team_name: Option<String>,
     model: String,
     resolved_model: String,
     provider: String,
@@ -175,6 +249,8 @@ struct UsageRecord {
     #[serde(default)]
     retry_count: u32,
     #[serde(default)]
+    fallback_from_provider: Option<String>,
+    #[serde(default)]
     client_ip: Option<String>,
     #[serde(default)]
     request_path: Option<String>,
@@ -191,6 +267,10 @@ pub struct PublicApiKey {
     pub key_prefix: String,
     pub key_preview: String,
     pub group: Option<String>,
+    pub team_id: Option<String>,
+    pub team_name: Option<String>,
+    pub allowed_models: Vec<String>,
+    pub allowed_providers: Vec<String>,
     pub created_at: String,
     pub last_used_at: Option<String>,
     pub expires_at: Option<String>,
@@ -222,6 +302,9 @@ pub struct CreateApiKeyInput {
     pub username: Option<String>,
     pub name: String,
     pub group: Option<String>,
+    pub team_id: Option<String>,
+    pub allowed_models: Option<Vec<String>>,
+    pub allowed_providers: Option<Vec<String>>,
     pub expires_at: Option<String>,
 }
 
@@ -230,6 +313,9 @@ pub struct CreateApiKeyInput {
 pub struct UpdateApiKeyInput {
     pub name: Option<String>,
     pub group: Option<String>,
+    pub team_id: Option<String>,
+    pub allowed_models: Option<Vec<String>>,
+    pub allowed_providers: Option<Vec<String>>,
     pub expires_at: Option<String>,
     pub status: Option<String>,
     pub ip_restricted: Option<bool>,
@@ -284,14 +370,23 @@ pub struct ClientIdentity {
     pub api_key_id: Option<String>,
     pub api_key_name: Option<String>,
     pub api_key_group: Option<String>,
+    pub team_id: Option<String>,
+    pub team_name: Option<String>,
     pub enforce_quotas: bool,
     pub api_key_policy: ApiKeyPolicy,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ApiKeyPolicy {
+    pub team_id: Option<String>,
     pub ip_restricted: bool,
     pub allowed_ips: Vec<String>,
+    pub allowed_models: Vec<String>,
+    pub allowed_providers: Vec<String>,
+    pub team_allowed_models: Vec<String>,
+    pub team_allowed_providers: Vec<String>,
+    pub team_daily_limit_usd: f64,
+    pub team_monthly_limit_usd: f64,
     pub spend_limit_usd: f64,
     pub rate_limited: bool,
     pub five_hour_limit_usd: f64,
@@ -314,6 +409,7 @@ pub struct UsageEventInput {
     pub latency: Duration,
     pub first_byte_latency: Option<Duration>,
     pub retry_count: u32,
+    pub fallback_from_provider: Option<String>,
     pub client_ip: Option<String>,
     pub request_path: String,
     pub error_message: Option<String>,
@@ -355,17 +451,24 @@ impl ControlStore {
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_USAGE_LIMIT);
         let file: ControlFile = store.read_or_default(json!({
+            "teams": [],
             "apiKeys": [],
             "quotas": [],
             "usage": [],
             "routeConfig": {},
             "activities": [],
             "providerTests": [],
+            "providerHealth": [],
         }))?;
 
         Ok(Self {
             store: Some(store),
             inner: Mutex::new(ControlInner {
+                teams: file
+                    .teams
+                    .into_iter()
+                    .map(|record| (record.id.clone(), record))
+                    .collect(),
                 api_keys: file
                     .api_keys
                     .into_iter()
@@ -381,6 +484,11 @@ impl ControlStore {
                 activities: file.activities,
                 provider_tests: file
                     .provider_tests
+                    .into_iter()
+                    .map(|record| (record.provider_id.clone(), record))
+                    .collect(),
+                provider_health: file
+                    .provider_health
                     .into_iter()
                     .map(|record| (record.provider_id.clone(), record))
                     .collect(),
@@ -536,6 +644,11 @@ impl ControlStore {
     pub fn export_snapshot(&self) -> serde_json::Value {
         let inner = self.inner.lock().expect("control lock poisoned");
         json!({
+            "teams": inner
+                .teams
+                .values()
+                .map(|record| public_team(record, &inner.api_keys, &inner.usage))
+                .collect::<Vec<_>>(),
             "apiKeys": inner
                 .api_keys
                 .values()
@@ -546,6 +659,7 @@ impl ControlStore {
             "routeConfig": &inner.route_config,
             "activities": &inner.activities,
             "providerTests": inner.provider_tests.values().collect::<Vec<_>>(),
+            "providerHealth": inner.provider_health.values().collect::<Vec<_>>(),
         })
     }
 
@@ -592,6 +706,159 @@ impl ControlStore {
             .collect()
     }
 
+    pub fn list_teams(&self) -> Vec<serde_json::Value> {
+        let inner = self.inner.lock().expect("control lock poisoned");
+        inner
+            .teams
+            .values()
+            .map(|team| public_team(team, &inner.api_keys, &inner.usage))
+            .collect()
+    }
+
+    pub fn upsert_team(&self, input: UpsertTeamInput) -> Result<serde_json::Value, AppError> {
+        let name = validate_team_name(&input.name)?;
+        let slug = input
+            .slug
+            .as_deref()
+            .map(validate_team_slug)
+            .transpose()?
+            .unwrap_or_else(|| slug_from_name(&name));
+        let status = input
+            .status
+            .as_deref()
+            .map(validate_team_status)
+            .transpose()?
+            .unwrap_or_else(|| "active".to_owned());
+        let daily_limit_usd = input
+            .daily_limit_usd
+            .map(|value| validate_usd_limit("dailyLimitUsd", value))
+            .transpose()?
+            .unwrap_or(0.0);
+        let monthly_limit_usd = input
+            .monthly_limit_usd
+            .map(|value| validate_usd_limit("monthlyLimitUsd", value))
+            .transpose()?
+            .unwrap_or(0.0);
+        let allowed_models = normalize_policy_list(input.allowed_models.unwrap_or_default())?;
+        let allowed_providers = normalize_policy_list(input.allowed_providers.unwrap_or_default())?;
+        let description = input
+            .description
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        let now = now_millis();
+        let mut inner = self.inner.lock().expect("control lock poisoned");
+        if inner
+            .teams
+            .values()
+            .any(|team| team.slug == slug && input.id.as_deref() != Some(team.id.as_str()))
+        {
+            return Err(AppError::InvalidRequest(
+                "team slug already exists".to_owned(),
+            ));
+        }
+        let id = input
+            .id
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| format!("team_{}", Uuid::new_v4().simple()));
+        let created_at_ms = inner
+            .teams
+            .get(&id)
+            .map(|team| team.created_at_ms)
+            .unwrap_or(now);
+        let team = TeamRecord {
+            id: id.clone(),
+            name,
+            slug,
+            description,
+            status,
+            daily_limit_usd,
+            monthly_limit_usd,
+            allowed_models,
+            allowed_providers,
+            created_at_ms,
+            updated_at_ms: now,
+        };
+        inner.teams.insert(id.clone(), team.clone());
+        for key in inner.api_keys.values_mut() {
+            if key.team_id.as_deref() == Some(&id) {
+                key.team_name = Some(team.name.clone());
+            }
+        }
+        self.save_locked(&inner)?;
+        Ok(public_team(&team, &inner.api_keys, &inner.usage))
+    }
+
+    pub fn delete_team(&self, team_id: &str) -> Result<(), AppError> {
+        let mut inner = self.inner.lock().expect("control lock poisoned");
+        if inner.teams.remove(team_id).is_none() {
+            return Ok(());
+        }
+        for key in inner.api_keys.values_mut() {
+            if key.team_id.as_deref() == Some(team_id) {
+                key.team_id = None;
+                key.team_name = None;
+            }
+        }
+        self.save_locked(&inner)
+    }
+
+    pub fn provider_health_rows(&self) -> BTreeMap<String, serde_json::Value> {
+        let inner = self.inner.lock().expect("control lock poisoned");
+        let now = now_millis();
+        inner
+            .provider_health
+            .iter()
+            .map(|(provider_id, health)| (provider_id.clone(), provider_health_row(health, now)))
+            .collect()
+    }
+
+    pub fn provider_in_cooldown(&self, provider_id: &str) -> bool {
+        let inner = self.inner.lock().expect("control lock poisoned");
+        inner
+            .provider_health
+            .get(provider_id)
+            .and_then(|health| health.cooldown_until_ms)
+            .is_some_and(|until| until > now_millis())
+    }
+
+    pub fn record_provider_outcome(
+        &self,
+        provider_id: &str,
+        success: bool,
+        status_code: u16,
+        error_message: Option<&str>,
+    ) -> Result<(), AppError> {
+        let mut inner = self.inner.lock().expect("control lock poisoned");
+        let now = now_millis();
+        let health = inner
+            .provider_health
+            .entry(provider_id.to_owned())
+            .or_insert_with(|| ProviderHealthRecord {
+                provider_id: provider_id.to_owned(),
+                ..ProviderHealthRecord::default()
+            });
+        health.requests_total = health.requests_total.saturating_add(1);
+        if success {
+            health.successes_total = health.successes_total.saturating_add(1);
+            health.consecutive_failures = 0;
+            health.last_success_at_ms = Some(now);
+            health.cooldown_until_ms = None;
+            health.last_error = None;
+        } else {
+            health.failures_total = health.failures_total.saturating_add(1);
+            health.consecutive_failures = health.consecutive_failures.saturating_add(1);
+            health.last_failure_at_ms = Some(now);
+            health.last_error = error_message
+                .map(|value| value.chars().take(240).collect())
+                .or_else(|| Some(format!("HTTP {status_code}")));
+            if health.consecutive_failures >= 3 || status_code == 429 || status_code >= 500 {
+                let seconds = cooldown_seconds(health.consecutive_failures);
+                health.cooldown_until_ms = Some(now.saturating_add(seconds.saturating_mul(1_000)));
+            }
+        }
+        self.save_locked(&inner)
+    }
+
     pub fn authenticate_headers(
         &self,
         headers: &HeaderMap,
@@ -604,40 +871,84 @@ impl ControlStore {
         let mut inner = self.inner.lock().expect("control lock poisoned");
         reset_expired_quotas_locked(&mut inner, now);
 
-        let Some(record) = inner
+        let Some(api_key_id) = inner
             .api_keys
-            .values_mut()
-            .find(|record| record.key_hash == token_hash)
+            .iter()
+            .find(|(_, record)| record.key_hash == token_hash)
+            .map(|(id, _)| id.clone())
         else {
             return Ok(None);
         };
+        let Some(record_snapshot) = inner.api_keys.get(&api_key_id).cloned() else {
+            return Ok(None);
+        };
 
-        if record.status != "active" {
+        if record_snapshot.status != "active" {
             return Err(AppError::Auth);
         }
-        if record.expires_at_ms.is_some_and(|expires| expires <= now) {
-            record.status = "revoked".to_owned();
+        if record_snapshot
+            .expires_at_ms
+            .is_some_and(|expires| expires <= now)
+        {
+            if let Some(record) = inner.api_keys.get_mut(&api_key_id) {
+                record.status = "revoked".to_owned();
+            }
             self.save_locked(&inner)?;
             return Err(AppError::Auth);
         }
 
-        record.last_used_at_ms = Some(now);
+        let team = record_snapshot
+            .team_id
+            .as_deref()
+            .and_then(|team_id| inner.teams.get(team_id).cloned());
+        if record_snapshot.team_id.is_some()
+            && !team
+                .as_ref()
+                .is_some_and(|team| team.status.as_str() == "active")
+        {
+            return Err(AppError::Forbidden("API key team is not active".to_owned()));
+        }
+
+        if let Some(record) = inner.api_keys.get_mut(&api_key_id) {
+            record.last_used_at_ms = Some(now);
+        }
         let identity = ClientIdentity {
-            user_id: record.user_id.clone(),
-            username: record.username.clone(),
-            api_key_id: Some(record.id.clone()),
-            api_key_name: Some(record.name.clone()),
-            api_key_group: record.group.clone(),
+            user_id: record_snapshot.user_id.clone(),
+            username: record_snapshot.username.clone(),
+            api_key_id: Some(record_snapshot.id.clone()),
+            api_key_name: Some(record_snapshot.name.clone()),
+            api_key_group: record_snapshot.group.clone(),
+            team_id: record_snapshot.team_id.clone(),
+            team_name: record_snapshot.team_name.clone(),
             enforce_quotas: true,
             api_key_policy: ApiKeyPolicy {
-                ip_restricted: record.ip_restricted,
-                allowed_ips: record.allowed_ips.clone(),
-                spend_limit_usd: record.spend_limit_usd,
-                rate_limited: record.rate_limited,
-                five_hour_limit_usd: record.five_hour_limit_usd,
-                daily_limit_usd: record.daily_limit_usd,
-                weekly_limit_usd: record.weekly_limit_usd,
-                monthly_limit_usd: record.monthly_limit_usd,
+                team_id: record_snapshot.team_id.clone(),
+                ip_restricted: record_snapshot.ip_restricted,
+                allowed_ips: record_snapshot.allowed_ips.clone(),
+                allowed_models: record_snapshot.allowed_models.clone(),
+                allowed_providers: record_snapshot.allowed_providers.clone(),
+                team_allowed_models: team
+                    .as_ref()
+                    .map(|team| team.allowed_models.clone())
+                    .unwrap_or_default(),
+                team_allowed_providers: team
+                    .as_ref()
+                    .map(|team| team.allowed_providers.clone())
+                    .unwrap_or_default(),
+                team_daily_limit_usd: team
+                    .as_ref()
+                    .map(|team| team.daily_limit_usd)
+                    .unwrap_or(0.0),
+                team_monthly_limit_usd: team
+                    .as_ref()
+                    .map(|team| team.monthly_limit_usd)
+                    .unwrap_or(0.0),
+                spend_limit_usd: record_snapshot.spend_limit_usd,
+                rate_limited: record_snapshot.rate_limited,
+                five_hour_limit_usd: record_snapshot.five_hour_limit_usd,
+                daily_limit_usd: record_snapshot.daily_limit_usd,
+                weekly_limit_usd: record_snapshot.weekly_limit_usd,
+                monthly_limit_usd: record_snapshot.monthly_limit_usd,
             },
         };
         self.save_locked(&inner)?;
@@ -651,6 +962,8 @@ impl ControlStore {
             api_key_id: None,
             api_key_name: Some("MODELPORT_AUTH_TOKEN".to_owned()),
             api_key_group: Some("legacy".to_owned()),
+            team_id: None,
+            team_name: None,
             enforce_quotas: false,
             api_key_policy: ApiKeyPolicy::default(),
         }
@@ -705,8 +1018,12 @@ impl ControlStore {
             return Err(AppError::InvalidRequest("userId is required".to_owned()));
         }
         let username = input.username.unwrap_or_else(|| user_id.to_owned());
+        let allowed_models = normalize_policy_list(input.allowed_models.unwrap_or_default())?;
+        let allowed_providers = normalize_policy_list(input.allowed_providers.unwrap_or_default())?;
         let key = new_api_key();
         let now = now_millis();
+        let mut inner = self.inner.lock().expect("control lock poisoned");
+        let (team_id, team_name) = resolve_team_ref(&inner, input.team_id)?;
         let record = ApiKeyRecord {
             id: format!("key_{}", Uuid::new_v4().simple()),
             user_id: user_id.to_owned(),
@@ -716,6 +1033,10 @@ impl ControlStore {
             key_prefix: key.chars().take(12).collect(),
             key_preview: preview_secret(&key),
             group: input.group.filter(|value| !value.trim().is_empty()),
+            team_id,
+            team_name,
+            allowed_models,
+            allowed_providers,
             created_at_ms: now,
             last_used_at_ms: None,
             expires_at_ms: input.expires_at.and_then(|value| value.parse::<u64>().ok()),
@@ -730,7 +1051,6 @@ impl ControlStore {
             monthly_limit_usd: 0.0,
         };
 
-        let mut inner = self.inner.lock().expect("control lock poisoned");
         inner.api_keys.insert(record.id.clone(), record.clone());
         self.save_locked(&inner)?;
         Ok(CreatedApiKey {
@@ -775,6 +1095,17 @@ impl ControlStore {
             } else {
                 Some(group.to_owned())
             };
+        }
+        if let Some(team_id) = input.team_id {
+            let (team_id, team_name) = resolve_team_ref(&inner, Some(team_id))?;
+            updated.team_id = team_id;
+            updated.team_name = team_name;
+        }
+        if let Some(allowed_models) = input.allowed_models {
+            updated.allowed_models = normalize_policy_list(allowed_models)?;
+        }
+        if let Some(allowed_providers) = input.allowed_providers {
+            updated.allowed_providers = normalize_policy_list(allowed_providers)?;
         }
         if let Some(expires_at) = input.expires_at {
             let expires_at = expires_at.trim();
@@ -916,6 +1247,9 @@ impl ControlStore {
         identity: &ClientIdentity,
         estimate: UsageEstimate,
         client_ip: Option<&str>,
+        requested_model: &str,
+        resolved_model: &str,
+        provider_id: &str,
     ) -> Result<(), AppError> {
         if !identity.enforce_quotas {
             return Ok(());
@@ -930,6 +1264,9 @@ impl ControlStore {
                 api_key_id,
                 estimate,
                 client_ip,
+                requested_model,
+                resolved_model,
+                provider_id,
                 now,
             )?;
         }
@@ -970,6 +1307,8 @@ impl ControlStore {
             api_key_id: input.identity.api_key_id,
             api_key_name: input.identity.api_key_name,
             api_key_group: input.identity.api_key_group,
+            team_id: input.identity.team_id,
+            team_name: input.identity.team_name,
             model: input.model,
             resolved_model: input.resolved_model,
             provider: input.provider,
@@ -985,6 +1324,7 @@ impl ControlStore {
             latency_ms: duration_ms(input.latency),
             first_byte_latency_ms: input.first_byte_latency.map(duration_ms),
             retry_count: input.retry_count,
+            fallback_from_provider: input.fallback_from_provider,
             client_ip: input.client_ip,
             request_path: Some(input.request_path),
             error_message: input.error_message,
@@ -1045,6 +1385,8 @@ impl ControlStore {
                     "apiKeyGroup": record.api_key_group,
                     "tokenName": record.api_key_name,
                     "group": record.api_key_group,
+                    "teamId": record.team_id,
+                    "teamName": record.team_name,
                     "channelId": record.provider,
                     "channelName": record.provider,
                     "model": record.model,
@@ -1074,6 +1416,7 @@ impl ControlStore {
                     "latencyMs": record.latency_ms,
                     "firstByteLatencyMs": first_byte_latency_ms,
                     "retryCount": record.retry_count,
+                    "fallbackFromProvider": record.fallback_from_provider,
                     "clientIp": record.client_ip,
                     "requestPath": request_path,
                     "billingMode": "upstream-returned",
@@ -1250,12 +1593,14 @@ impl ControlStore {
             return Ok(());
         };
         let file = ControlFile {
+            teams: inner.teams.values().cloned().collect(),
             api_keys: inner.api_keys.values().cloned().collect(),
             quotas: inner.quotas.values().cloned().collect(),
             usage: inner.usage.clone(),
             route_config: inner.route_config.clone(),
             activities: inner.activities.clone(),
             provider_tests: inner.provider_tests.values().cloned().collect(),
+            provider_health: inner.provider_health.values().cloned().collect(),
         };
         store.write_json(&file)
     }
@@ -1284,6 +1629,10 @@ fn public_api_key(record: &ApiKeyRecord, usage: &[UsageRecord]) -> PublicApiKey 
         key_prefix: record.key_prefix.clone(),
         key_preview: record.key_preview.clone(),
         group: record.group.clone(),
+        team_id: record.team_id.clone(),
+        team_name: record.team_name.clone(),
+        allowed_models: record.allowed_models.clone(),
+        allowed_providers: record.allowed_providers.clone(),
         created_at: record.created_at_ms.to_string(),
         last_used_at: record.last_used_at_ms.map(|value| value.to_string()),
         expires_at: record.expires_at_ms.map(|value| value.to_string()),
@@ -1301,6 +1650,65 @@ fn public_api_key(record: &ApiKeyRecord, usage: &[UsageRecord]) -> PublicApiKey 
     }
 }
 
+fn public_team(
+    record: &TeamRecord,
+    api_keys: &BTreeMap<String, ApiKeyRecord>,
+    usage: &[UsageRecord],
+) -> serde_json::Value {
+    let today_start = day_start(now_millis());
+    let month_start = now_millis().saturating_sub(30 * DAY_MS);
+    let active_api_keys = api_keys
+        .values()
+        .filter(|key| key.team_id.as_deref() == Some(record.id.as_str()) && key.status == "active")
+        .count();
+    let requests_today = usage
+        .iter()
+        .filter(|event| {
+            event.team_id.as_deref() == Some(record.id.as_str())
+                && event.timestamp_ms >= today_start
+        })
+        .count();
+    json!({
+        "id": record.id,
+        "name": record.name,
+        "slug": record.slug,
+        "description": record.description,
+        "status": record.status,
+        "dailyLimitUsd": record.daily_limit_usd,
+        "monthlyLimitUsd": record.monthly_limit_usd,
+        "dailySpendUsd": usage_cost_for_team(usage, &record.id, Some(today_start)),
+        "monthlySpendUsd": usage_cost_for_team(usage, &record.id, Some(month_start)),
+        "allowedModels": record.allowed_models,
+        "allowedProviders": record.allowed_providers,
+        "activeApiKeys": active_api_keys,
+        "requestsToday": requests_today,
+        "createdAt": record.created_at_ms.to_string(),
+        "updatedAt": record.updated_at_ms.to_string(),
+    })
+}
+
+fn provider_health_row(record: &ProviderHealthRecord, now: u64) -> serde_json::Value {
+    let in_cooldown = record.cooldown_until_ms.is_some_and(|until| until > now);
+    let success_rate = if record.requests_total == 0 {
+        0.0
+    } else {
+        (record.successes_total as f64 / record.requests_total as f64) * 100.0
+    };
+    json!({
+        "providerId": record.provider_id,
+        "requestsTotal": record.requests_total,
+        "successesTotal": record.successes_total,
+        "failuresTotal": record.failures_total,
+        "consecutiveFailures": record.consecutive_failures,
+        "successRate": success_rate,
+        "status": if in_cooldown { "cooldown" } else if record.consecutive_failures > 0 { "degraded" } else { "healthy" },
+        "lastSuccessAt": record.last_success_at_ms.map(|value| value.to_string()),
+        "lastFailureAt": record.last_failure_at_ms.map(|value| value.to_string()),
+        "cooldownUntil": record.cooldown_until_ms.map(|value| value.to_string()),
+        "lastError": record.last_error,
+    })
+}
+
 fn validate_usd_limit(field: &str, value: f64) -> Result<f64, AppError> {
     if !value.is_finite() || value < 0.0 {
         return Err(AppError::InvalidRequest(format!(
@@ -1308,6 +1716,91 @@ fn validate_usd_limit(field: &str, value: f64) -> Result<f64, AppError> {
         )));
     }
     Ok(value)
+}
+
+fn validate_team_name(value: &str) -> Result<String, AppError> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 80 {
+        return Err(AppError::InvalidRequest(
+            "team name must be 1-80 characters".to_owned(),
+        ));
+    }
+    Ok(value.to_owned())
+}
+
+fn validate_team_slug(value: &str) -> Result<String, AppError> {
+    let value = value.trim().to_ascii_lowercase();
+    if value.is_empty()
+        || value.len() > 64
+        || !value
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
+    {
+        return Err(AppError::InvalidRequest(
+            "team slug may only contain lowercase letters, numbers, dashes, and underscores"
+                .to_owned(),
+        ));
+    }
+    Ok(value)
+}
+
+fn validate_team_status(value: &str) -> Result<String, AppError> {
+    match value.trim() {
+        "active" | "archived" | "disabled" => Ok(value.trim().to_owned()),
+        _ => Err(AppError::InvalidRequest("invalid team status".to_owned())),
+    }
+}
+
+fn slug_from_name(value: &str) -> String {
+    let mut slug = String::new();
+    for ch in value.to_ascii_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            slug.push(ch);
+        } else if ch.is_whitespace() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    if slug.is_empty() {
+        format!("team-{}", Uuid::new_v4().simple())
+    } else {
+        slug.trim_matches('-').chars().take(64).collect()
+    }
+}
+
+fn normalize_policy_list(values: Vec<String>) -> Result<Vec<String>, AppError> {
+    let mut seen = BTreeSet::new();
+    let mut output = Vec::new();
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        if value.len() > 160 {
+            return Err(AppError::InvalidRequest(
+                "policy entries must be 160 characters or shorter".to_owned(),
+            ));
+        }
+        if seen.insert(value.to_owned()) {
+            output.push(value.to_owned());
+        }
+    }
+    Ok(output)
+}
+
+fn resolve_team_ref(
+    inner: &ControlInner,
+    team_id: Option<String>,
+) -> Result<(Option<String>, Option<String>), AppError> {
+    let Some(team_id) = team_id.map(|value| value.trim().to_owned()) else {
+        return Ok((None, None));
+    };
+    if team_id.is_empty() {
+        return Ok((None, None));
+    }
+    let Some(team) = inner.teams.get(&team_id) else {
+        return Err(AppError::InvalidRequest("team not found".to_owned()));
+    };
+    Ok((Some(team.id.clone()), Some(team.name.clone())))
 }
 
 fn normalize_ip_rules(values: Vec<String>) -> Result<Vec<String>, AppError> {
@@ -1359,9 +1852,26 @@ fn enforce_api_key_policy(
     api_key_id: &str,
     estimate: UsageEstimate,
     client_ip: Option<&str>,
+    requested_model: &str,
+    resolved_model: &str,
+    provider_id: &str,
     now: u64,
 ) -> Result<(), AppError> {
     enforce_ip_policy(policy, client_ip)?;
+    enforce_model_policy(
+        "API key",
+        &policy.allowed_models,
+        requested_model,
+        resolved_model,
+    )?;
+    enforce_provider_policy("API key", &policy.allowed_providers, provider_id)?;
+    enforce_model_policy(
+        "team",
+        &policy.team_allowed_models,
+        requested_model,
+        resolved_model,
+    )?;
+    enforce_provider_policy("team", &policy.team_allowed_providers, provider_id)?;
     enforce_spend_limit(
         "total spend",
         policy.spend_limit_usd,
@@ -1400,7 +1910,58 @@ fn enforce_api_key_policy(
         )?;
     }
 
+    if let Some(team_id) = &policy.team_id {
+        enforce_spend_limit(
+            "team daily spend",
+            policy.team_daily_limit_usd,
+            usage_cost_for_team(usage, team_id, Some(now.saturating_sub(DAY_MS))),
+            estimate.cost_estimate,
+        )?;
+        enforce_spend_limit(
+            "team monthly spend",
+            policy.team_monthly_limit_usd,
+            usage_cost_for_team(usage, team_id, Some(now.saturating_sub(30 * DAY_MS))),
+            estimate.cost_estimate,
+        )?;
+    }
+
     Ok(())
+}
+
+fn enforce_model_policy(
+    label: &str,
+    allowed_models: &[String],
+    requested_model: &str,
+    resolved_model: &str,
+) -> Result<(), AppError> {
+    if allowed_models.is_empty()
+        || allowed_models.iter().any(|rule| {
+            policy_value_matches(rule, requested_model)
+                || policy_value_matches(rule, resolved_model)
+        })
+    {
+        return Ok(());
+    }
+    Err(AppError::Forbidden(format!(
+        "{label} does not allow model {requested_model}"
+    )))
+}
+
+fn enforce_provider_policy(
+    label: &str,
+    allowed_providers: &[String],
+    provider_id: &str,
+) -> Result<(), AppError> {
+    if allowed_providers.is_empty()
+        || allowed_providers
+            .iter()
+            .any(|rule| policy_value_matches(rule, provider_id))
+    {
+        return Ok(());
+    }
+    Err(AppError::Forbidden(format!(
+        "{label} does not allow provider {provider_id}"
+    )))
 }
 
 fn enforce_ip_policy(policy: &ApiKeyPolicy, client_ip: Option<&str>) -> Result<(), AppError> {
@@ -1450,6 +2011,35 @@ fn usage_cost_for_api_key(usage: &[UsageRecord], api_key_id: &str, since: Option
         .filter(|record| since.is_none_or(|since| record.timestamp_ms >= since))
         .map(|record| record.cost_estimate.max(0.0))
         .sum()
+}
+
+fn usage_cost_for_team(usage: &[UsageRecord], team_id: &str, since: Option<u64>) -> f64 {
+    usage
+        .iter()
+        .filter(|record| record.team_id.as_deref() == Some(team_id))
+        .filter(|record| since.is_none_or(|since| record.timestamp_ms >= since))
+        .map(|record| record.cost_estimate.max(0.0))
+        .sum()
+}
+
+fn policy_value_matches(rule: &str, value: &str) -> bool {
+    let rule = rule.trim();
+    if rule == "*" {
+        return true;
+    }
+    if let Some(prefix) = rule.strip_suffix('*') {
+        return value.starts_with(prefix);
+    }
+    rule == value
+}
+
+fn cooldown_seconds(consecutive_failures: u32) -> u64 {
+    match consecutive_failures {
+        0 | 1 => 30,
+        2 | 3 => 60,
+        4 | 5 => 180,
+        _ => 300,
+    }
 }
 
 fn parse_client_ip(value: &str) -> Option<IpAddr> {
@@ -1642,6 +2232,9 @@ mod tests {
                 username: Some("test-user".to_owned()),
                 name: "local".to_owned(),
                 group: None,
+                team_id: None,
+                allowed_models: None,
+                allowed_providers: None,
                 expires_at: None,
             })
             .unwrap();
@@ -1661,6 +2254,9 @@ mod tests {
                 username: Some("test-user".to_owned()),
                 name: "local".to_owned(),
                 group: Some("dev".to_owned()),
+                team_id: None,
+                allowed_models: None,
+                allowed_providers: None,
                 expires_at: None,
             })
             .unwrap();
@@ -1674,6 +2270,9 @@ mod tests {
                 UpdateApiKeyInput {
                     name: Some("local restored".to_owned()),
                     group: Some(String::new()),
+                    team_id: None,
+                    allowed_models: Some(vec!["mimo*".to_owned()]),
+                    allowed_providers: Some(vec!["mimo".to_owned()]),
                     expires_at: None,
                     status: Some("active".to_owned()),
                     ip_restricted: Some(true),
@@ -1690,6 +2289,8 @@ mod tests {
 
         assert_eq!(updated.name, "local restored");
         assert_eq!(updated.group, None);
+        assert_eq!(updated.allowed_models, vec!["mimo*"]);
+        assert_eq!(updated.allowed_providers, vec!["mimo"]);
         assert_eq!(updated.status, "active");
         assert!(updated.ip_restricted);
         assert_eq!(updated.allowed_ips, vec!["127.0.0.1", "10.0.0.0/8"]);
@@ -1706,6 +2307,8 @@ mod tests {
             api_key_id: Some("key_test".to_owned()),
             api_key_name: Some("local".to_owned()),
             api_key_group: Some("test".to_owned()),
+            team_id: None,
+            team_name: None,
             enforce_quotas: true,
             api_key_policy: ApiKeyPolicy::default(),
         };
@@ -1721,7 +2324,14 @@ mod tests {
             .unwrap();
 
         store
-            .check_quotas(&identity, UsageEstimate::default(), None)
+            .check_quotas(
+                &identity,
+                UsageEstimate::default(),
+                None,
+                "mimo-v2.5-pro",
+                "mimo-v2.5-pro",
+                "mimo",
+            )
             .unwrap();
         store
             .record_usage(UsageEventInput {
@@ -1737,6 +2347,7 @@ mod tests {
                 latency: Duration::from_millis(10),
                 first_byte_latency: Some(Duration::from_millis(10)),
                 retry_count: 0,
+                fallback_from_provider: None,
                 client_ip: Some("127.0.0.1".to_owned()),
                 request_path: "/v1/messages".to_owned(),
                 error_message: None,
@@ -1745,7 +2356,14 @@ mod tests {
 
         assert!(
             store
-                .check_quotas(&identity, UsageEstimate::default(), None)
+                .check_quotas(
+                    &identity,
+                    UsageEstimate::default(),
+                    None,
+                    "mimo-v2.5-pro",
+                    "mimo-v2.5-pro",
+                    "mimo",
+                )
                 .is_err()
         );
     }
@@ -1759,6 +2377,8 @@ mod tests {
             api_key_id: Some("key_test".to_owned()),
             api_key_name: Some("local".to_owned()),
             api_key_group: Some("test".to_owned()),
+            team_id: None,
+            team_name: None,
             enforce_quotas: true,
             api_key_policy: ApiKeyPolicy {
                 ip_restricted: true,
@@ -1768,11 +2388,25 @@ mod tests {
         };
 
         store
-            .check_quotas(&identity, UsageEstimate::default(), Some("10.1.2.3"))
+            .check_quotas(
+                &identity,
+                UsageEstimate::default(),
+                Some("10.1.2.3"),
+                "mimo-v2.5-pro",
+                "mimo-v2.5-pro",
+                "mimo",
+            )
             .unwrap();
         assert!(
             store
-                .check_quotas(&identity, UsageEstimate::default(), Some("192.168.1.10"))
+                .check_quotas(
+                    &identity,
+                    UsageEstimate::default(),
+                    Some("192.168.1.10"),
+                    "mimo-v2.5-pro",
+                    "mimo-v2.5-pro",
+                    "mimo",
+                )
                 .is_err()
         );
     }
@@ -1786,6 +2420,8 @@ mod tests {
             api_key_id: Some("key_test".to_owned()),
             api_key_name: Some("local".to_owned()),
             api_key_group: Some("test".to_owned()),
+            team_id: None,
+            team_name: None,
             enforce_quotas: true,
             api_key_policy: ApiKeyPolicy {
                 spend_limit_usd: 0.02,
@@ -1812,6 +2448,7 @@ mod tests {
                 latency: Duration::from_millis(10),
                 first_byte_latency: Some(Duration::from_millis(10)),
                 retry_count: 0,
+                fallback_from_provider: None,
                 client_ip: Some("127.0.0.1".to_owned()),
                 request_path: "/v1/messages".to_owned(),
                 error_message: None,
@@ -1827,6 +2464,138 @@ mod tests {
                         ..UsageEstimate::default()
                     },
                     None,
+                    "mimo-v2.5-pro",
+                    "mimo-v2.5-pro",
+                    "mimo",
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn team_model_and_provider_policy_is_enforced() {
+        let store = ControlStore::for_tests();
+        let team = store
+            .upsert_team(UpsertTeamInput {
+                id: Some("team_prod".to_owned()),
+                name: "Prod".to_owned(),
+                slug: Some("prod".to_owned()),
+                description: None,
+                status: Some("active".to_owned()),
+                daily_limit_usd: Some(0.0),
+                monthly_limit_usd: Some(0.0),
+                allowed_models: Some(vec!["mimo*".to_owned()]),
+                allowed_providers: Some(vec!["mimo".to_owned()]),
+            })
+            .unwrap();
+        assert_eq!(team["slug"], "prod");
+        let created = store
+            .create_api_key(CreateApiKeyInput {
+                user_id: "usr_test".to_owned(),
+                username: Some("test-user".to_owned()),
+                name: "team key".to_owned(),
+                group: None,
+                team_id: Some("team_prod".to_owned()),
+                allowed_models: None,
+                allowed_providers: None,
+                expires_at: None,
+            })
+            .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_str(&created.key).unwrap());
+        let identity = store.authenticate_headers(&headers).unwrap().unwrap();
+
+        store
+            .check_quotas(
+                &identity,
+                UsageEstimate::default(),
+                None,
+                "mimo-v2.5-pro",
+                "mimo-v2.5-pro",
+                "mimo",
+            )
+            .unwrap();
+        assert!(
+            store
+                .check_quotas(
+                    &identity,
+                    UsageEstimate::default(),
+                    None,
+                    "gpt-5",
+                    "gpt-5",
+                    "openai",
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn team_daily_budget_is_enforced() {
+        let store = ControlStore::for_tests();
+        store
+            .upsert_team(UpsertTeamInput {
+                id: Some("team_budget".to_owned()),
+                name: "Budget".to_owned(),
+                slug: Some("budget".to_owned()),
+                description: None,
+                status: Some("active".to_owned()),
+                daily_limit_usd: Some(0.02),
+                monthly_limit_usd: Some(0.0),
+                allowed_models: None,
+                allowed_providers: None,
+            })
+            .unwrap();
+        let created = store
+            .create_api_key(CreateApiKeyInput {
+                user_id: "usr_test".to_owned(),
+                username: Some("test-user".to_owned()),
+                name: "budget key".to_owned(),
+                group: None,
+                team_id: Some("team_budget".to_owned()),
+                allowed_models: None,
+                allowed_providers: None,
+                expires_at: None,
+            })
+            .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_str(&created.key).unwrap());
+        let identity = store.authenticate_headers(&headers).unwrap().unwrap();
+        store
+            .record_usage(UsageEventInput {
+                identity: identity.clone(),
+                model: "mimo-v2.5-pro".to_owned(),
+                resolved_model: "mimo-v2.5-pro".to_owned(),
+                provider: "mimo".to_owned(),
+                protocol: "openai-compat".to_owned(),
+                stream: false,
+                success: true,
+                status_code: 200,
+                estimate: UsageEstimate {
+                    cost_estimate: 0.015,
+                    ..UsageEstimate::default()
+                },
+                latency: Duration::from_millis(10),
+                first_byte_latency: Some(Duration::from_millis(10)),
+                retry_count: 0,
+                fallback_from_provider: None,
+                client_ip: Some("127.0.0.1".to_owned()),
+                request_path: "/v1/messages".to_owned(),
+                error_message: None,
+            })
+            .unwrap();
+
+        assert!(
+            store
+                .check_quotas(
+                    &identity,
+                    UsageEstimate {
+                        cost_estimate: 0.01,
+                        ..UsageEstimate::default()
+                    },
+                    None,
+                    "mimo-v2.5-pro",
+                    "mimo-v2.5-pro",
+                    "mimo",
                 )
                 .is_err()
         );

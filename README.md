@@ -19,7 +19,7 @@ ModelPort is production-ready within its current scope:
 - Suitable for personal long-running local usage and daily VS Code Claude / Claude Code development.
 - Suitable for small internal production or pilot deployments behind a trusted network boundary or reverse proxy.
 - Not recommended for direct public internet exposure.
-- Not a multi-tenant SaaS gateway; it does not provide user accounts, billing, quotas, audit retention, or fine-grained RBAC.
+- Not a multi-tenant SaaS gateway; it provides a lightweight small-team control plane, but not enterprise SSO, external billing, or public multi-tenant isolation.
 
 Verified baseline:
 
@@ -39,6 +39,8 @@ Verified baseline:
 - Native `reqwest` / `rustls` HTTP transport, with no system `curl` subprocess.
 - Upstream connection pooling, connection timeout, request timeout, and stream idle timeout.
 - Request body, response body, and concurrency limits.
+- Admin users, API keys, teams/projects, key budgets, team budgets, model/provider allowlists, audit events, and full backup/restore.
+- Provider runtime health, cooldown, and simple fallback between compatible providers.
 - Mimo stable streaming output to avoid replayed fragments in Claude Code.
 - Runtime `doctor`, static `config validate`, provider matrix checks, and Prometheus `/metrics`.
 - Docker Compose, systemd, quick-start scripts, and GitHub Actions CI.
@@ -542,7 +544,7 @@ scripts/acceptance.sh
 scripts/acceptance.sh --upstream
 ```
 
-The acceptance script creates a temporary user and API key, verifies IP/spend-limit rejection, audit logging, and backup validation, then cleans up temporary resources. See [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md).
+The acceptance script creates a temporary user, team/project, and API key, verifies IP/spend-limit rejection, audit logging, and backup validation, then cleans up temporary resources. See [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md).
 
 Stop:
 

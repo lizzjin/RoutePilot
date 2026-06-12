@@ -71,7 +71,7 @@ Docker Compose 默认启用内部 PostgreSQL，控制面数据保存在 named vo
 | namespace | 内容 |
 | --- | --- |
 | `auth` | 管理用户、角色、状态、密码哈希。 |
-| `control` | API Key 哈希、配额、用量、审计、路由配置、provider 测试记录。 |
+| `control` | 项目/团队、API Key 哈希、模型/provider 白名单、预算、配额、用量、审计、路由配置、provider 健康和测试记录。 |
 
 如果不设置 `MODELPORT_DATABASE_URL`，ModelPort 会回退到文件存储：`/data/admin-auth.json` 和 `/data/control-plane.json`。从旧版文件存储升级到 PostgreSQL 时，如果数据库为空，启动时会自动导入这两个 JSON 文件。
 

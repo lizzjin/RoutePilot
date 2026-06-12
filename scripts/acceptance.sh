@@ -42,6 +42,7 @@ temp_files=("$cookie_file" "$headers_file" "$body_file" "$backup_file")
 
 created_user_id=""
 created_key_id=""
+created_team_id=""
 
 cleanup() {
   if [[ -n "$created_key_id" ]]; then
@@ -53,6 +54,11 @@ cleanup() {
     curl_local -sS -m 10 -b "$cookie_file" \
       -H 'X-ModelPort-CSRF: 1' \
       -X DELETE "$(base_url)/admin/users/$created_user_id" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$created_team_id" ]]; then
+    curl_local -sS -m 10 -b "$cookie_file" \
+      -H 'X-ModelPort-CSRF: 1' \
+      -X DELETE "$(base_url)/admin/teams/$created_team_id" >/dev/null 2>&1 || true
   fi
   rm -f "${temp_files[@]}"
 }
@@ -215,15 +221,34 @@ status="$(admin_json POST /admin/users "$create_user_payload")"
 expect_status "$status" "200" "create acceptance user"
 created_user_id="$(json_get "$body_file" "id")"
 
+create_team_payload="$(
+  node -e '
+    const suffix = process.argv[1];
+    process.stdout.write(JSON.stringify({
+      name: `acceptance-team-${suffix}`,
+      slug: `acceptance-${suffix}`,
+      dailyLimitUsd: 1,
+      monthlyLimitUsd: 10,
+      allowedModels: [],
+      allowedProviders: [],
+      status: "active"
+    }));
+  ' "$suffix"
+)"
+status="$(admin_json POST /admin/teams "$create_team_payload")"
+expect_status "$status" "200" "create acceptance team"
+created_team_id="$(json_get "$body_file" "id")"
+
 create_key_payload="$(
   node -e '
     process.stdout.write(JSON.stringify({
       userId: process.argv[1],
       username: process.argv[2],
       name: "acceptance-key",
-      group: "acceptance"
+      group: "acceptance",
+      teamId: process.argv[3]
     }));
-  ' "$created_user_id" "$username"
+  ' "$created_user_id" "$username" "$created_team_id"
 )"
 status="$(admin_json POST /admin/api-keys "$create_key_payload")"
 expect_status "$status" "200" "create acceptance API key"
@@ -317,5 +342,9 @@ created_key_id=""
 status="$(admin_json DELETE "/admin/users/$created_user_id")"
 expect_status "$status" "200" "cleanup acceptance user"
 created_user_id=""
+
+status="$(admin_json DELETE "/admin/teams/$created_team_id")"
+expect_status "$status" "200" "cleanup acceptance team"
+created_team_id=""
 
 printf '\nModelPort acceptance passed for personal/small-team deployment.\n'

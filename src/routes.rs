@@ -26,10 +26,10 @@ use tracing::{info, warn};
 
 use crate::{
     auth::{AuthStore, CreateUserInput, LoginInput, PublicUser, UpdateUserInput},
-    config::{AppConfig, ConfigIssueSeverity, ProviderConfig, ProviderProtocol},
+    config::{AppConfig, ConfigIssueSeverity, ProviderConfig, ProviderProtocol, ResolvedProvider},
     control::{
         ActivityInput, ClientIdentity, ControlStore, CreateApiKeyInput, UpdateApiKeyInput,
-        UpsertQuotaInput, UsageEstimate, UsageEventInput,
+        UpsertQuotaInput, UpsertTeamInput, UsageEstimate, UsageEventInput,
     },
     error::AppError,
     http::{Header, HttpTransport},
@@ -133,6 +133,11 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/backup", get(admin_backup))
         .route("/admin/logs", get(admin_logs))
         .route("/admin/latency", get(admin_latency))
+        .route("/admin/teams", get(admin_teams).post(admin_upsert_team))
+        .route(
+            "/admin/teams/{team_id}",
+            put(admin_update_team).delete(admin_delete_team),
+        )
         .route("/admin/users", get(admin_users).post(admin_create_user))
         .route(
             "/admin/users/{user_id}",
@@ -178,11 +183,17 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     state
         .metrics
         .record_route("health", true, started.elapsed());
+    let provider_health = state.control.provider_health_rows();
 
     Json(json!({
         "status": "ok",
         "service": "model-port",
         "providers": state.config.provider_order.clone(),
+        "storage": {
+            "auth": state.auth.data_path(),
+            "control": state.control.data_path(),
+        },
+        "providerHealth": provider_health,
     }))
 }
 
@@ -260,16 +271,6 @@ async fn messages(
     };
     let estimate = estimate_usage(&request);
     let request_client_ip = client_ip(&headers, Some(peer_addr), &state.trusted_proxies);
-    if let Err(err) = state
-        .control
-        .check_quotas(&identity, estimate, request_client_ip.as_deref())
-    {
-        state
-            .metrics
-            .record_route("messages", false, started.elapsed());
-        return Err(err);
-    }
-
     let requested_model = request.model.clone();
     let config = effective_config(&state);
     let resolved = match config.resolve(&request.model) {
@@ -294,21 +295,56 @@ async fn messages(
         "routing message request"
     );
 
-    let provider_id = resolved.provider_id.clone();
-    let upstream_model = resolved.model.clone();
-    let protocol = provider_protocol_value(resolved.provider.protocol).to_owned();
-    let result = match resolved.provider.protocol {
-        ProviderProtocol::Anthropic => {
-            providers::anthropic::messages(state.clone(), resolved, request, &headers)
-                .await
-                .map(IntoResponse::into_response)
+    let attempts = route_attempts(&state, &config, &requested_model, resolved);
+    let mut provider_id = String::new();
+    let mut upstream_model = String::new();
+    let mut protocol = String::new();
+    let mut retry_count = 0u32;
+    let mut fallback_from_provider = None;
+    let mut result = Err(AppError::ProviderNotFound(requested_model.clone()));
+    let mut first_provider = None::<String>;
+
+    for (index, attempt) in attempts.into_iter().enumerate() {
+        if index > 0 {
+            retry_count = retry_count.saturating_add(1);
+            fallback_from_provider = first_provider.clone();
         }
-        ProviderProtocol::OpenaiCompat => {
-            providers::openai_compat::messages(state.clone(), resolved, request)
-                .await
-                .map(IntoResponse::into_response)
+        if first_provider.is_none() {
+            first_provider = Some(attempt.provider_id.clone());
         }
-    };
+        provider_id = attempt.provider_id.clone();
+        upstream_model = attempt.model.clone();
+        protocol = provider_protocol_value(attempt.provider.protocol).to_owned();
+        if let Err(err) = state.control.check_quotas(
+            &identity,
+            estimate,
+            request_client_ip.as_deref(),
+            &requested_model,
+            &upstream_model,
+            &provider_id,
+        ) {
+            result = Err(err);
+            break;
+        }
+        let attempt_result =
+            send_message_attempt(state.clone(), attempt, request.clone(), &headers).await;
+        let attempt_success = attempt_result.is_ok();
+        let attempt_status = attempt_result
+            .as_ref()
+            .map(|response| response.status().as_u16())
+            .unwrap_or(500);
+        let attempt_error = attempt_result.as_ref().err().map(ToString::to_string);
+        state.control.record_provider_outcome(
+            &provider_id,
+            attempt_success,
+            attempt_status,
+            attempt_error.as_deref(),
+        )?;
+        result = attempt_result;
+        if result.is_ok() || !is_retryable_message_error(result.as_ref().err()) {
+            break;
+        }
+    }
     let success = result.is_ok();
     let duration = started.elapsed();
     let status_code = result
@@ -345,12 +381,95 @@ async fn messages(
         estimate: actual_estimate,
         latency: duration,
         first_byte_latency: Some(duration),
-        retry_count: 0,
+        retry_count,
+        fallback_from_provider,
         client_ip: request_client_ip,
         request_path: "/v1/messages".to_owned(),
         error_message,
     })?;
     result
+}
+
+async fn send_message_attempt(
+    state: AppState,
+    resolved: ResolvedProvider,
+    request: AnthropicRequest,
+    headers: &HeaderMap,
+) -> Result<Response, AppError> {
+    match resolved.provider.protocol {
+        ProviderProtocol::Anthropic => {
+            providers::anthropic::messages(state, resolved, request, headers)
+                .await
+                .map(IntoResponse::into_response)
+        }
+        ProviderProtocol::OpenaiCompat => {
+            providers::openai_compat::messages(state, resolved, request)
+                .await
+                .map(IntoResponse::into_response)
+        }
+    }
+}
+
+fn route_attempts(
+    state: &AppState,
+    config: &AppConfig,
+    requested_model: &str,
+    primary: ResolvedProvider,
+) -> Vec<ResolvedProvider> {
+    let mut attempts = Vec::new();
+    if !state.control.provider_in_cooldown(&primary.provider_id) {
+        attempts.push(primary.clone());
+    }
+
+    for provider_id in &config.provider_order {
+        if provider_id == &primary.provider_id || state.control.provider_in_cooldown(provider_id) {
+            continue;
+        }
+        let Some(provider) = config.providers.get(provider_id) else {
+            continue;
+        };
+        let Some(model) = fallback_model_for_provider(provider, requested_model, &primary.model)
+        else {
+            continue;
+        };
+        attempts.push(ResolvedProvider {
+            provider_id: provider_id.clone(),
+            provider: provider.clone(),
+            model,
+        });
+    }
+
+    if attempts.is_empty() {
+        attempts.push(primary);
+    }
+    attempts
+}
+
+fn fallback_model_for_provider(
+    provider: &ProviderConfig,
+    requested_model: &str,
+    primary_model: &str,
+) -> Option<String> {
+    for model in [requested_model, primary_model] {
+        if provider.models.iter().any(|configured| configured == model)
+            || provider
+                .model_prefixes
+                .iter()
+                .any(|prefix| model.starts_with(prefix))
+            || provider.passthrough_unknown_models
+        {
+            return Some(model.to_owned());
+        }
+    }
+    None
+}
+
+fn is_retryable_message_error(error: Option<&AppError>) -> bool {
+    match error {
+        Some(AppError::Transport(_) | AppError::UpstreamProtocol(_)) => true,
+        Some(AppError::Upstream { status, .. }) => *status == 429 || *status >= 500,
+        _ => false,
+    }
 }
 
 async fn admin_login(
@@ -748,8 +867,13 @@ async fn admin_dashboard(
             let duration = if metric_requests > 0 { metric_duration } else { persisted.map(|stats| stats.duration_ms_total).unwrap_or(0) };
             let success_rate = percent(successes, requests);
             let provider_status = provider.get("status").and_then(Value::as_str).unwrap_or("inactive");
+            let runtime_status = provider.get("runtimeStatus").and_then(Value::as_str).unwrap_or("healthy");
             let health_status = if provider_status != "active" {
                 "down"
+            } else if runtime_status == "cooldown" {
+                "cooldown"
+            } else if runtime_status == "degraded" {
+                "degraded"
             } else if requests > 0 && success_rate < 99.0 {
                 "degraded"
             } else {
@@ -1151,6 +1275,78 @@ async fn admin_latency(
     })))
 }
 
+async fn admin_teams(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AppError> {
+    require_console_user(&state, &headers)?;
+    Ok(Json(json!(state.control.list_teams())))
+}
+
+async fn admin_upsert_team(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<UpsertTeamInput>,
+) -> Result<Json<Value>, AppError> {
+    let actor = require_admin_write_user(&state, &headers)?;
+    let team = state.control.upsert_team(body)?;
+    let team_name = team
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let team_id = team.get("id").and_then(Value::as_str).unwrap_or("unknown");
+    record_admin_activity(
+        &state,
+        &actor,
+        "config_change",
+        format!("team:{team_id}"),
+        format!("保存团队/项目 {team_name}"),
+        "info",
+    );
+    Ok(Json(team))
+}
+
+async fn admin_update_team(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(team_id): Path<String>,
+    Json(mut body): Json<UpsertTeamInput>,
+) -> Result<Json<Value>, AppError> {
+    let actor = require_admin_write_user(&state, &headers)?;
+    body.id = Some(team_id.clone());
+    let team = state.control.upsert_team(body)?;
+    record_admin_activity(
+        &state,
+        &actor,
+        "config_change",
+        format!("team:{team_id}"),
+        format!(
+            "更新团队/项目 {}",
+            team.get("name").and_then(Value::as_str).unwrap_or(&team_id)
+        ),
+        "info",
+    );
+    Ok(Json(team))
+}
+
+async fn admin_delete_team(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(team_id): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    let actor = require_admin_write_user(&state, &headers)?;
+    state.control.delete_team(&team_id)?;
+    record_admin_activity(
+        &state,
+        &actor,
+        "config_change",
+        format!("team:{team_id}"),
+        format!("删除团队/项目 {team_id}，相关 API Key 已解除绑定"),
+        "warning",
+    );
+    Ok(Json(json!({ "ok": true })))
+}
+
 async fn admin_users(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1268,6 +1464,7 @@ async fn admin_create_api_key(
             ));
         }
         body.username = Some(actor.username.clone());
+        body.team_id = None;
     }
     if body.username.is_none()
         && let Some(user) = state
@@ -1424,12 +1621,24 @@ async fn admin_delete_quota(
 fn provider_rows(state: &AppState) -> Vec<Value> {
     let config = effective_config(state);
     let provider_tests = state.control.provider_test_rows();
+    let provider_health = state.control.provider_health_rows();
     config
         .provider_order
         .iter()
         .filter_map(|id| {
             let provider = config.providers.get(id)?;
             let has_api_key = provider.api_key().ok().flatten().is_some();
+            let health = provider_health.get(id).cloned();
+            let runtime_status = health
+                .as_ref()
+                .and_then(|value| value.get("status"))
+                .and_then(Value::as_str)
+                .unwrap_or("healthy");
+            let config_status = if has_api_key || !provider.api_key_required {
+                "active"
+            } else {
+                "inactive"
+            };
             Some(json!({
                 "id": id,
                 "displayName": provider.display_name,
@@ -1445,9 +1654,11 @@ fn provider_rows(state: &AppState) -> Vec<Value> {
                 "deduplicateStreamText": provider.deduplicate_stream_text,
                 "bufferStreamText": provider.buffer_stream_text,
                 "fidelityMode": fidelity_mode_value(provider.fidelity_mode),
-                "status": if has_api_key || !provider.api_key_required { "active" } else { "inactive" },
+                "status": config_status,
+                "runtimeStatus": runtime_status,
                 "hasApiKey": has_api_key,
                 "lastTest": provider_tests.get(id).cloned(),
+                "health": health,
             }))
         })
         .collect()

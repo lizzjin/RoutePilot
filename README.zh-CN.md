@@ -19,7 +19,7 @@ ModelPort 已经进入当前定位下的**可投产阶段**：
 - 适合个人长期使用、本机常驻、VS Code Claude / Claude Code 日常开发。
 - 适合内网小团队生产或试生产，但建议放在可信网络或反向代理之后。
 - 不建议直接暴露到公网。
-- 不是多租户 SaaS 网关，不提供用户体系、计费、额度、审计留存和细粒度 RBAC。
+- 不是多租户 SaaS 网关；它提供轻量小团队控制面，但不做企业 SSO、外部计费或公网多租户隔离。
 
 当前已真实验证：
 
@@ -39,6 +39,8 @@ ModelPort 已经进入当前定位下的**可投产阶段**：
 - 原生 `reqwest` / `rustls` HTTP 传输，不依赖系统 `curl` 子进程。
 - 上游连接池、连接超时、请求超时、流式空闲超时。
 - 请求体、响应体和并发上限。
+- 管理用户、API Key、项目/团队、密钥预算、团队预算、模型/provider 白名单、审计事件和完整备份恢复。
+- provider 运行态健康、cooldown 和兼容 provider 之间的简单 fallback。
 - Mimo 稳定流式输出，避免重放片段污染 Claude Code。
 - `doctor` 运行态自检、`config validate` 静态配置校验、provider matrix 实测。
 - Prometheus 文本 `/metrics`。
@@ -535,7 +537,7 @@ scripts/acceptance.sh
 scripts/acceptance.sh --upstream
 ```
 
-验收脚本会创建临时用户和 API Key，验证 IP/额度拒绝、审计和备份校验，并在结束时清理临时资源。更多说明见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。
+验收脚本会创建临时用户、项目/团队和 API Key，验证 IP/额度拒绝、审计和备份校验，并在结束时清理临时资源。更多说明见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。
 
 停止：
 

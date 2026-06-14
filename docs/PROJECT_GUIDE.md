@@ -36,7 +36,8 @@ Mimo / DeepSeek / OpenAI-compatible / custom provider
 
 代码边界：
 
-- `src/routes.rs`：HTTP 入口、鉴权、请求限制、响应转换。
+- `src/routes.rs`：HTTP 入口、鉴权、请求限制、响应转换和主路由挂载。
+- `src/routes/admin_providers.rs`：管理后台 provider 生命周期、模型发现、模型库存启用/禁用。
 - `src/config.rs`：provider、模型别名、默认路由和环境变量。
 - `src/providers/`：Anthropic 和 OpenAI-compatible 协议适配。
 - `src/http.rs`：上游 HTTP 客户端、SSE 解析、超时和响应体限制。
@@ -69,7 +70,7 @@ Mimo / DeepSeek / OpenAI-compatible / custom provider
 - `docs/DOCKER.md`：面向个人/小团队部署，说明轻量 compose 和 PostgreSQL 数据存储。
 - `docs/PERFORMANCE.md`：说明效率、瓶颈和 benchmark。
 - `docs/GPT_IMAGE_2_GUIDE.md`：说明图像能力如何扩展。
-- CI：fmt、test、clippy。
+- CI：Rust fmt/test/clippy，以及 dashboard `npm ci`、`npm run lint`、`npm run build`。
 - Issue / PR 模板：规范反馈。
 - Security policy：防止密钥泄露。
 - Release notes：每次升级说明兼容性和验证结果。

@@ -380,7 +380,7 @@ Authorization: Bearer <MODELPORT_AUTH_TOKEN>
 - 请求日志：渠道、身份、模型、cache/token 明细、延迟、费用、重试、网络和原始上下文字段。
 - API Key 管理：恢复/禁用、绑定用户、项目/团队、IP 限制、消费预算、时间窗口限额、模型/provider 策略。
 - 用户管理：角色、状态、邮箱和密码更新。
-- 额度、provider 配置、路由别名、provider 模型发现、安装/运行诊断。
+- 额度、provider 生命周期管理、路由别名、provider 模型发现、单模型启用/禁用、安装/运行诊断。
 
 费用是基于当前价格表和已记录 token 用量的运营估算。带 token 明细的历史记录会在看板和日志中按当前价格表重新估算；没有 token 明细的旧记录保留原始估算值。
 
@@ -520,7 +520,7 @@ MODELPORT_CONFIG=/path/to/config.toml model-port config validate
 
 运行时热加载：
 
-- 后台修改的模型别名、默认 provider、provider 顺序会立即生效。
+- 后台修改的模型别名、默认 provider、provider 顺序、provider 生命周期和 provider 模型库存会立即生效。
 - 编辑 `.env` 或 `config.toml` 后，可在 `系统设置 -> 运维 -> 热重载配置` 触发，或调用 `POST /admin/settings/reload-config`。新请求会使用刷新后的 provider key、Base URL、模型列表、别名、provider 顺序和 legacy client auth token。
 - 服务级设置仍需重启后端：监听地址、请求体上限、并发层、HTTP client 超时、可信代理和首个管理员 bootstrap 配置。
 

@@ -28,7 +28,8 @@ Verified baseline:
 - Non-streaming `/v1/messages`
 - Streaming `/v1/messages`
 - VS Code Claude settings on Windows/WSL
-- `doctor`, `provider-matrix`, `/metrics`, and configuration validation
+- Dashboard login and control-plane E2E flows
+- `doctor`, `provider-matrix`, `/metrics`, acceptance checks, and configuration validation
 
 ## Features
 
@@ -42,6 +43,8 @@ Verified baseline:
 - Admin users, API keys, teams/projects, key budgets, team budgets, model/provider allowlists, audit events, and full backup/restore.
 - Provider runtime health, cooldown, and simple fallback between compatible providers.
 - Mimo stable streaming output to avoid replayed fragments in Claude Code.
+- Web dashboard for API keys, users, quotas, providers, request logs, rich usage charts, token trends, and cost estimates.
+- Usage accounting for input/output/cache tokens, latency, retries, request logs, and model/provider breakdowns.
 - Runtime `doctor`, static `config validate`, provider matrix checks, and Prometheus `/metrics`.
 - Docker Compose, systemd, quick-start scripts, and GitHub Actions CI.
 
@@ -57,10 +60,13 @@ ModelPort is not a large all-in-one model aggregation platform. It is a lightwei
 
 - [docs/PROJECT_GUIDE.md](docs/PROJECT_GUIDE.md): positioning, architecture boundaries, and roadmap.
 - [docs/PROVIDER_MATRIX.md](docs/PROVIDER_MATRIX.md): provider compatibility matrix, verification status, and acceptance criteria.
+- [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md): production acceptance checklist for personal and small-team deployments.
+- [docs/DOCKER.md](docs/DOCKER.md): lightweight Docker Compose deployment with internal PostgreSQL.
 - [docs/LOCAL_RUNTIME.md](docs/LOCAL_RUNTIME.md): SGLang, vLLM, llama.cpp, Ollama, and custom local runtime integration.
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md): efficiency, benchmarks, metrics, and production tuning.
 - [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md): GitHub repository settings, branch protection, and release suggestions.
 - [docs/GPT_IMAGE_2_GUIDE.md](docs/GPT_IMAGE_2_GUIDE.md): future image capability guidance.
+- [dashboard/README.md](dashboard/README.md): dashboard development, environment variables, and E2E testing.
 
 ## Quick Start
 
@@ -144,6 +150,14 @@ Check status:
 ```bash
 scripts/status.sh
 ```
+
+Open the dashboard:
+
+```text
+http://127.0.0.1:5173
+```
+
+Log in with `MODELPORT_ADMIN_USERNAME` and `MODELPORT_ADMIN_PASSWORD`. The dashboard manages users, API keys, teams/projects, quotas, provider configuration, request logs, and usage/cost monitoring.
 
 Stop and restart:
 
@@ -355,6 +369,29 @@ Authorization: Bearer <MODELPORT_AUTH_TOKEN>
 ```
 
 The management dashboard uses account login instead of this router token. The first admin user is bootstrapped from `MODELPORT_ADMIN_USERNAME` and `MODELPORT_ADMIN_PASSWORD`; if no admin password is configured, ModelPort falls back to `MODELPORT_AUTH_TOKEN` only for initial local migration.
+
+## Management Dashboard
+
+The dashboard is designed for personal and small-team operations, not public multi-tenant SaaS. It includes:
+
+- Dashboard overview with requests, success rate, tokens, latency, cost estimates, provider breakdowns, model distribution, token trends, recent usage, and quick actions.
+- Request logs with channel, identity, model, cache/token details, latency, cost, retry, network, and raw context fields.
+- API key management with status restore/disable, user binding, teams/projects, IP restrictions, spend limits, rate windows, and model/provider policies.
+- User management for roles, status, email, and password updates.
+- Quotas, provider configuration, route aliases, provider model discovery, and setup/runtime diagnostics.
+
+Cost estimates are operational estimates based on the current pricing table and recorded token usage. Historical records with token details are recalculated from the current pricing table in dashboard summaries and logs; legacy records without token details keep their stored estimate.
+
+For Mimo overseas pay-as-you-go pricing, the current built-in `mimo-v2.5-pro` table uses:
+
+| Item | Price |
+| --- | --- |
+| Input cache miss | `$0.435 / 1M tokens` |
+| Output | `$0.87 / 1M tokens` |
+| Input cache hit | `$0.0036 / 1M tokens` |
+| Cache write | Limited-time free, represented as `$0` |
+
+Reference: <https://mimo.mi.com/docs/en-US/price/pay-as-you-go>
 
 ## Model Switching
 
@@ -656,7 +693,7 @@ ModelPort intentionally stays small and clear:
 
 - It is not a chat client.
 - It is not a cloud model aggregation platform.
-- It does not provide billing, quotas, or user accounts.
+- It is not an enterprise IAM, external billing, or public multi-tenant SaaS system.
 - It does not run model inference; it only adapts protocols and routes locally.
 - It does not mix image base64 payloads into the Claude Code text path.
 - It does not try to support every provider-native API; it prioritizes Anthropic-compatible and OpenAI-compatible APIs.

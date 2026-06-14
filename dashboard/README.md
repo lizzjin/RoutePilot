@@ -8,7 +8,7 @@ It is designed for personal and small-team operations:
 - Request logs: provider/channel, identity, model, cache/token details, cost, latency, retry, network, and raw context fields.
 - API keys: create/edit/delete, restore/disable, user/team binding, IP restrictions, spend limits, rate windows, and model/provider policy.
 - Users: role, status, email, and password management.
-- Quotas, model/provider configuration, aliases, setup diagnostics, runtime checks, and backup/export entry points.
+- Quotas, model/provider configuration, provider lifecycle management, aliases, setup diagnostics, runtime checks, and backup/export entry points.
 
 ## Development
 
@@ -83,7 +83,7 @@ On machines where Playwright Chromium cannot find system libraries, use the loca
 LD_LIBRARY_PATH=../.modelport/playwright-deps/root/usr/lib/x86_64-linux-gnu npm run e2e
 ```
 
-The E2E suite covers dashboard trend filters, model catalog visibility, Mimo model availability, and admin user/API-key workflows.
+The E2E suite covers dashboard trend filters, model catalog visibility, Mimo model availability, provider lifecycle/model inventory workflows, and admin user/API-key workflows.
 
 ## UI Guidelines
 

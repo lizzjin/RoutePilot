@@ -77,6 +77,8 @@ Docker Compose 默认启用内部 PostgreSQL，控制面数据保存在 named vo
 
 后台“系统设置 -> 运维”可以导出脱敏控制面快照，适合排查和留档，但不用于完整恢复。
 
+Compose 模板会把宿主机 `.env` 只读挂载到容器内 `/config/.env`，并设置 `MODELPORT_ENV_FILE=/config/.env`。修改 `.env` 或挂载的 `config.toml` 后，可在后台 `系统设置 -> 运维 -> 热重载配置` 让新请求使用刷新后的 provider key、Base URL、模型列表、别名和路由顺序。监听地址、请求体上限、并发层、HTTP client 超时、可信代理和首个管理员 bootstrap 配置仍需重启 `modelport` 容器。
+
 完整恢复使用 CLI 备份，里面包含密码哈希和 API Key 哈希等认证材料。请像保护密钥一样保护该文件：
 
 ```bash

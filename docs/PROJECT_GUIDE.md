@@ -80,7 +80,7 @@ Mimo / DeepSeek / OpenAI-compatible / custom provider
 
 - Provider 实测矩阵：用 `scripts/provider-matrix.sh` 记录 Mimo、DeepSeek、OpenRouter、DashScope、Gemini 等真实测试状态。
 - 路由策略：按模型名前缀、别名、fallback、provider 优先级扩展。
-- 配置校验：已有 `model-port config validate` 和 `scripts/config-validate.sh`，后续可扩展成更完整 CLI。
+- 配置校验和热加载：已有 `model-port config validate`、`scripts/config-validate.sh` 和后台配置热加载；provider key、Base URL、模型列表、别名和路由顺序可以让新请求直接使用新快照。
 - 可观测性：已有 `/metrics`、请求日志、用量看板和 provider 健康；后续补上更细的上游状态码分布和长期趋势导出。
 - 图像能力：独立支持 `gpt-image-2` 的 Image API，不混入 Claude Code 文本主路径。
 - 管理面：继续保持轻量，不引入企业 SSO、外部结算或复杂租户层。
@@ -90,7 +90,7 @@ Mimo / DeepSeek / OpenAI-compatible / custom provider
 新增或声明支持某个 provider 前，至少完成：
 
 1. 填好真实 key 和模型变量。
-2. 启动或重启 ModelPort。
+2. 启动 ModelPort；如果只是调整 provider key、Base URL、模型列表、别名或路由顺序，可在后台执行热重载配置。
 3. 运行 `scripts/doctor.sh`。
 4. 运行 `scripts/provider-matrix.sh --model <model-id>`。
 5. 同时通过非流式和流式 `/v1/messages`。

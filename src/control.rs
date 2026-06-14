@@ -832,26 +832,34 @@ impl ControlStore {
     pub fn provider_policy_references(&self, provider_id: &str) -> Vec<serde_json::Value> {
         let inner = self.inner.lock().expect("control lock poisoned");
         let mut references = Vec::new();
-        references.extend(inner.api_keys.values().filter_map(|record| {
-            policy_references_provider(&record.allowed_providers, provider_id).then(|| {
-                json!({
-                    "type": "apiKey",
-                    "id": record.id,
-                    "name": record.name,
-                    "field": "allowedProviders",
-                })
-            })
-        }));
-        references.extend(inner.teams.values().filter_map(|record| {
-            policy_references_provider(&record.allowed_providers, provider_id).then(|| {
-                json!({
-                    "type": "team",
-                    "id": record.id,
-                    "name": record.name,
-                    "field": "allowedProviders",
-                })
-            })
-        }));
+        references.extend(
+            inner
+                .api_keys
+                .values()
+                .filter(|record| policy_references_provider(&record.allowed_providers, provider_id))
+                .map(|record| {
+                    json!({
+                        "type": "apiKey",
+                        "id": record.id,
+                        "name": record.name,
+                        "field": "allowedProviders",
+                    })
+                }),
+        );
+        references.extend(
+            inner
+                .teams
+                .values()
+                .filter(|record| policy_references_provider(&record.allowed_providers, provider_id))
+                .map(|record| {
+                    json!({
+                        "type": "team",
+                        "id": record.id,
+                        "name": record.name,
+                        "field": "allowedProviders",
+                    })
+                }),
+        );
         references
     }
 

@@ -3,7 +3,7 @@ import type { Provider, ModelAlias } from '@/types'
 export const mockProviders: Provider[] = [
   {
     id: 'deepseek',
-    displayName: 'DeepSeek Official Anthropic',
+    displayName: 'DeepSeek',
     protocol: 'anthropic',
     baseUrl: 'https://api.deepseek.com/anthropic',
     apiKeyEnv: 'DEEPSEEK_ANTHROPIC_AUTH_TOKEN',
@@ -20,7 +20,7 @@ export const mockProviders: Provider[] = [
   },
   {
     id: 'mimo',
-    displayName: 'Xiaomi Mimo OpenAI-Compatible',
+    displayName: '小米 MiMo',
     protocol: 'openai-compat',
     baseUrl: 'https://api.xiaomimimo.com/v1',
     apiKeyEnv: 'MIMO_OPENAI_API_KEY',
@@ -37,7 +37,7 @@ export const mockProviders: Provider[] = [
   },
   {
     id: 'deepseek_openai',
-    displayName: 'DeepSeek Official OpenAI-Compatible',
+    displayName: 'DeepSeek',
     protocol: 'openai-compat',
     baseUrl: 'https://api.deepseek.com',
     apiKeyEnv: 'DEEPSEEK_OPENAI_API_KEY',
@@ -105,7 +105,7 @@ export const mockProviders: Provider[] = [
   },
   {
     id: 'gemini',
-    displayName: 'Google Gemini OpenAI-Compatible',
+    displayName: 'Google Gemini',
     protocol: 'openai-compat',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     apiKeyEnv: 'GEMINI_API_KEY',
@@ -156,7 +156,7 @@ export const mockProviders: Provider[] = [
   },
   {
     id: 'dashscope',
-    displayName: 'Alibaba DashScope Qwen',
+    displayName: '阿里云百炼 Qwen',
     protocol: 'openai-compat',
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     apiKeyEnv: 'DASHSCOPE_API_KEY',
@@ -190,7 +190,7 @@ export const mockProviders: Provider[] = [
   },
   {
     id: 'zhipu',
-    displayName: 'Zhipu GLM',
+    displayName: '智谱 GLM',
     protocol: 'openai-compat',
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
     apiKeyEnv: 'ZHIPU_API_KEY',
@@ -224,7 +224,7 @@ export const mockProviders: Provider[] = [
   },
   {
     id: 'ark',
-    displayName: 'Volcengine Ark Doubao',
+    displayName: '火山方舟 Doubao',
     protocol: 'openai-compat',
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     apiKeyEnv: 'ARK_API_KEY',
@@ -241,7 +241,7 @@ export const mockProviders: Provider[] = [
   },
   {
     id: 'ollama',
-    displayName: 'Ollama Local OpenAI-Compatible',
+    displayName: 'Ollama',
     protocol: 'openai-compat',
     baseUrl: 'http://127.0.0.1:11434/v1',
     apiKeyEnv: 'OLLAMA_API_KEY',
@@ -258,7 +258,7 @@ export const mockProviders: Provider[] = [
   },
   {
     id: 'custom',
-    displayName: 'Custom OpenAI-Compatible',
+    displayName: '自定义 OpenAI 兼容',
     protocol: 'openai-compat',
     baseUrl: 'http://127.0.0.1:8000/v1',
     apiKeyEnv: 'CUSTOM_OPENAI_API_KEY',

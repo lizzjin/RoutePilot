@@ -5,6 +5,9 @@
 ## Validation
 
 - [ ] `scripts/check.sh`
+- [ ] `cd dashboard && npm run lint`
+- [ ] `cd dashboard && npm run build`
+- [ ] `cd dashboard && npm run e2e` when dashboard behavior changes
 - [ ] `scripts/doctor.sh`
 - [ ] `scripts/doctor.sh --upstream` when provider behavior changes
 - [ ] Docker build when deployment files change

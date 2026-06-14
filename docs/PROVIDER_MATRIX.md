@@ -27,11 +27,22 @@ It reads secrets from `.env` but does not print them.
 
 ## Current Verified Baseline
 
-Verified on 2026-06-08 in the local WSL/VS Code environment:
+Verified on 2026-06-14 in the local WSL/VS Code environment:
 
 | Provider | Protocol | Model | Non-stream | Stream | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `mimo` | OpenAI-compatible | `mimo-v2.5-pro` | Verified | Verified | Tested with `BASE_URL=https://w.ciykj.cn/v1`; stream text de-duplication is enabled for Mimo. |
+| `mimo` | OpenAI-compatible | `mimo-v2.5-pro` | Verified | Verified | Tested through local ModelPort and Claude-compatible settings; stream text de-duplication is enabled for Mimo. |
+
+## Pricing Notes
+
+ModelPort uses provider pricing only for operational cost estimates; upstream providers remain the source of truth for billing. As of the current table, `mimo-v2.5-pro` overseas pay-as-you-go is represented as:
+
+| Model | Input cache hit | Input cache miss | Output | Cache write |
+| --- | --- | --- | --- | --- |
+| `mimo-v2.5-pro` | `$0.0036 / 1M` | `$0.435 / 1M` | `$0.87 / 1M` | limited-time free, represented as `$0` |
+| `mimo-v2.5` / generic `mimo-*` fallback | `$0.0028 / 1M` | `$0.14 / 1M` | `$0.28 / 1M` | limited-time free, represented as `$0` |
+
+Reference: <https://mimo.mi.com/docs/en-US/price/pay-as-you-go>
 
 ## Built-In Providers
 
@@ -41,6 +52,7 @@ These providers are built into the router. A "Pending real-key verification" sta
 | --- | --- | --- | --- | --- |
 | `mimo` | OpenAI-compatible | `mimo-v2.5-pro` | Verified | `BASE_URL`, `MIMO_OPENAI_BASE_URL`, `MIMO_OPENAI_API_KEY`, `MIMO_MODEL` |
 | `deepseek` | Anthropic-compatible | `deepseek-v4-pro` | Pending real-key verification | `DEEPSEEK_ANTHROPIC_AUTH_TOKEN`, `DEEPSEEK_MODEL` |
+| `deepseek_openai` | OpenAI-compatible | `deepseek-chat` | Pending real-key verification | `DEEPSEEK_OPENAI_API_KEY`, `DEEPSEEK_OPENAI_MODEL`, `DEEPSEEK_API_KEY` |
 | `anthropic` | Anthropic-compatible | `claude-sonnet-4-20250514` | Pending real-key verification | `ANTHROPIC_API_KEY`, `ANTHROPIC_UPSTREAM_MODEL` |
 | `openai` | OpenAI-compatible | `gpt-4o` | Pending real-key verification | `OPENAI_API_KEY`, `OPENAI_MODEL` |
 | `openrouter` | OpenAI-compatible | `openrouter/auto` | Pending real-key verification | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` |
@@ -54,6 +66,9 @@ These providers are built into the router. A "Pending real-key verification" sta
 | `ark` | OpenAI-compatible | `doubao-seed-1-6-250615` | Pending real-key verification | `ARK_API_KEY`, `ARK_MODEL` |
 | `ollama` | OpenAI-compatible | `llama3.1` | Pending local runtime verification | `MODELPORT_ENABLE_OLLAMA`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL` |
 | `custom` | OpenAI-compatible | `default` | Depends on upstream | `CUSTOM_OPENAI_BASE_URL`, `CUSTOM_OPENAI_API_KEY`, `CUSTOM_OPENAI_MODEL` |
+| `local_sglang` | OpenAI-compatible | runtime served model | Pending local runtime verification | `MODELPORT_ENABLE_LOCAL_SGLANG`, `SGLANG_BASE_URL`, `SGLANG_MODEL` |
+| `local_vllm` | OpenAI-compatible | runtime served model | Pending local runtime verification | `MODELPORT_ENABLE_LOCAL_VLLM`, `VLLM_BASE_URL`, `VLLM_MODEL` |
+| `local_llamacpp` | OpenAI-compatible | runtime served model | Pending local runtime verification | `MODELPORT_ENABLE_LOCAL_LLAMACPP`, `LLAMACPP_BASE_URL`, `LLAMACPP_MODEL` |
 
 ## Acceptance Checklist
 
@@ -65,6 +80,7 @@ Before marking a provider as verified:
 - Run `scripts/provider-matrix.sh --model <provider:model-or-model-id>`.
 - For providers with multiple important models, run `scripts/provider-matrix.sh --models model-a,model-b`.
 - Record the date, provider, model, protocol, and any caveats in this document.
+- If the provider has special pricing, update the pricing table and add a regression test in `src/pricing.rs`.
 
 ## Known Caveats
 

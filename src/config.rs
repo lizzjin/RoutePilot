@@ -1,8 +1,9 @@
 use std::{
     collections::{BTreeSet, HashMap},
-    env, fs,
+    env, fmt, fs,
     net::SocketAddr,
     path::PathBuf,
+    sync::{Arc, RwLock},
 };
 
 use axum::http::HeaderMap;
@@ -23,6 +24,11 @@ pub struct AppConfig {
     pub provider_order: Vec<String>,
     pub providers: HashMap<String, ProviderConfig>,
     pub aliases: HashMap<String, String>,
+}
+
+pub struct RuntimeConfig {
+    inner: RwLock<AppConfig>,
+    loader: Arc<dyn Fn() -> Result<AppConfig, AppError> + Send + Sync>,
 }
 
 #[derive(Debug, Clone)]
@@ -489,7 +495,7 @@ impl AppConfig {
         let auth_token = require_auth_token(
             file.auth
                 .and_then(|auth| auth.token_env)
-                .and_then(|name| env::var(name).ok())
+                .and_then(|name| env_value(&name))
                 .or_else(default_auth_token),
         )?;
 
@@ -520,7 +526,7 @@ impl AppConfig {
             let base_url = section
                 .base_url_env
                 .as_deref()
-                .and_then(|name| env::var(name).ok())
+                .and_then(env_value)
                 .or_else(|| {
                     section
                         .base_url_env_fallbacks
@@ -538,10 +544,7 @@ impl AppConfig {
                 .clone()
                 .or_else(|| models.first().cloned())
                 .unwrap_or_else(|| id.clone());
-            let api_key = section
-                .api_key_env
-                .as_deref()
-                .and_then(|name| env::var(name).ok());
+            let api_key = section.api_key_env.as_deref().and_then(env_value);
             let api_key_required = section
                 .api_key_required
                 .unwrap_or(section.api_key_env.is_some());
@@ -602,7 +605,7 @@ impl AppConfig {
     }
 
     fn from_env_defaults() -> Result<Self, AppError> {
-        let bind_addr = resolve_bind(env::var("MODELPORT_BIND").ok())?;
+        let bind_addr = resolve_bind(service_env_value("MODELPORT_BIND"))?;
         let max_request_body_bytes = resolve_usize_env(
             None,
             "MODELPORT_MAX_REQUEST_BODY_BYTES",
@@ -631,7 +634,7 @@ impl AppConfig {
 
         let aliases = default_aliases();
         let default_provider =
-            env::var("MODELPORT_DEFAULT_PROVIDER").unwrap_or_else(|_| "mimo".to_owned());
+            env_value("MODELPORT_DEFAULT_PROVIDER").unwrap_or_else(|| "mimo".to_owned());
 
         Ok(Self {
             bind_addr,
@@ -643,6 +646,55 @@ impl AppConfig {
             providers,
             aliases,
         })
+    }
+}
+
+impl RuntimeConfig {
+    pub fn new(config: AppConfig) -> Self {
+        Self::with_loader(config, AppConfig::load)
+    }
+
+    pub fn with_loader(
+        config: AppConfig,
+        loader: impl Fn() -> Result<AppConfig, AppError> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            inner: RwLock::new(config),
+            loader: Arc::new(loader),
+        }
+    }
+
+    pub fn snapshot(&self) -> AppConfig {
+        self.inner
+            .read()
+            .expect("runtime config lock poisoned")
+            .clone()
+    }
+
+    pub fn reload(&self) -> Result<AppConfig, AppError> {
+        let config = (self.loader)()?;
+        let error_count = config
+            .validation_issues()
+            .iter()
+            .filter(|issue| issue.severity == ConfigIssueSeverity::Error)
+            .count();
+
+        if error_count > 0 {
+            return Err(AppError::Config(format!(
+                "configuration reload rejected with {error_count} error(s); run `model-port config validate` for details"
+            )));
+        }
+
+        *self.inner.write().expect("runtime config lock poisoned") = config.clone();
+        Ok(config)
+    }
+}
+
+impl fmt::Debug for RuntimeConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RuntimeConfig")
+            .finish_non_exhaustive()
     }
 }
 
@@ -1131,10 +1183,9 @@ fn insert_spec(
     provider_order: &mut Vec<String>,
     spec: &ProviderSpec,
 ) {
-    let default_model = env::var(spec.default_model_env).unwrap_or_else(|_| {
+    let default_model = env_value(spec.default_model_env).unwrap_or_else(|| {
         if spec.id == "mimo" {
-            env::var("ANTHROPIC_MODEL")
-                .ok()
+            env_value("ANTHROPIC_MODEL")
                 .filter(|model| model.starts_with("mimo-"))
                 .unwrap_or_else(|| spec.default_model.to_owned())
         } else {
@@ -1152,7 +1203,7 @@ fn insert_spec(
 
     let api_key = spec
         .api_key_env
-        .and_then(|name| env::var(name).ok())
+        .and_then(env_value)
         .or_else(|| first_env(spec.api_key_env_fallbacks));
     let buffer_stream_text = default_buffer_stream_text(spec.id);
 
@@ -1163,8 +1214,7 @@ fn insert_spec(
         ProviderConfig {
             display_name: spec.display_name.to_owned(),
             protocol: spec.protocol,
-            base_url: env::var(spec.base_url_env)
-                .ok()
+            base_url: env_value(spec.base_url_env)
                 .or_else(|| first_env(spec.base_url_env_fallbacks))
                 .unwrap_or_else(|| spec.default_base_url.to_owned()),
             api_key_env: spec.api_key_env.map(str::to_owned),
@@ -1229,7 +1279,7 @@ fn should_enable_provider(spec: &ProviderSpec) -> bool {
         return true;
     }
 
-    if env::var(spec.base_url_env).is_ok() || env::var(spec.default_model_env).is_ok() {
+    if env_value(spec.base_url_env).is_some() || env_value(spec.default_model_env).is_some() {
         return true;
     }
 
@@ -1237,16 +1287,14 @@ fn should_enable_provider(spec: &ProviderSpec) -> bool {
         return true;
     }
 
-    spec.api_key_env
-        .and_then(|name| env::var(name).ok())
-        .is_some()
+    spec.api_key_env.and_then(env_value).is_some()
         || first_env(spec.api_key_env_fallbacks).is_some()
 }
 
 fn should_enable_custom_openai_provider() -> bool {
-    env::var(CUSTOM_OPENAI_SPEC.base_url_env).is_ok()
-        || env::var(CUSTOM_OPENAI_SPEC.default_model_env).is_ok()
-        || env::var("CUSTOM_OPENAI_API_KEY").is_ok()
+    env_value(CUSTOM_OPENAI_SPEC.base_url_env).is_some()
+        || env_value(CUSTOM_OPENAI_SPEC.default_model_env).is_some()
+        || env_value("CUSTOM_OPENAI_API_KEY").is_some()
         || env_flag("MODELPORT_ENABLE_CUSTOM")
 }
 
@@ -1258,7 +1306,7 @@ fn extend_mimo_models_from_claude_env(models: &mut Vec<String>) {
         "ANTHROPIC_DEFAULT_HAIKU_MODEL",
         "ANTHROPIC_SMALL_FAST_MODEL",
     ] {
-        if let Ok(value) = env::var(name)
+        if let Some(value) = env_value(name)
             && value.starts_with("mimo-")
             && !models.contains(&value)
         {
@@ -1268,8 +1316,7 @@ fn extend_mimo_models_from_claude_env(models: &mut Vec<String>) {
 }
 
 fn env_list(name: &str, defaults: &[&str]) -> Vec<String> {
-    env::var(name)
-        .ok()
+    env_value(name)
         .map(|value| {
             value
                 .split(',')
@@ -1282,16 +1329,82 @@ fn env_list(name: &str, defaults: &[&str]) -> Vec<String> {
         .unwrap_or_else(|| defaults.iter().map(|value| (*value).to_owned()).collect())
 }
 
+fn env_value(name: &str) -> Option<String> {
+    let mut file_values = env_file_values();
+    file_values.remove(name).or_else(|| env::var(name).ok())
+}
+
+fn service_env_value(name: &str) -> Option<String> {
+    env::var(name).ok().or_else(|| {
+        let mut file_values = env_file_values();
+        file_values.remove(name)
+    })
+}
+
+fn env_file_values() -> HashMap<String, String> {
+    let Some(path) = env_file_path() else {
+        return HashMap::new();
+    };
+    let Ok(raw) = fs::read_to_string(path) else {
+        return HashMap::new();
+    };
+
+    raw.lines().filter_map(parse_env_line).collect()
+}
+
+fn env_file_path() -> Option<PathBuf> {
+    if let Some(path) = env::var_os("MODELPORT_ENV_FILE") {
+        return Some(PathBuf::from(path));
+    }
+
+    let path = env::current_dir().ok()?.join(".env");
+    path.exists().then_some(path)
+}
+
+fn parse_env_line(raw: &str) -> Option<(String, String)> {
+    let line = raw.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+    let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
+    let index = line.find('=')?;
+    let key = line[..index].trim();
+    if key.is_empty() {
+        return None;
+    }
+    let value = strip_env_quotes(line[index + 1..].trim()).to_owned();
+    Some((key.to_owned(), value))
+}
+
+fn strip_env_quotes(value: &str) -> &str {
+    if value.len() < 2 {
+        return value;
+    }
+    let Some(first) = value.chars().next() else {
+        return value;
+    };
+    let Some(last) = value.chars().last() else {
+        return value;
+    };
+    if matches!(first, '\'' | '"') && first == last {
+        let start = first.len_utf8();
+        let end = value.len() - last.len_utf8();
+        &value[start..end]
+    } else {
+        value
+    }
+}
+
 fn first_env(names: &[&str]) -> Option<String> {
-    names.iter().find_map(|name| env::var(name).ok())
+    names.iter().find_map(|name| env_value(name))
 }
 
 fn first_env_owned(names: &[String]) -> Option<String> {
-    names.iter().find_map(|name| env::var(name).ok())
+    names.iter().find_map(|name| env_value(name))
 }
 
 fn env_flag(name: &str) -> bool {
-    env::var(name)
+    env_value(name)
         .map(|value| {
             matches!(
                 value.as_str(),
@@ -1302,7 +1415,7 @@ fn env_flag(name: &str) -> bool {
 }
 
 fn env_bool(name: &str, default: bool) -> bool {
-    env::var(name)
+    env_value(name)
         .map(|value| match value.as_str() {
             "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON" => true,
             "0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF" => false,
@@ -1324,7 +1437,7 @@ fn env_key_fragment(id: &str) -> String {
 }
 
 fn config_path() -> PathBuf {
-    if let Some(path) = env::var_os("MODELPORT_CONFIG") {
+    if let Some(path) = service_env_value("MODELPORT_CONFIG") {
         return PathBuf::from(path);
     }
 
@@ -1341,11 +1454,7 @@ fn resolve_bind(value: Option<String>) -> Result<SocketAddr, AppError> {
 
 fn resolve_usize_env(value: Option<usize>, env_name: &str, default: usize) -> usize {
     value
-        .or_else(|| {
-            env::var(env_name)
-                .ok()
-                .and_then(|value| value.parse::<usize>().ok())
-        })
+        .or_else(|| service_env_value(env_name).and_then(|value| value.parse::<usize>().ok()))
         .filter(|value| *value > 0)
         .unwrap_or(default)
 }
@@ -1488,9 +1597,7 @@ fn is_placeholder_value(value: &str) -> bool {
 }
 
 fn default_auth_token() -> Option<String> {
-    env::var("MODELPORT_AUTH_TOKEN")
-        .ok()
-        .or_else(|| env::var("ANTHROPIC_AUTH_TOKEN").ok())
+    env_value("MODELPORT_AUTH_TOKEN").or_else(|| env_value("ANTHROPIC_AUTH_TOKEN"))
 }
 
 fn require_auth_token(auth_token: Option<String>) -> Result<Option<String>, AppError> {
@@ -1512,7 +1619,7 @@ fn default_aliases() -> HashMap<String, String> {
         "ANTHROPIC_DEFAULT_HAIKU_MODEL",
         "ANTHROPIC_SMALL_FAST_MODEL",
     ] {
-        if let Ok(model) = env::var(name) {
+        if let Some(model) = env_value(name) {
             if model.starts_with("deepseek-") {
                 aliases.insert(model, "deepseek".to_owned());
             } else if model.starts_with("mimo-") {
@@ -1635,6 +1742,19 @@ mod tests {
         assert_eq!(provider.api_key_required, Some(false));
         assert_eq!(provider.max_tokens_field, Some(MaxTokensField::MaxTokens));
         assert_eq!(provider.fidelity_mode, Some(FidelityMode::Strict));
+    }
+
+    #[test]
+    fn parses_env_file_lines_for_runtime_reload() {
+        assert_eq!(
+            parse_env_line("export MIMO_MODEL=\"mimo-v2.5-pro\""),
+            Some(("MIMO_MODEL".to_owned(), "mimo-v2.5-pro".to_owned()))
+        );
+        assert_eq!(
+            parse_env_line("DEEPSEEK_API_KEY='sk-test'"),
+            Some(("DEEPSEEK_API_KEY".to_owned(), "sk-test".to_owned()))
+        );
+        assert_eq!(parse_env_line("# comment"), None);
     }
 
     #[test]

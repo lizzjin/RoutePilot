@@ -40,7 +40,7 @@ export const MODEL_FAMILIES = [
 export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   {
     id: 'mimo',
-    displayName: 'Xiaomi Mimo OpenAI-Compatible',
+    displayName: '小米 MiMo',
     family: 'Mimo',
     protocol: 'openai-compat',
     baseUrl: 'https://api.xiaomimimo.com/v1',
@@ -59,7 +59,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   },
   {
     id: 'deepseek',
-    displayName: 'DeepSeek Official Anthropic',
+    displayName: 'DeepSeek 官方 Anthropic',
     family: 'DeepSeek',
     protocol: 'anthropic',
     baseUrl: 'https://api.deepseek.com/anthropic',
@@ -75,7 +75,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   },
   {
     id: 'deepseek_openai',
-    displayName: 'DeepSeek Official OpenAI-Compatible',
+    displayName: 'DeepSeek 官方 OpenAI 兼容',
     family: 'DeepSeek',
     protocol: 'openai-compat',
     baseUrl: 'https://api.deepseek.com',
@@ -139,7 +139,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   },
   {
     id: 'gemini',
-    displayName: 'Google Gemini OpenAI-Compatible',
+    displayName: 'Google Gemini OpenAI 兼容',
     family: 'Gemini',
     protocol: 'openai-compat',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
@@ -155,7 +155,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   },
   {
     id: 'dashscope',
-    displayName: 'Alibaba DashScope Qwen',
+    displayName: '阿里云百炼 Qwen',
     family: 'Qwen',
     protocol: 'openai-compat',
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
@@ -187,7 +187,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   },
   {
     id: 'zhipu',
-    displayName: 'Zhipu GLM',
+    displayName: '智谱 GLM',
     family: 'GLM',
     protocol: 'openai-compat',
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
@@ -203,7 +203,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   },
   {
     id: 'custom',
-    displayName: 'Custom OpenAI-Compatible',
+    displayName: '自定义 OpenAI 兼容',
     family: 'Custom',
     protocol: 'openai-compat',
     baseUrl: 'http://127.0.0.1:8000/v1',
@@ -274,7 +274,17 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
 export function guessModelFamily(model: string): string {
   const value = model.toLowerCase()
   if (value.includes('claude') || value.startsWith('anthropic/')) return 'Claude'
-  if (value.startsWith('gpt-') || value.startsWith('o3') || value.startsWith('o4') || value.startsWith('openai/')) return 'OpenAI'
+  if (
+    value.startsWith('gpt-')
+    || value.startsWith('o1')
+    || value.startsWith('o3')
+    || value.startsWith('o4')
+    || value.startsWith('o5')
+    || value.startsWith('chatgpt-')
+    || value.startsWith('codex-')
+    || value.includes('-codex')
+    || value.startsWith('openai/')
+  ) return 'OpenAI'
   if (value.includes('deepseek')) return 'DeepSeek'
   if (value.includes('gemini') || value.startsWith('google/')) return 'Gemini'
   if (value.includes('qwen') || value.startsWith('qwq-') || value.startsWith('qvq-')) return 'Qwen'

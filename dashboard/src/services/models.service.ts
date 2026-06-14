@@ -17,7 +17,7 @@ export const modelsService = {
   },
 
   discoverProviderModels: async (providerId: string): Promise<ProviderModelDiscovery> => {
-    if (!isMockMode) return api.get(`/admin/providers/${encodeURIComponent(providerId)}/models`)
+    if (!isMockMode) return api.post(`/admin/providers/${encodeURIComponent(providerId)}/models`)
     const provider = mockProviders.find((item) => item.id === providerId)
     if (!provider) throw new Error('提供商不存在')
 

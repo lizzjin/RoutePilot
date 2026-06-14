@@ -10,10 +10,17 @@ test.describe('models', () => {
     const env = requireE2EEnv()
     const providersResponse = await page.request.get('/admin/providers')
     expect(providersResponse.ok()).toBeTruthy()
-    const providers = await providersResponse.json() as Array<{ displayName: string; status: string }>
-    const activeProviderNames = new Set(
-      providers.filter((provider) => provider.status === 'active').map((provider) => provider.displayName),
-    )
+    const providers = await providersResponse.json() as Array<{ id: string; status: string; models: string[] }>
+    const activeProviders = providers.filter((provider) => provider.status === 'active')
+    const activeProviderIds = new Set(activeProviders.map((provider) => provider.id))
+    const publicModelIds = new Set(activeProviders.flatMap((provider) => provider.models))
+
+    const aliasesResponse = await page.request.get('/admin/aliases')
+    expect(aliasesResponse.ok()).toBeTruthy()
+    const aliases = await aliasesResponse.json() as Array<{ alias: string; resolvedProvider: string }>
+    for (const alias of aliases) {
+      if (activeProviderIds.has(alias.resolvedProvider)) publicModelIds.add(alias.alias)
+    }
 
     const modelsResponse = await page.request.get('/v1/models', {
       headers: { 'x-api-key': env.authToken },
@@ -23,7 +30,8 @@ test.describe('models', () => {
     expect(body.data.length).toBeGreaterThan(0)
 
     for (const model of body.data) {
-      expect(activeProviderNames.has(model.display_name)).toBeTruthy()
+      expect(publicModelIds.has(model.id)).toBeTruthy()
+      expect(model.display_name.trim().length).toBeGreaterThan(0)
     }
   })
 
@@ -31,6 +39,6 @@ test.describe('models', () => {
     await page.goto('/models')
     await expect(page.getByRole('heading', { name: '模型管理' })).toBeVisible()
     await expect(page.getByText('mimo-v2.5-pro').first()).toBeVisible()
-    await expect(page.getByText('Xiaomi Mimo OpenAI-Compatible').first()).toBeVisible()
+    await expect(page.getByText(/小米 MiMo/).first()).toBeVisible()
   })
 })

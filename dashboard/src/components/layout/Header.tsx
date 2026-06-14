@@ -1,6 +1,5 @@
-import { useLocation } from 'react-router-dom'
 import { useAuthStore, useAppStore } from '@/stores'
-import { NAV_ITEMS } from '@/lib/constants'
+import { BreadcrumbNav } from '@/components/shared/BreadcrumbNav'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
   DropdownMenu,
@@ -12,32 +11,59 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
 import { isMockMode } from '@/lib/mock-mode'
-import { Moon, Sun, Monitor, LogOut, User } from 'lucide-react'
+import { Moon, Sun, Monitor, LogOut, User, Menu, Search } from 'lucide-react'
+import { useState } from 'react'
 
-export function Header() {
-  const location = useLocation()
+interface HeaderProps {
+  onMenuClick?: () => void
+  isMobile?: boolean
+}
+
+export function Header({ onMenuClick, isMobile }: HeaderProps) {
   const currentUser = useAuthStore((s) => s.currentUser)
   const logout = useAuthStore((s) => s.logout)
   const theme = useAppStore((s) => s.theme)
   const setTheme = useAppStore((s) => s.setTheme)
 
-  const currentNav = NAV_ITEMS.find((item) => item.path === location.pathname)
-
   const themeIcons = { light: Sun, dark: Moon, system: Monitor }
   const ThemeIcon = themeIcons[theme]
 
+  // Keyboard shortcut hint for command palette
+  const [isMac] = useState(() => navigator.platform.includes('Mac'))
+
   return (
-    <header className="flex h-14 items-center justify-between border-b bg-background px-6">
-      <div className="flex items-center gap-2">
-        <h1 className="text-lg font-semibold">{currentNav?.label || 'ModelPort'}</h1>
+    <header className="flex h-14 items-center justify-between border-b border-border/50 bg-background/80 backdrop-blur-xl px-4 md:px-6">
+      <div className="flex items-center gap-3 min-w-0">
+        {isMobile && (
+          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onMenuClick}>
+            <Menu className="h-4 w-4" />
+          </Button>
+        )}
+        <div className="min-w-0">
+          <BreadcrumbNav />
+        </div>
         {isMockMode && (
-          <span className="rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300">
+          <span className="shrink-0 rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300">
             演示数据
           </span>
         )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
+        {/* Command palette trigger */}
+        <Button
+          variant="outline"
+          size="sm"
+          className="hidden h-8 gap-2 text-xs text-muted-foreground md:flex"
+          onClick={() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
+        >
+          <Search className="h-3.5 w-3.5" />
+          <span>搜索...</span>
+          <kbd className="pointer-events-none ml-1 select-none rounded border bg-muted px-1 text-[10px] font-medium">
+            {isMac ? '⌘' : 'Ctrl+'}K
+          </kbd>
+        </Button>
+
         {/* Theme toggle */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -65,8 +91,8 @@ export function Header() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-              <Avatar className="h-8 w-8">
-                <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+              <Avatar className="h-8 w-8 ring-2 ring-primary/20">
+                <AvatarFallback className="bg-primary/10 text-primary text-xs font-semibold">
                   {currentUser?.username?.charAt(0).toUpperCase() || 'U'}
                 </AvatarFallback>
               </Avatar>
@@ -75,7 +101,9 @@ export function Header() {
           <DropdownMenuContent className="w-56" align="end" forceMount>
             <DropdownMenuLabel className="font-normal">
               <div className="flex flex-col space-y-1">
-                <p className="text-sm font-medium leading-none">{currentUser?.username || '用户'}</p>
+                <p className="text-sm font-medium leading-none">
+                  {currentUser?.username || '用户'}
+                </p>
                 <p className="text-xs leading-none text-muted-foreground">
                   {currentUser?.email || ''}
                 </p>
@@ -87,7 +115,7 @@ export function Header() {
               个人资料
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={logout}>
+            <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive">
               <LogOut className="mr-2 h-4 w-4" />
               退出登录
             </DropdownMenuItem>

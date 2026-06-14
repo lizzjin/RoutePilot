@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { useQuotas, useCreateQuota, useDeleteQuota } from '@/hooks'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { MetricCard } from '@/components/shared/MetricCard'
+import { LoadingPage } from '@/components/shared/LoadingPage'
+import { EmptyState } from '@/components/shared/EmptyState'
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -11,7 +14,7 @@ import { Progress } from '@/components/ui/progress'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Gauge, Plus, Trash2, AlertTriangle } from 'lucide-react'
-import { formatNumber, formatDate } from '@/lib/utils'
+import { cn, formatNumber, formatDate } from '@/lib/utils'
 import type { QuotaType, QuotaPeriod } from '@/types'
 
 export function QuotasPage() {
@@ -20,6 +23,7 @@ export function QuotasPage() {
   const deleteQuota = useDeleteQuota()
 
   const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [form, setForm] = useState({
     userId: '',
     username: '',
@@ -56,7 +60,7 @@ export function QuotasPage() {
   }
 
   if (isLoading) {
-    return <div className="flex items-center justify-center h-64 text-muted-foreground">加载中...</div>
+    return <LoadingPage />
   }
 
   return (
@@ -94,7 +98,17 @@ export function QuotasPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {quotas.map((quota) => {
+              {quotas.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8}>
+                    <EmptyState
+                      icon={Gauge}
+                      title="暂无配额"
+                      description="点击「新建配额」按钮为用户设置配额限制"
+                    />
+                  </TableCell>
+                </TableRow>
+              ) : quotas.map((quota) => {
                 const percent = getUsagePercent(quota.used, quota.limit)
                 return (
                   <TableRow key={quota.id}>
@@ -106,7 +120,7 @@ export function QuotasPage() {
                     <TableCell>{formatQuotaValue(quota.used, quota.quotaType)}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <Progress value={percent} className="flex-1" />
+                        <Progress value={percent} className={cn('flex-1', percent >= 90 ? '[&>div]:bg-red-500' : percent >= 70 ? '[&>div]:bg-yellow-500' : '[&>div]:bg-green-500')} />
                         <span className={`text-sm font-medium ${getUsageColor(percent)}`}>{percent}%</span>
                       </div>
                     </TableCell>
@@ -117,7 +131,7 @@ export function QuotasPage() {
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 text-destructive"
-                        onClick={() => deleteQuota.mutate(quota.id)}
+                        onClick={() => setConfirmDeleteId(quota.id)}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -184,6 +198,21 @@ export function QuotasPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={!!confirmDeleteId}
+        title="删除配额"
+        description="删除此配额后，该用户的配额限制将被移除，操作不可撤销。"
+        confirmLabel="删除"
+        destructive
+        pending={deleteQuota.isPending}
+        onCancel={() => setConfirmDeleteId(null)}
+        onConfirm={() => {
+          if (confirmDeleteId) {
+            deleteQuota.mutate(confirmDeleteId, { onSettled: () => setConfirmDeleteId(null) })
+          }
+        }}
+      />
     </div>
   )
 }

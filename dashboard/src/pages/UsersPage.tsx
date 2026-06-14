@@ -3,6 +3,9 @@ import { useUsers, useCreateUser, useUpdateUser, useDeleteUser, useUserApiKeys, 
 import { PageHeader } from '@/components/shared/PageHeader'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { LoadingPage } from '@/components/shared/LoadingPage'
+import { EmptyState } from '@/components/shared/EmptyState'
+import { toast } from 'sonner'
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -66,6 +69,7 @@ export function UsersPage() {
         setShowCreateDialog(false)
         setForm({ username: '', email: '', password: '', role: 'user', status: 'active' })
       },
+      onError: (error) => toast.error(error instanceof Error ? error.message : '创建用户失败'),
     })
   }
 
@@ -96,6 +100,7 @@ export function UsersPage() {
       },
     }, {
       onSuccess: closeEditUser,
+      onError: (error) => toast.error(error instanceof Error ? error.message : '更新用户失败'),
     })
   }
 
@@ -107,6 +112,7 @@ export function UsersPage() {
         setNewKeyResult(key.key || key.keyPreview || key.keyPrefix)
         setKeyName('')
       },
+      onError: (error) => toast.error(error instanceof Error ? error.message : '生成密钥失败'),
     })
   }
 
@@ -119,7 +125,7 @@ export function UsersPage() {
   }
 
   if (isLoading) {
-    return <div className="flex items-center justify-center h-64 text-muted-foreground">加载中...</div>
+    return <LoadingPage />
   }
 
   return (
@@ -148,7 +154,17 @@ export function UsersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {users.map((user) => (
+              {users.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8}>
+                    <EmptyState
+                      icon={UserPlus}
+                      title="暂无用户"
+                      description="点击「新建用户」按钮创建第一个系统用户"
+                    />
+                  </TableCell>
+                </TableRow>
+              ) : users.map((user) => (
                 <TableRow key={user.id}>
                   <TableCell className="font-medium">{user.username}</TableCell>
                   <TableCell className="text-muted-foreground">{user.email}</TableCell>
@@ -184,7 +200,10 @@ export function UsersPage() {
                             description: `删除 ${user.username} 后，其相关 API 密钥会被回收，操作不可撤销。`,
                             confirmLabel: '删除',
                             destructive: true,
-                            onConfirm: () => deleteUser.mutate(user.id, { onSettled: () => setConfirmAction(null) }),
+                            onConfirm: () => deleteUser.mutate(user.id, {
+                              onSettled: () => setConfirmAction(null),
+                              onError: (error) => toast.error(error instanceof Error ? error.message : '删除用户失败'),
+                            }),
                           })}
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
@@ -380,7 +399,10 @@ export function UsersPage() {
                               description: `禁用 ${key.name} 后，它将不能继续调用 API。`,
                               confirmLabel: '禁用',
                               destructive: true,
-                              onConfirm: () => revokeApiKey.mutate(key.id, { onSettled: () => setConfirmAction(null) }),
+                              onConfirm: () => revokeApiKey.mutate(key.id, {
+                                onSettled: () => setConfirmAction(null),
+                                onError: (error) => toast.error(error instanceof Error ? error.message : '禁用密钥失败'),
+                              }),
                             })}
                           >
                             <Trash2 className="h-4 w-4" />

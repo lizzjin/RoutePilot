@@ -42,6 +42,7 @@ ModelPort 已经进入当前定位下的**可投产阶段**：
 - 请求体、响应体和并发上限。
 - 管理用户、API Key、项目/团队、密钥预算、团队预算、模型/provider 白名单、审计事件和完整备份恢复。
 - provider 运行态健康、cooldown 和兼容 provider 之间的简单 fallback。
+- 可在后台热加载 provider key、Base URL、模型列表、别名和路由优先级。
 - Mimo 稳定流式输出，避免重放片段污染 Claude Code。
 - Web 管理后台：API Key、用户、额度、provider、请求日志、用量趋势、Token 趋势和费用估算。
 - 用量统计：输入/输出/cache token、延迟、重试、请求日志、模型/provider 拆分。
@@ -517,11 +518,18 @@ MODELPORT_CONFIG=/path/to/config.toml model-port config validate
 - `fidelity_mode`：`strict` 拒绝有损的 Anthropic-to-OpenAI-compatible 转换，`best_effort` 保持兼容优先，`stability` 允许为不稳定上游改写流式文本。
 - `[aliases]`：模型别名，可指向 provider、模型名或 `provider:model`。
 
+运行时热加载：
+
+- 后台修改的模型别名、默认 provider、provider 顺序会立即生效。
+- 编辑 `.env` 或 `config.toml` 后，可在 `系统设置 -> 运维 -> 热重载配置` 触发，或调用 `POST /admin/settings/reload-config`。新请求会使用刷新后的 provider key、Base URL、模型列表、别名、provider 顺序和 legacy client auth token。
+- 服务级设置仍需重启后端：监听地址、请求体上限、并发层、HTTP client 超时、可信代理和首个管理员 bootstrap 配置。
+
 服务级变量：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `MODELPORT_BIND` | `127.0.0.1:17878` | 监听地址。生产建议保持本机地址或放在反向代理之后。 |
+| `MODELPORT_ENV_FILE` | 当前目录 `.env`（如存在） | 可选 env 文件路径，配置热加载时会重新读取。脚本和 Docker Compose 会自动设置。 |
 | `MODELPORT_MAX_REQUEST_BODY_BYTES` | `33554432` | 单请求体大小上限。 |
 | `MODELPORT_MAX_CONCURRENT_REQUESTS` | `64` | 并发请求上限。 |
 | `MODELPORT_HTTP_CONNECT_TIMEOUT_SECS` | `10` | 上游连接超时。 |

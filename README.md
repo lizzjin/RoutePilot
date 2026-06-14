@@ -42,6 +42,7 @@ Verified baseline:
 - Request body, response body, and concurrency limits.
 - Admin users, API keys, teams/projects, key budgets, team budgets, model/provider allowlists, audit events, and full backup/restore.
 - Provider runtime health, cooldown, and simple fallback between compatible providers.
+- Runtime reload for provider keys, base URLs, model lists, aliases, and route priority from the dashboard.
 - Mimo stable streaming output to avoid replayed fragments in Claude Code.
 - Web dashboard for API keys, users, quotas, providers, request logs, rich usage charts, token trends, and cost estimates.
 - Usage accounting for input/output/cache tokens, latency, retries, request logs, and model/provider breakdowns.
@@ -517,11 +518,18 @@ Important provider fields:
 - `fidelity_mode`: `strict` rejects lossy Anthropic-to-OpenAI-compatible conversions, `best_effort` preserves current compatibility, and `stability` allows stream text rewriting for unstable upstreams.
 - `[aliases]`: model aliases that can target a provider, a model name, or `provider:model`.
 
+Runtime reload:
+
+- Dashboard route aliases, default provider, and provider order are applied immediately.
+- After editing `.env` or `config.toml`, use `System Settings -> Operations -> Reload Configuration` or call `POST /admin/settings/reload-config`. New requests use the refreshed provider keys, base URLs, model lists, aliases, provider order, and legacy client auth token.
+- Service-level settings still require a backend restart: listen address, request body limit, concurrency layer, HTTP client timeouts, trusted proxies, and first-admin bootstrap values.
+
 Service-level variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `MODELPORT_BIND` | `127.0.0.1:17878` | Listen address. Keep it local in production or place it behind a reverse proxy. |
+| `MODELPORT_ENV_FILE` | current `.env` when present | Optional env file to reread during configuration reload. Scripts and Docker Compose set this automatically. |
 | `MODELPORT_MAX_REQUEST_BODY_BYTES` | `33554432` | Maximum request body size. |
 | `MODELPORT_MAX_CONCURRENT_REQUESTS` | `64` | Maximum concurrent requests. |
 | `MODELPORT_HTTP_CONNECT_TIMEOUT_SECS` | `10` | Upstream connection timeout. |

@@ -18,6 +18,19 @@ To include one real `/v1/messages` call through the created API key:
 scripts/acceptance.sh --upstream
 ```
 
+Before a release or push that touches the dashboard, pricing, routing, auth, quotas, or request logs, also run the code checks:
+
+```bash
+cargo fmt --all -- --check
+CC_x86_64_unknown_linux_gnu=./tools/zig-cc-wrapper.sh cargo test --all-targets
+cd dashboard
+npm run lint
+npm run build
+LD_LIBRARY_PATH=../.modelport/playwright-deps/root/usr/lib/x86_64-linux-gnu npm run e2e
+```
+
+The `LD_LIBRARY_PATH` line is only needed on machines where Playwright's Chromium cannot find system libraries such as `libnspr4.so`.
+
 ## What It Checks
 
 The script verifies:
@@ -82,3 +95,29 @@ Claude-compatible client -> ModelPort auth/policy -> provider route -> upstream 
 ```
 
 If default acceptance passes but `--upstream` fails, investigate provider credentials, model names, base URL, or upstream quota.
+
+## Dashboard Acceptance
+
+The dashboard E2E suite currently covers:
+
+- Admin login through the account-based dashboard auth flow.
+- Dashboard range filters: last 1 day, 3 days, 7 days, and custom range.
+- No `Invalid Date` labels in trend charts.
+- Public model catalog visibility for active configured providers.
+- Mimo model visibility when the provider is usable.
+- User and API key create/edit/cleanup flows.
+
+Manual visual checks before a user-facing release should include:
+
+- `/login`: desktop and mobile layout, button/input sizing, and readable color contrast.
+- `/dashboard`: KPI cards, request trend, provider breakdown, model distribution, token trend, recent usage, and no clipped long numbers.
+- `/logs`: filter panel, virtualized table, token/cost columns, retry/network details, and horizontal overflow behavior.
+
+## Pricing Acceptance
+
+Cost display is an estimate, but the estimate must be internally consistent:
+
+- `src/pricing.rs` has regression tests for provider-specific cache input/output pricing.
+- Request logs expose `modelPricing`, `costBreakdown`, token totals, and cache hit rate.
+- Dashboard summaries recalculate historical records with token details from the current pricing table.
+- Legacy records without token details keep their stored estimate so old quota tests and imports remain compatible.

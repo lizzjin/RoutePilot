@@ -379,7 +379,7 @@ The dashboard is designed for personal and small-team operations, not public mul
 - Request logs with channel, identity, model, cache/token details, latency, cost, retry, network, and raw context fields.
 - API key management with status restore/disable, user binding, teams/projects, IP restrictions, spend limits, rate windows, and model/provider policies.
 - User management for roles, status, email, and password updates.
-- Quotas, provider configuration, route aliases, provider model discovery, and setup/runtime diagnostics.
+- Quotas, provider lifecycle management, route aliases, provider model discovery, per-model enable/disable controls, and setup/runtime diagnostics.
 
 Cost estimates are operational estimates based on the current pricing table and recorded token usage. Historical records with token details are recalculated from the current pricing table in dashboard summaries and logs; legacy records without token details keep their stored estimate.
 
@@ -520,7 +520,7 @@ Important provider fields:
 
 Runtime reload:
 
-- Dashboard route aliases, default provider, and provider order are applied immediately.
+- Dashboard route aliases, default provider, provider order, provider lifecycle changes, and provider model inventory changes are applied immediately.
 - After editing `.env` or `config.toml`, use `System Settings -> Operations -> Reload Configuration` or call `POST /admin/settings/reload-config`. New requests use the refreshed provider keys, base URLs, model lists, aliases, provider order, and legacy client auth token.
 - Service-level settings still require a backend restart: listen address, request body limit, concurrency layer, HTTP client timeouts, trusted proxies, and first-admin bootstrap values.
 

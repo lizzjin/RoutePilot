@@ -105,6 +105,7 @@ The dashboard E2E suite currently covers:
 - No `Invalid Date` labels in trend charts.
 - Public model catalog visibility for active configured providers.
 - Mimo model visibility when the provider is usable.
+- Provider lifecycle and model inventory workflows: create, disable/restore, change default model, enable/disable a model, and delete.
 - System settings configuration reload, including the returned restart-required scope.
 - User and API key create/edit/cleanup flows.
 

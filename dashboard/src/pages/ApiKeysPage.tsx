@@ -2,6 +2,8 @@ import { useMemo, useState, type ElementType } from 'react'
 import { useApiKeys, useCreateApiKey, useDeleteApiKey, useRevokeApiKey, useTeams, useUpdateApiKey, useUpsertTeam, useUsers } from '@/hooks'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { EmptyState } from '@/components/shared/EmptyState'
+import { Skeleton } from '@/components/shared/Skeleton'
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -15,6 +17,7 @@ import { Progress } from '@/components/ui/progress'
 import { cn, formatDate, formatNumber } from '@/lib/utils'
 import { CalendarClock, Copy, DollarSign, FolderKanban, KeyRound, Pencil, Plus, RotateCw, Search, ShieldCheck, ShieldOff, Trash2, Zap } from 'lucide-react'
 import type { ApiKey, Team } from '@/types'
+import { toast } from 'sonner'
 
 const ALL = '__all__'
 const NO_GROUP = '__none__'
@@ -141,6 +144,7 @@ export function ApiKeysPage() {
         setNewKey(key.key || null)
         setForm({ userId: '', name: '', group: '', teamId: '', allowedModels: '', allowedProviders: '' })
       },
+      onError: (error) => toast.error(error instanceof Error ? error.message : '创建密钥失败'),
     })
   }
 
@@ -155,6 +159,7 @@ export function ApiKeysPage() {
       status: 'active',
     }, {
       onSuccess: () => setTeamForm({ name: '', dailyLimitUsd: '', monthlyLimitUsd: '', allowedModels: '', allowedProviders: '' }),
+      onError: (error) => toast.error(error instanceof Error ? error.message : '创建项目失败'),
     })
   }
 
@@ -184,7 +189,10 @@ export function ApiKeysPage() {
         description: `禁用后，${apiKey.name} 将无法继续调用 API。`,
         confirmLabel: '禁用',
         destructive: true,
-        onConfirm: () => revokeApiKey.mutate(apiKey.id, { onSettled: () => setConfirmAction(null) }),
+        onConfirm: () => revokeApiKey.mutate(apiKey.id, {
+          onSettled: () => setConfirmAction(null),
+          onError: (error) => toast.error(error instanceof Error ? error.message : '禁用密钥失败'),
+        }),
       })
       return
     }
@@ -219,6 +227,7 @@ export function ApiKeysPage() {
       },
     }, {
       onSuccess: closeEditDialog,
+      onError: (error) => toast.error(error instanceof Error ? error.message : '更新密钥失败'),
     })
   }
 
@@ -323,12 +332,22 @@ export function ApiKeysPage() {
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                <TableRow>
-                  <TableCell colSpan={11} className="h-28 text-center text-muted-foreground">加载中...</TableCell>
-                </TableRow>
+                Array.from({ length: 5 }).map((_, i) => (
+                  <TableRow key={`skeleton-${i}`} className="h-[94px]">
+                    <TableCell colSpan={11}>
+                      <Skeleton className="h-6 w-full" />
+                    </TableCell>
+                  </TableRow>
+                ))
               ) : filteredKeys.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="h-28 text-center text-muted-foreground">没有匹配的 API 密钥</TableCell>
+                  <TableCell colSpan={11} className="h-28">
+                    <EmptyState
+                      icon={KeyRound}
+                      title="暂无 API 密钥"
+                      description={search || status !== ALL || group !== ALL ? '没有匹配的 API 密钥，请调整筛选条件' : '点击「创建密钥」按钮签发第一个 API 密钥'}
+                    />
+                  </TableCell>
                 </TableRow>
               ) : filteredKeys.map((key) => (
                 <TableRow key={key.id} className="h-[94px]">
@@ -409,7 +428,10 @@ export function ApiKeysPage() {
                           description: `删除 ${key.name} 后无法恢复，相关调用记录仍会保留。`,
                           confirmLabel: '删除',
                           destructive: true,
-                          onConfirm: () => deleteApiKey.mutate(key.id, { onSettled: () => setConfirmAction(null) }),
+                          onConfirm: () => deleteApiKey.mutate(key.id, {
+                            onSettled: () => setConfirmAction(null),
+                            onError: (error) => toast.error(error instanceof Error ? error.message : '删除密钥失败'),
+                          }),
                         })}
                       >
                         <Trash2 className="h-4 w-4" />

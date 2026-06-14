@@ -10,6 +10,8 @@ import {
 import { PageHeader } from '@/components/shared/PageHeader'
 import { TableToolbar } from '@/components/shared/TableToolbar'
 import { StatusBadge } from '@/components/shared/StatusBadge'
+import { LoadingPage } from '@/components/shared/LoadingPage'
+import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -112,7 +114,7 @@ export function ModelsPage() {
       .sort((a, b) => a.family.localeCompare(b.family) || a.model.localeCompare(b.model))
   }, [providers])
 
-  const filteredModelRows = modelRows.filter((row) => {
+  const filteredModelRows = useMemo(() => modelRows.filter((row) => {
     const haystack = [
       row.model,
       row.family,
@@ -123,7 +125,7 @@ export function ModelsPage() {
     if (search && !haystack.includes(search.toLowerCase())) return false
     if (family !== ALL && row.family !== family) return false
     return true
-  })
+  }), [modelRows, search, family])
 
   const templateRows = PROVIDER_TEMPLATES.map((template) => ({
     ...template,
@@ -143,11 +145,12 @@ export function ModelsPage() {
     setDiscoveringProvider(providerId)
     discoverModels.mutate(providerId, {
       onSettled: () => setDiscoveringProvider(null),
+      onError: (error) => toast.error(error instanceof Error ? error.message : '发现模型失败'),
     })
   }
 
   if (isLoading) {
-    return <div className="flex items-center justify-center h-64 text-muted-foreground">加载中...</div>
+    return <LoadingPage />
   }
 
   return (
@@ -474,7 +477,9 @@ export function ModelsPage() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-destructive"
-                          onClick={() => deleteAlias.mutate(alias.alias)}
+                          onClick={() => deleteAlias.mutate(alias.alias, {
+                            onError: (error) => toast.error(error instanceof Error ? error.message : '删除别名失败'),
+                          })}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -501,7 +506,7 @@ export function ModelsPage() {
               </p>
               <div className="space-y-2">
                 <Label>默认提供商</Label>
-                <Select value={defaultProvider} onValueChange={(value) => { setDefaultProvider(value); updateDefault.mutate(value) }}>
+                <Select value={defaultProvider} onValueChange={(value) => { setDefaultProvider(value); updateDefault.mutate(value, { onError: (error) => toast.error(error instanceof Error ? error.message : '更新默认供应商失败') }) }}>
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
@@ -550,7 +555,10 @@ export function ModelsPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAliasDialog(false)}>取消</Button>
             <Button onClick={() => {
-              createAlias.mutate(aliasForm, { onSuccess: () => { setShowAliasDialog(false); setAliasForm({ alias: '', target: '' }) } })
+              createAlias.mutate(aliasForm, {
+                onSuccess: () => { setShowAliasDialog(false); setAliasForm({ alias: '', target: '' }) },
+                onError: (error) => toast.error(error instanceof Error ? error.message : '创建别名失败'),
+              })
             }} disabled={createAlias.isPending || !aliasForm.alias || !aliasForm.target}>创建</Button>
           </DialogFooter>
         </DialogContent>

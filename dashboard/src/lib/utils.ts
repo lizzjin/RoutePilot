@@ -15,9 +15,11 @@ export function formatDuration(seconds: number): string {
   const d = Math.floor(seconds / 86400)
   const h = Math.floor((seconds % 86400) / 3600)
   const m = Math.floor((seconds % 3600) / 60)
+  const s = Math.floor(seconds % 60)
   if (d > 0) return `${d}d ${h}h ${m}m`
   if (h > 0) return `${h}h ${m}m`
-  return `${m}m`
+  if (m > 0) return `${m}m ${s}s`
+  return `${s}s`
 }
 
 export function formatLatency(ms: number): string {
@@ -66,4 +68,37 @@ export function parseDate(dateStr: string): Date {
 export function truncateId(id: string, len = 8): string {
   if (id.length <= len) return id
   return id.slice(0, len) + "..."
+}
+
+export async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    // Fallback for older browsers or insecure contexts
+    try {
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
+export function debounce<T extends (...args: unknown[]) => unknown>(
+  fn: T,
+  ms: number,
+): (...args: Parameters<T>) => void {
+  let timer: ReturnType<typeof setTimeout>
+  return (...args: Parameters<T>) => {
+    clearTimeout(timer)
+    timer = setTimeout(() => fn(...args), ms)
+  }
 }

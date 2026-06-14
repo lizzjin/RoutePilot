@@ -24,7 +24,8 @@ const tokenNames = ['xulei11', 'alice-prod-chat', 'bob-dev-test', 'ops-observer'
 
 function pricingForModel(model: string) {
   if (model.includes('claude-opus')) return { inputPerMillion: 5, outputPerMillion: 25, cacheWritePerMillion: 6.25, cacheReadPerMillion: 0.5 }
-  if (model.includes('mimo')) return { inputPerMillion: 0.8, outputPerMillion: 3.2, cacheWritePerMillion: 1, cacheReadPerMillion: 0.08 }
+  if (model.includes('mimo-v2.5-pro')) return { inputPerMillion: 0.435, outputPerMillion: 0.87, cacheWritePerMillion: 0, cacheReadPerMillion: 0.0036 }
+  if (model.includes('mimo')) return { inputPerMillion: 0.14, outputPerMillion: 0.28, cacheWritePerMillion: 0, cacheReadPerMillion: 0.0028 }
   if (model.includes('deepseek')) return { inputPerMillion: 0.14, outputPerMillion: 0.28, cacheWritePerMillion: 0.14, cacheReadPerMillion: 0.0028 }
   return { inputPerMillion: 1.25, outputPerMillion: 7.5, cacheWritePerMillion: 1.25, cacheReadPerMillion: 0.125 }
 }

@@ -33,6 +33,11 @@ export interface DashboardStats {
     requestsTotal: number
     successRate: number
     avgLatencyMs: number
+    inputTokensTotal?: number
+    outputTokensTotal?: number
+    cacheWriteTokensTotal?: number
+    cacheReadTokensTotal?: number
+    costEstimateUsdTotal?: number
   }>
   recentActivity: Array<{
     id: string

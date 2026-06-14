@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAuditEvents, useExportBackup, useProviders, useSettings, useUpdateSettings, useTestProviderConnection } from '@/hooks'
 import { useAuthStore } from '@/stores'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { StatusBadge } from '@/components/shared/StatusBadge'
+import { LoadingPage } from '@/components/shared/LoadingPage'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -39,7 +40,7 @@ export function SettingsPage() {
   const { data: settings, isLoading } = useSettings()
 
   if (isLoading || !settings) {
-    return <div className="flex items-center justify-center h-64 text-muted-foreground">加载中...</div>
+    return <LoadingPage />
   }
 
   return <SettingsForm initialSettings={settings} />
@@ -58,7 +59,14 @@ function SettingsForm({ initialSettings }: { initialSettings: SystemSettings }) 
   const [testResults, setTestResults] = useState<Record<string, ProviderTestResult>>({})
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
-  const providerById = new Map(providers.map((provider) => [provider.id, provider]))
+  // Auto-dismiss notices after 5 seconds
+  useEffect(() => {
+    if (!notice) return
+    const timer = setTimeout(() => setNotice(null), 5000)
+    return () => clearTimeout(timer)
+  }, [notice])
+
+  const providerById = useMemo(() => new Map(providers.map((provider) => [provider.id, provider])), [providers])
 
   const handleSave = () => {
     setNotice(null)

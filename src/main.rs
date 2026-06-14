@@ -13,7 +13,7 @@ mod types;
 use std::{fs, path::Path, sync::Arc};
 
 use auth::AuthStore;
-use config::{AppConfig, ConfigIssueSeverity};
+use config::{AppConfig, ConfigIssueSeverity, RuntimeConfig};
 use control::ControlStore;
 use error::AppError;
 use http::HttpTransport;
@@ -45,7 +45,7 @@ async fn main() -> Result<(), AppError> {
     let control = Arc::new(ControlStore::load()?);
     let trusted_proxies = Arc::new(TrustedProxyConfig::from_env()?);
     let state = AppState {
-        config: Arc::new(config),
+        config: Arc::new(RuntimeConfig::new(config)),
         auth,
         control,
         trusted_proxies,

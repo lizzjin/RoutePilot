@@ -27,7 +27,10 @@ use tracing::{info, warn};
 
 use crate::{
     auth::{AuthStore, CreateUserInput, LoginInput, PublicUser, UpdateUserInput},
-    config::{AppConfig, ConfigIssueSeverity, ProviderConfig, ProviderProtocol, ResolvedProvider},
+    config::{
+        AppConfig, ConfigIssueSeverity, ProviderConfig, ProviderProtocol, ResolvedProvider,
+        RuntimeConfig,
+    },
     control::{
         ActivityInput, ClientIdentity, ControlStore, CreateApiKeyInput, UpdateApiKeyInput,
         UpsertQuotaInput, UpsertTeamInput, UsageEstimate, UsageEventInput,
@@ -49,7 +52,7 @@ const MAX_DASHBOARD_TREND_MS: u64 = 90 * DAY_MS;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub config: Arc<AppConfig>,
+    pub config: Arc<RuntimeConfig>,
     pub auth: Arc<AuthStore>,
     pub control: Arc<ControlStore>,
     pub trusted_proxies: Arc<TrustedProxyConfig>,
@@ -122,8 +125,9 @@ impl TrustedProxyConfig {
 }
 
 pub fn router(state: AppState) -> Router {
-    let max_request_body_bytes = state.config.max_request_body_bytes;
-    let max_concurrent_requests = state.config.max_concurrent_requests;
+    let config = state.config.snapshot();
+    let max_request_body_bytes = config.max_request_body_bytes;
+    let max_concurrent_requests = config.max_concurrent_requests;
 
     Router::new()
         .route("/health", get(health))
@@ -148,6 +152,7 @@ pub fn router(state: AppState) -> Router {
             "/admin/settings",
             get(admin_settings).put(admin_update_settings),
         )
+        .route("/admin/settings/reload-config", post(admin_reload_config))
         .route("/admin/settings/test-provider", post(admin_test_provider))
         .route("/admin/audit", get(admin_audit))
         .route("/admin/backup", get(admin_backup))
@@ -204,11 +209,12 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
         .metrics
         .record_route("health", true, started.elapsed());
     let provider_health = state.control.provider_health_rows();
+    let config = effective_config(&state);
 
     Json(json!({
         "status": "ok",
         "service": "model-port",
-        "providers": state.config.provider_order.clone(),
+        "providers": config.provider_order,
         "storage": {
             "auth": state.auth.data_path(),
             "control": state.control.data_path(),
@@ -223,7 +229,7 @@ async fn metrics(
 ) -> Result<impl IntoResponse, AppError> {
     let started = Instant::now();
 
-    if let Err(err) = state.config.validate_client_auth(&headers) {
+    if let Err(err) = state.config.snapshot().validate_client_auth(&headers) {
         state
             .metrics
             .record_route("metrics", false, started.elapsed());
@@ -760,7 +766,7 @@ fn authenticate_client(state: &AppState, headers: &HeaderMap) -> Result<ClientId
     if let Some(identity) = state.control.authenticate_headers(headers)? {
         return Ok(identity);
     }
-    state.config.validate_client_auth(headers)?;
+    state.config.snapshot().validate_client_auth(headers)?;
     Ok(ControlStore::legacy_identity())
 }
 
@@ -917,6 +923,7 @@ async fn admin_dashboard(
     let persisted_provider_usage = state.control.provider_usage_today();
     let now = now_millis_string();
     let recent_activity = state.control.activity_rows(8);
+    let config = effective_config(&state);
     let fallback_activity = vec![
         json!({
             "id": "act_health",
@@ -948,7 +955,7 @@ async fn admin_dashboard(
         "activeProviders": active_providers,
         "totalProviders": providers.len(),
         "activeUsers": active_users,
-        "totalModels": state.config.model_list().len(),
+        "totalModels": config.model_list().len(),
         "avgLatencyMs": avg_latency_ms,
         "apiKeysTotal": usage_summary.api_keys_total,
         "apiKeysActive": usage_summary.api_keys_active,
@@ -1079,7 +1086,7 @@ async fn admin_delete_alias(
     Path(alias): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     let actor = require_admin_write_user(&state, &headers)?;
-    let tombstone = state.config.aliases.contains_key(&alias);
+    let tombstone = state.config.snapshot().aliases.contains_key(&alias);
     state.control.delete_alias(&alias, tombstone)?;
     record_admin_activity(
         &state,
@@ -1100,6 +1107,45 @@ async fn admin_settings(
     Ok(Json(settings_row(&state)))
 }
 
+async fn admin_reload_config(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AppError> {
+    let actor = require_admin_write_user(&state, &headers)?;
+    let config = state.config.reload()?;
+    let issues = config_issues_json(&config);
+    let warning_count = issues
+        .iter()
+        .filter(|issue| issue.get("severity").and_then(Value::as_str) == Some("warning"))
+        .count();
+
+    record_admin_activity(
+        &state,
+        &actor,
+        "config_change",
+        "gateway",
+        format!(
+            "热重载配置：{} 个供应商，默认供应商 {}",
+            config.providers.len(),
+            config.default_provider
+        ),
+        if warning_count > 0 { "warning" } else { "info" },
+    );
+
+    Ok(Json(json!({
+        "ok": true,
+        "settings": settings_row(&state),
+        "providerCount": config.providers.len(),
+        "defaultProvider": config.default_provider,
+        "providerOrder": config.provider_order,
+        "issues": issues,
+        "reloadScope": {
+            "applied": ["providers", "provider credentials", "base urls", "model lists", "aliases", "legacy client auth token"],
+            "requiresRestart": ["bind address", "request body limit", "concurrency layer", "HTTP client timeouts", "trusted proxies", "admin bootstrap account"],
+        },
+    })))
+}
+
 async fn admin_update_settings(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1108,8 +1154,9 @@ async fn admin_update_settings(
     let actor = require_admin_write_user(&state, &headers)?;
     let mut changes = Vec::new();
     if let Some(gateway) = body.get("gateway") {
+        let config = state.config.snapshot();
         if let Some(provider_id) = gateway.get("defaultProvider").and_then(Value::as_str) {
-            if !state.config.providers.contains_key(provider_id) {
+            if !config.providers.contains_key(provider_id) {
                 return Err(AppError::ProviderNotFound(provider_id.to_owned()));
             }
             state.control.set_default_provider(provider_id.to_owned())?;
@@ -1117,7 +1164,7 @@ async fn admin_update_settings(
         }
 
         if let Some(order) = gateway.get("providerOrder") {
-            let provider_order = parse_provider_order(&state.config, order)?;
+            let provider_order = parse_provider_order(&config, order)?;
             let provider_count = provider_order.len();
             state.control.set_provider_order(provider_order)?;
             changes.push(format!("供应商路由顺序更新为 {provider_count} 个节点"));
@@ -1878,19 +1925,7 @@ fn setup_row(state: &AppState, config: &AppConfig) -> Value {
     let default_provider_active = default_provider
         .and_then(|provider| provider.get("status").and_then(Value::as_str))
         == Some("active");
-    let validation_issues = config
-        .validation_issues()
-        .into_iter()
-        .map(|issue| {
-            json!({
-                "severity": match issue.severity {
-                    ConfigIssueSeverity::Error => "error",
-                    ConfigIssueSeverity::Warning => "warning",
-                },
-                "message": issue.message,
-            })
-        })
-        .collect::<Vec<_>>();
+    let validation_issues = config_issues_json(config);
     let validation_errors = validation_issues
         .iter()
         .filter(|issue| issue.get("severity").and_then(Value::as_str) == Some("error"))
@@ -1958,6 +1993,22 @@ fn setup_row(state: &AppState, config: &AppConfig) -> Value {
         "checks": checks,
         "issues": validation_issues,
     })
+}
+
+fn config_issues_json(config: &AppConfig) -> Vec<Value> {
+    config
+        .validation_issues()
+        .into_iter()
+        .map(|issue| {
+            json!({
+                "severity": match issue.severity {
+                    ConfigIssueSeverity::Error => "error",
+                    ConfigIssueSeverity::Warning => "warning",
+                },
+                "message": issue.message,
+            })
+        })
+        .collect()
 }
 
 fn setup_check(
@@ -2036,7 +2087,7 @@ fn cidr_matches(base: u128, ip: u128, prefix: u8, bits: u8) -> bool {
 }
 
 fn effective_config(state: &AppState) -> AppConfig {
-    let mut config = state.config.as_ref().clone();
+    let mut config = state.config.snapshot();
     let snapshot = state.control.routing_config();
     config.aliases = state.control.effective_aliases(&config.aliases);
 
@@ -2110,6 +2161,7 @@ fn parse_provider_order(config: &AppConfig, value: &Value) -> Result<Vec<String>
 }
 
 fn log_rows(state: &AppState) -> Vec<Value> {
+    let config = effective_config(state);
     state
         .metrics
         .snapshot()
@@ -2117,8 +2169,7 @@ fn log_rows(state: &AppState) -> Vec<Value> {
         .iter()
         .enumerate()
         .map(|(index, message)| {
-            let protocol = state
-                .config
+            let protocol = config
                 .providers
                 .get(&message.provider)
                 .map(|provider| provider_protocol_value(provider.protocol))
@@ -2905,6 +2956,80 @@ data: [DONE]
         ));
     }
 
+    #[tokio::test]
+    async fn admin_reload_config_updates_runtime_snapshot() {
+        let upstream = spawn_openai_upstream(StatusCode::OK, "{}", "application/json").await;
+        let mut state = test_state_with_admin(upstream, 1024 * 1024);
+        let initial_config = state.config.snapshot();
+        let mut reloaded_config = initial_config.clone();
+        let custom_provider = reloaded_config
+            .providers
+            .get("mimo")
+            .cloned()
+            .map(|mut provider| {
+                provider.display_name = "Custom".to_owned();
+                provider.default_model = "custom-model".to_owned();
+                provider.models = vec!["custom-model".to_owned()];
+                provider.model_prefixes = vec!["custom-".to_owned()];
+                provider
+            })
+            .unwrap();
+        reloaded_config
+            .providers
+            .insert("custom".to_owned(), custom_provider);
+        reloaded_config.provider_order.push("custom".to_owned());
+        let loader_config = reloaded_config.clone();
+        state.config = Arc::new(RuntimeConfig::with_loader(initial_config, move || {
+            Ok(loader_config.clone())
+        }));
+        let app = router(state);
+
+        let login_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/auth/login")
+                    .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+                    .body(Body::from(
+                        json!({
+                            "username": "admin",
+                            "password": "strong-password-123",
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(login_response.status(), StatusCode::OK);
+        let session_cookie = login_response
+            .headers()
+            .get(SET_COOKIE)
+            .expect("login should set a session cookie")
+            .clone();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/settings/reload-config")
+                    .header("x-modelport-csrf", "1")
+                    .header(COOKIE, session_cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["providerCount"], json!(2));
+        assert_eq!(body["settings"]["gateway"]["providerOrder"][1], "custom");
+        assert_eq!(body["reloadScope"]["requiresRestart"][0], "bind address");
+    }
+
     #[test]
     fn parse_model_ids_accepts_common_local_runtime_shapes() {
         assert_eq!(
@@ -3071,7 +3196,7 @@ data: [DONE]
         };
 
         AppState {
-            config: Arc::new(AppConfig {
+            config: Arc::new(RuntimeConfig::new(AppConfig {
                 bind_addr: "127.0.0.1:0".parse().unwrap(),
                 max_request_body_bytes,
                 max_concurrent_requests: 16,
@@ -3080,7 +3205,7 @@ data: [DONE]
                 provider_order: vec!["mimo".to_owned()],
                 providers: HashMap::from([("mimo".to_owned(), provider)]),
                 aliases: HashMap::new(),
-            }),
+            })),
             auth: Arc::new(AuthStore::for_tests()),
             control: Arc::new(ControlStore::for_tests()),
             trusted_proxies: Arc::new(TrustedProxyConfig::for_tests()),

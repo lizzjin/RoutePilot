@@ -54,6 +54,7 @@ System settings expose readiness checks, server parameters, authentication, rate
 - Routes by `provider:model`, aliases, explicit model IDs, and model prefixes.
 - Tracks requests, latency, retries, input/output/cache tokens, provider health, and cost estimates.
 - Provides a web dashboard for API keys, users, teams/projects, quotas, logs, provider configuration, model inventory, aliases, backup, and runtime settings.
+- Supports multiple upstream accounts per provider as an API-serving account pool with manual, failover, or round-robin selection.
 - Supports Docker Compose, local source development, systemd deployment, Prometheus metrics, and production acceptance scripts.
 
 ModelPort is meant for personal and small-team trusted environments. Do not expose it directly to the public internet.
@@ -259,6 +260,26 @@ The dashboard uses account login, not the router token. The first admin is boots
 | `local_llamacpp` | OpenAI-compatible | `MODELPORT_ENABLE_LOCAL_LLAMACPP`, `LLAMACPP_BASE_URL`, `LLAMACPP_MODEL` |
 
 See [docs/PROVIDER_MATRIX.md](docs/PROVIDER_MATRIX.md) for compatibility status and verification notes.
+
+## Provider Accounts
+
+Each provider can have multiple upstream account profiles. A profile stores:
+
+- Display name
+- API key environment variable name
+- Optional Base URL override
+
+ModelPort does not store plaintext upstream API keys in the control plane. Put real keys in `.env` or the process environment, then create profiles such as `MIMO_OPENAI_API_KEY_MAIN` and `MIMO_OPENAI_API_KEY_BACKUP` in the provider card on the dashboard.
+
+Upstream accounts support three pool modes:
+
+| Mode | Behavior |
+| --- | --- |
+| Manual | Always use the selected account. |
+| Failover | Default mode; prefer the selected account, then move to the next usable account after account, missing-key, or rate-limit failures. |
+| Round robin | Distribute requests across enabled accounts whose key is present and not cooling down. |
+
+The provider card's account area exposes the pool mode, current account, per-account key status, request count, success rate, last-used time, cooldown status, and latest error. Provider health also classifies recent failures and suggests the next action. For example, `429` is treated as rate limiting, while balance/API-key failures are shown as account issues.
 
 ## Model Switching
 

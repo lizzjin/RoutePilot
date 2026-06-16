@@ -61,4 +61,41 @@ test.describe('provider management', () => {
     await expect(deleteDialog).toBeHidden()
     await expect(card).toHaveCount(0)
   })
+
+  test('exposes credential pool controls on provider cards', async ({ page }) => {
+    const suffix = Date.now().toString(36)
+    const providerId = `e2e_pool_${suffix}`
+    const model = `e2e-pool-model-${suffix}`
+
+    await page.goto('/models')
+    await page.getByRole('tab', { name: '供应商' }).click()
+    await page.getByRole('button', { name: '新增供应商' }).click()
+
+    await page.getByPlaceholder('例如: siliconflow', { exact: true }).fill(providerId)
+    await page.getByPlaceholder('例如: 第三方 · OpenAI').fill(`E2E Pool ${suffix}`)
+    await page.getByPlaceholder('https://example.com/v1').fill('http://127.0.0.1:9/v1')
+    await page.getByPlaceholder('例如: gpt-4o-mini').fill(model)
+    await page.getByPlaceholder(/每行一个模型/).fill(model)
+    await page.getByRole('button', { name: '保存' }).click()
+
+    const card = page.getByTestId(`provider-card-${providerId}`)
+    await expect(card).toBeVisible()
+    await expect(card).toContainText('默认凭证')
+
+    await card.getByRole('button', { name: '新增' }).click()
+    const credentialDialog = page.getByRole('dialog')
+    await credentialDialog.getByPlaceholder('例如: account-a').fill('pool-a')
+    await credentialDialog.getByPlaceholder('例如: Mimo 主账号').fill('Pool Account A')
+    await credentialDialog.getByPlaceholder('例如: MIMO_OPENAI_API_KEY_ALT').fill(`E2E_POOL_KEY_${suffix.toUpperCase()}`)
+    await credentialDialog.getByRole('button', { name: '保存' }).click()
+
+    await expect(card).toContainText('Pool Account A')
+    await expect(card).toContainText('故障切换')
+    await expect(card).toContainText('Key 缺失')
+    await expect(card).toContainText('暂无请求')
+
+    await card.getByRole('combobox').first().click()
+    await page.getByRole('option', { name: '轮询' }).click()
+    await expect(card).toContainText('轮询')
+  })
 })

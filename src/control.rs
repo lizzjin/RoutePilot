@@ -13,7 +13,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{error::AppError, pricing, storage::JsonStore};
+use crate::{config::ProviderConfig, error::AppError, pricing, storage::JsonStore};
 
 const DEFAULT_USAGE_LIMIT: usize = 5_000;
 const DAY_MS: u64 = 24 * 60 * 60 * 1_000;
@@ -39,6 +39,10 @@ struct ControlInner {
     disabled_providers: BTreeSet<String>,
     deleted_providers: BTreeSet<String>,
     provider_model_overrides: BTreeMap<String, BTreeMap<String, ProviderModelOverrideRecord>>,
+    provider_credentials: BTreeMap<String, BTreeMap<String, ProviderCredentialRecord>>,
+    active_provider_credentials: BTreeMap<String, String>,
+    provider_credential_pool_modes: BTreeMap<String, String>,
+    provider_credential_health: BTreeMap<String, BTreeMap<String, ProviderCredentialHealthRecord>>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -68,6 +72,14 @@ struct ControlFile {
     deleted_providers: BTreeSet<String>,
     #[serde(default)]
     provider_model_overrides: Vec<ProviderModelOverrideRecord>,
+    #[serde(default)]
+    provider_credentials: Vec<ProviderCredentialRecord>,
+    #[serde(default)]
+    active_provider_credentials: BTreeMap<String, String>,
+    #[serde(default)]
+    provider_credential_pool_modes: BTreeMap<String, String>,
+    #[serde(default)]
+    provider_credential_health: Vec<ProviderCredentialHealthRecord>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -152,6 +164,48 @@ pub struct ProviderModelOverrideRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProviderCredentialRecord {
+    pub id: String,
+    pub provider_id: String,
+    pub name: String,
+    pub api_key_env: String,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default = "default_credential_status")]
+    pub status: String,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderCredentialHealthRecord {
+    pub provider_id: String,
+    pub credential_id: String,
+    #[serde(default)]
+    pub requests_total: u64,
+    #[serde(default)]
+    pub successes_total: u64,
+    #[serde(default)]
+    pub failures_total: u64,
+    #[serde(default)]
+    pub consecutive_failures: u32,
+    #[serde(default)]
+    pub last_success_at_ms: Option<u64>,
+    #[serde(default)]
+    pub last_failure_at_ms: Option<u64>,
+    #[serde(default)]
+    pub last_used_at_ms: Option<u64>,
+    #[serde(default)]
+    pub cooldown_until_ms: Option<u64>,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub last_status_code: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct TeamRecord {
     id: String,
     name: String,
@@ -190,6 +244,8 @@ struct ProviderHealthRecord {
     cooldown_until_ms: Option<u64>,
     #[serde(default)]
     last_error: Option<String>,
+    #[serde(default)]
+    last_status_code: Option<u16>,
 }
 
 #[derive(Debug, Clone)]
@@ -511,6 +567,9 @@ pub struct ProviderControlSnapshot {
     pub disabled_providers: BTreeSet<String>,
     pub deleted_providers: BTreeSet<String>,
     pub provider_model_overrides: BTreeMap<String, BTreeMap<String, ProviderModelOverrideRecord>>,
+    pub provider_credentials: BTreeMap<String, BTreeMap<String, ProviderCredentialRecord>>,
+    pub active_provider_credentials: BTreeMap<String, String>,
+    pub provider_credential_pool_modes: BTreeMap<String, String>,
 }
 
 impl ControlStore {
@@ -534,6 +593,10 @@ impl ControlStore {
             "disabledProviders": [],
             "deletedProviders": [],
             "providerModelOverrides": [],
+            "providerCredentials": [],
+            "activeProviderCredentials": {},
+            "providerCredentialPoolModes": {},
+            "providerCredentialHealth": [],
         }))?;
         let mut provider_model_overrides: BTreeMap<
             String,
@@ -544,6 +607,24 @@ impl ControlStore {
                 .entry(record.provider_id.clone())
                 .or_default()
                 .insert(record.model.clone(), record);
+        }
+        let mut provider_credentials: BTreeMap<String, BTreeMap<String, ProviderCredentialRecord>> =
+            BTreeMap::new();
+        for record in file.provider_credentials {
+            provider_credentials
+                .entry(record.provider_id.clone())
+                .or_default()
+                .insert(record.id.clone(), record);
+        }
+        let mut provider_credential_health: BTreeMap<
+            String,
+            BTreeMap<String, ProviderCredentialHealthRecord>,
+        > = BTreeMap::new();
+        for record in file.provider_credential_health {
+            provider_credential_health
+                .entry(record.provider_id.clone())
+                .or_default()
+                .insert(record.credential_id.clone(), record);
         }
 
         Ok(Self {
@@ -585,6 +666,10 @@ impl ControlStore {
                 disabled_providers: file.disabled_providers,
                 deleted_providers: file.deleted_providers,
                 provider_model_overrides,
+                provider_credentials,
+                active_provider_credentials: file.active_provider_credentials,
+                provider_credential_pool_modes: file.provider_credential_pool_modes,
+                provider_credential_health,
             }),
             usage_limit,
         })
@@ -614,6 +699,9 @@ impl ControlStore {
             disabled_providers: inner.disabled_providers.clone(),
             deleted_providers: inner.deleted_providers.clone(),
             provider_model_overrides: inner.provider_model_overrides.clone(),
+            provider_credentials: inner.provider_credentials.clone(),
+            active_provider_credentials: inner.active_provider_credentials.clone(),
+            provider_credential_pool_modes: inner.provider_credential_pool_modes.clone(),
         }
     }
 
@@ -748,6 +836,10 @@ impl ControlStore {
         inner.provider_overrides.remove(&provider_id);
         inner.disabled_providers.remove(&provider_id);
         inner.provider_model_overrides.remove(&provider_id);
+        inner.provider_credentials.remove(&provider_id);
+        inner.active_provider_credentials.remove(&provider_id);
+        inner.provider_credential_pool_modes.remove(&provider_id);
+        inner.provider_credential_health.remove(&provider_id);
         inner.provider_tests.remove(&provider_id);
         inner.provider_health.remove(&provider_id);
         if tombstone {
@@ -825,6 +917,169 @@ impl ControlStore {
             updated_at_ms: now,
         };
         models.insert(model, record.clone());
+        self.save_locked(&inner)?;
+        Ok(record)
+    }
+
+    pub fn upsert_provider_credential(
+        &self,
+        mut record: ProviderCredentialRecord,
+    ) -> Result<ProviderCredentialRecord, AppError> {
+        record.provider_id = validate_provider_id(&record.provider_id)?;
+        record.id = validate_provider_credential_id(&record.id)?;
+        record.name = validate_non_empty("name", &record.name, 120)?;
+        record.api_key_env = validate_env_name(&record.api_key_env)?;
+        record.base_url = record
+            .base_url
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        if let Some(base_url) = &record.base_url
+            && (!base_url.starts_with("http://") && !base_url.starts_with("https://"))
+        {
+            return Err(AppError::InvalidRequest(
+                "baseUrl must start with http:// or https://".to_owned(),
+            ));
+        }
+        record.status = validate_credential_status(&record.status)?;
+        let now = now_millis();
+
+        let provider_id = record.provider_id.clone();
+        let credential_id = record.id.clone();
+        let mut inner = self.inner.lock().expect("control lock poisoned");
+        let active_id = inner.active_provider_credentials.get(&provider_id).cloned();
+        let next_active_id = {
+            let credentials = inner
+                .provider_credentials
+                .entry(provider_id.clone())
+                .or_default();
+            let created_at_ms = credentials
+                .get(&credential_id)
+                .map(|existing| existing.created_at_ms)
+                .unwrap_or(now);
+            record.created_at_ms = created_at_ms;
+            record.updated_at_ms = now;
+            credentials.insert(credential_id.clone(), record.clone());
+            let active_id_exists = active_id
+                .as_deref()
+                .is_some_and(|active_id| credentials.contains_key(active_id));
+            if record.status == "disabled" && active_id.as_deref() == Some(credential_id.as_str()) {
+                next_enabled_provider_credential_id(credentials, Some(credential_id.as_str()))
+            } else if !active_id_exists {
+                next_enabled_provider_credential_id(credentials, None)
+            } else {
+                active_id
+            }
+        };
+        if let Some(next_active_id) = next_active_id {
+            inner
+                .active_provider_credentials
+                .insert(provider_id, next_active_id);
+        } else {
+            inner.active_provider_credentials.remove(&provider_id);
+        }
+        self.save_locked(&inner)?;
+        Ok(record)
+    }
+
+    pub fn set_provider_credential_pool_mode(
+        &self,
+        provider_id: &str,
+        mode: &str,
+    ) -> Result<String, AppError> {
+        let provider_id = validate_provider_id(provider_id)?;
+        let mode = validate_credential_pool_mode(mode)?;
+        let mut inner = self.inner.lock().expect("control lock poisoned");
+        if mode == default_credential_pool_mode() {
+            inner.provider_credential_pool_modes.remove(&provider_id);
+        } else {
+            inner
+                .provider_credential_pool_modes
+                .insert(provider_id, mode.clone());
+        }
+        self.save_locked(&inner)?;
+        Ok(mode)
+    }
+
+    pub fn set_active_provider_credential(
+        &self,
+        provider_id: &str,
+        credential_id: &str,
+    ) -> Result<ProviderCredentialRecord, AppError> {
+        let provider_id = validate_provider_id(provider_id)?;
+        let credential_id = validate_provider_credential_id(credential_id)?;
+        let mut inner = self.inner.lock().expect("control lock poisoned");
+        let record = inner
+            .provider_credentials
+            .get(&provider_id)
+            .and_then(|credentials| credentials.get(&credential_id))
+            .cloned()
+            .ok_or_else(|| {
+                AppError::InvalidRequest(format!(
+                    "credential {credential_id} does not exist for provider {provider_id}"
+                ))
+            })?;
+        if record.status == "disabled" {
+            return Err(AppError::InvalidRequest(
+                "disabled credential cannot be selected".to_owned(),
+            ));
+        }
+        inner
+            .active_provider_credentials
+            .insert(provider_id.clone(), credential_id);
+        self.save_locked(&inner)?;
+        Ok(record)
+    }
+
+    pub fn delete_provider_credential(
+        &self,
+        provider_id: &str,
+        credential_id: &str,
+    ) -> Result<ProviderCredentialRecord, AppError> {
+        let provider_id = validate_provider_id(provider_id)?;
+        let credential_id = validate_provider_credential_id(credential_id)?;
+        let mut inner = self.inner.lock().expect("control lock poisoned");
+        let was_active =
+            inner.active_provider_credentials.get(&provider_id) == Some(&credential_id);
+        let (record, next_id, is_empty) = {
+            let Some(credentials) = inner.provider_credentials.get_mut(&provider_id) else {
+                return Err(AppError::InvalidRequest(format!(
+                    "credential {credential_id} does not exist for provider {provider_id}"
+                )));
+            };
+            let Some(record) = credentials.remove(&credential_id) else {
+                return Err(AppError::InvalidRequest(format!(
+                    "credential {credential_id} does not exist for provider {provider_id}"
+                )));
+            };
+            let next_id = if was_active {
+                credentials
+                    .values()
+                    .find(|credential| credential.status != "disabled")
+                    .map(|credential| credential.id.clone())
+            } else {
+                None
+            };
+            (record, next_id, credentials.is_empty())
+        };
+        if was_active {
+            if let Some(next_id) = next_id {
+                inner
+                    .active_provider_credentials
+                    .insert(provider_id.clone(), next_id);
+            } else {
+                inner.active_provider_credentials.remove(&provider_id);
+            }
+        }
+        if is_empty {
+            inner.provider_credentials.remove(&provider_id);
+            inner.provider_credential_pool_modes.remove(&provider_id);
+        }
+        if let Some(health) = inner.provider_credential_health.get_mut(&provider_id) {
+            health.remove(&credential_id);
+            if health.is_empty() {
+                inner.provider_credential_health.remove(&provider_id);
+            }
+        }
         self.save_locked(&inner)?;
         Ok(record)
     }
@@ -934,6 +1189,12 @@ impl ControlStore {
             "activities": &inner.activities,
             "providerTests": inner.provider_tests.values().collect::<Vec<_>>(),
             "providerHealth": inner.provider_health.values().collect::<Vec<_>>(),
+            "providerCredentials": inner
+                .provider_credentials
+                .values()
+                .flat_map(|credentials| credentials.values())
+                .collect::<Vec<_>>(),
+            "activeProviderCredentials": &inner.active_provider_credentials,
         })
     }
 
@@ -1098,49 +1359,126 @@ impl ControlStore {
 
     pub fn provider_in_cooldown(&self, provider_id: &str) -> bool {
         let inner = self.inner.lock().expect("control lock poisoned");
-        inner
-            .provider_health
-            .get(provider_id)
-            .and_then(|health| health.cooldown_until_ms)
-            .is_some_and(|until| until > now_millis())
+        let now = now_millis();
+        let Some(health) = inner.provider_health.get(provider_id) else {
+            return false;
+        };
+        if !health.cooldown_until_ms.is_some_and(|until| until > now) {
+            return false;
+        }
+        let mode = provider_credential_pool_mode_locked(&inner, provider_id);
+        let (failure_kind, _) =
+            provider_failure_guidance(health.last_status_code, health.last_error.as_deref());
+        let can_use_pool = mode != "manual"
+            && should_rotate_provider_credential(failure_kind)
+            && has_usable_provider_credential_locked(&inner, provider_id, now);
+        !can_use_pool
     }
 
-    pub fn record_provider_outcome(
+    pub fn apply_selected_provider_credential_for_request(
         &self,
         provider_id: &str,
+        provider: &mut ProviderConfig,
+    ) -> Option<String> {
+        let record = self.select_provider_credential_for_request(provider_id)?;
+        provider.api_key_env = Some(record.api_key_env.clone());
+        provider.api_key = env::var(&record.api_key_env)
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        if let Some(base_url) = record.base_url.clone() {
+            provider.base_url = base_url;
+        }
+        Some(record.id)
+    }
+
+    pub fn select_provider_credential_for_request(
+        &self,
+        provider_id: &str,
+    ) -> Option<ProviderCredentialRecord> {
+        let mut inner = self.inner.lock().expect("control lock poisoned");
+        select_provider_credential_locked(&mut inner, provider_id, now_millis())
+    }
+
+    pub fn record_provider_outcome_for_credential(
+        &self,
+        provider_id: &str,
+        credential_id: Option<&str>,
         success: bool,
         status_code: u16,
         error_message: Option<&str>,
     ) -> Result<(), AppError> {
         let mut inner = self.inner.lock().expect("control lock poisoned");
         let now = now_millis();
-        let health = inner
-            .provider_health
-            .entry(provider_id.to_owned())
-            .or_insert_with(|| ProviderHealthRecord {
-                provider_id: provider_id.to_owned(),
-                ..ProviderHealthRecord::default()
-            });
-        health.requests_total = health.requests_total.saturating_add(1);
-        if success {
-            health.successes_total = health.successes_total.saturating_add(1);
-            health.consecutive_failures = 0;
-            health.last_success_at_ms = Some(now);
-            health.cooldown_until_ms = None;
-            health.last_error = None;
-        } else {
-            health.failures_total = health.failures_total.saturating_add(1);
-            health.consecutive_failures = health.consecutive_failures.saturating_add(1);
-            health.last_failure_at_ms = Some(now);
-            health.last_error = error_message
-                .map(|value| value.chars().take(240).collect())
-                .or_else(|| Some(format!("HTTP {status_code}")));
-            if health.consecutive_failures >= 3 || status_code == 429 || status_code >= 500 {
-                let seconds = cooldown_seconds(health.consecutive_failures);
-                health.cooldown_until_ms = Some(now.saturating_add(seconds.saturating_mul(1_000)));
+        let failure_kind = record_provider_health_locked(
+            &mut inner,
+            provider_id,
+            success,
+            status_code,
+            error_message,
+            now,
+        );
+        if let Some(credential_id) = credential_id {
+            record_provider_credential_health_locked(
+                &mut inner,
+                provider_id,
+                credential_id,
+                success,
+                status_code,
+                error_message,
+                failure_kind,
+                now,
+            );
+        }
+        if !success {
+            let mode = provider_credential_pool_mode_locked(&inner, provider_id);
+            if mode != "manual"
+                && should_rotate_provider_credential(failure_kind)
+                && let Some((from_id, to_id, to_name)) =
+                    rotate_provider_credential_locked(&mut inner, provider_id, now)
+            {
+                if let Some(health) = inner.provider_health.get_mut(provider_id) {
+                    health.cooldown_until_ms = None;
+                }
+                inner.activities.push(ActivityRecord {
+                    id: format!("act_{}", Uuid::new_v4().simple()),
+                    timestamp_ms: now,
+                    activity_type: "auto_governance".to_owned(),
+                    actor: "system".to_owned(),
+                    target: format!("provider:{provider_id}:credential:{to_id}"),
+                    message: format!(
+                        "自动将供应商 {provider_id} 账号从 {from_id} 切换为 {to_name}"
+                    ),
+                    severity: "warning".to_owned(),
+                });
+                trim_activities_locked(&mut inner);
             }
         }
         self.save_locked(&inner)
+    }
+
+    pub fn provider_credential_health_rows(
+        &self,
+    ) -> BTreeMap<String, BTreeMap<String, serde_json::Value>> {
+        let inner = self.inner.lock().expect("control lock poisoned");
+        let now = now_millis();
+        inner
+            .provider_credential_health
+            .iter()
+            .map(|(provider_id, health)| {
+                (
+                    provider_id.clone(),
+                    health
+                        .iter()
+                        .map(|(credential_id, record)| {
+                            (
+                                credential_id.clone(),
+                                provider_credential_health_row(record, now),
+                            )
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
     }
 
     pub fn authenticate_headers(
@@ -1915,6 +2253,18 @@ impl ControlStore {
                 .values()
                 .flat_map(|models| models.values().cloned())
                 .collect(),
+            provider_credentials: inner
+                .provider_credentials
+                .values()
+                .flat_map(|credentials| credentials.values().cloned())
+                .collect(),
+            active_provider_credentials: inner.active_provider_credentials.clone(),
+            provider_credential_pool_modes: inner.provider_credential_pool_modes.clone(),
+            provider_credential_health: inner
+                .provider_credential_health
+                .values()
+                .flat_map(|health| health.values().cloned())
+                .collect(),
         };
         store.write_json(&file)
     }
@@ -2008,6 +2358,8 @@ fn provider_health_row(record: &ProviderHealthRecord, now: u64) -> serde_json::V
     } else {
         (record.successes_total as f64 / record.requests_total as f64) * 100.0
     };
+    let (failure_kind, recommended_action) =
+        provider_failure_guidance(record.last_status_code, record.last_error.as_deref());
     json!({
         "providerId": record.provider_id,
         "requestsTotal": record.requests_total,
@@ -2020,6 +2372,374 @@ fn provider_health_row(record: &ProviderHealthRecord, now: u64) -> serde_json::V
         "lastFailureAt": record.last_failure_at_ms.map(|value| value.to_string()),
         "cooldownUntil": record.cooldown_until_ms.map(|value| value.to_string()),
         "lastError": record.last_error,
+        "lastStatusCode": record.last_status_code,
+        "failureKind": failure_kind,
+        "recommendedAction": recommended_action,
+    })
+}
+
+fn provider_credential_health_row(
+    record: &ProviderCredentialHealthRecord,
+    now: u64,
+) -> serde_json::Value {
+    let in_cooldown = record.cooldown_until_ms.is_some_and(|until| until > now);
+    let success_rate = if record.requests_total == 0 {
+        0.0
+    } else {
+        (record.successes_total as f64 / record.requests_total as f64) * 100.0
+    };
+    let (failure_kind, recommended_action) =
+        provider_failure_guidance(record.last_status_code, record.last_error.as_deref());
+    json!({
+        "providerId": record.provider_id,
+        "credentialId": record.credential_id,
+        "requestsTotal": record.requests_total,
+        "successesTotal": record.successes_total,
+        "failuresTotal": record.failures_total,
+        "consecutiveFailures": record.consecutive_failures,
+        "successRate": success_rate,
+        "status": if in_cooldown { "cooldown" } else if record.consecutive_failures > 0 { "degraded" } else { "healthy" },
+        "lastSuccessAt": record.last_success_at_ms.map(|value| value.to_string()),
+        "lastFailureAt": record.last_failure_at_ms.map(|value| value.to_string()),
+        "lastUsedAt": record.last_used_at_ms.map(|value| value.to_string()),
+        "cooldownUntil": record.cooldown_until_ms.map(|value| value.to_string()),
+        "lastError": record.last_error,
+        "lastStatusCode": record.last_status_code,
+        "failureKind": failure_kind,
+        "recommendedAction": recommended_action,
+    })
+}
+
+fn record_provider_health_locked(
+    inner: &mut ControlInner,
+    provider_id: &str,
+    success: bool,
+    status_code: u16,
+    error_message: Option<&str>,
+    now: u64,
+) -> &'static str {
+    let health = inner
+        .provider_health
+        .entry(provider_id.to_owned())
+        .or_insert_with(|| ProviderHealthRecord {
+            provider_id: provider_id.to_owned(),
+            ..ProviderHealthRecord::default()
+        });
+    health.requests_total = health.requests_total.saturating_add(1);
+    if success {
+        health.successes_total = health.successes_total.saturating_add(1);
+        health.consecutive_failures = 0;
+        health.last_success_at_ms = Some(now);
+        health.cooldown_until_ms = None;
+        health.last_error = None;
+        health.last_status_code = Some(status_code);
+    } else {
+        health.failures_total = health.failures_total.saturating_add(1);
+        health.consecutive_failures = health.consecutive_failures.saturating_add(1);
+        health.last_failure_at_ms = Some(now);
+        health.last_status_code = Some(status_code);
+        health.last_error = truncated_error(error_message, status_code);
+        if health.consecutive_failures >= 3 || status_code == 429 || status_code >= 500 {
+            let seconds = cooldown_seconds(health.consecutive_failures);
+            health.cooldown_until_ms = Some(now.saturating_add(seconds.saturating_mul(1_000)));
+        }
+    }
+    provider_failure_guidance(health.last_status_code, health.last_error.as_deref()).0
+}
+
+fn record_provider_credential_health_locked(
+    inner: &mut ControlInner,
+    provider_id: &str,
+    credential_id: &str,
+    success: bool,
+    status_code: u16,
+    error_message: Option<&str>,
+    failure_kind: &str,
+    now: u64,
+) {
+    let health = inner
+        .provider_credential_health
+        .entry(provider_id.to_owned())
+        .or_default()
+        .entry(credential_id.to_owned())
+        .or_insert_with(|| ProviderCredentialHealthRecord {
+            provider_id: provider_id.to_owned(),
+            credential_id: credential_id.to_owned(),
+            ..ProviderCredentialHealthRecord::default()
+        });
+    health.requests_total = health.requests_total.saturating_add(1);
+    health.last_used_at_ms = Some(now);
+    if success {
+        health.successes_total = health.successes_total.saturating_add(1);
+        health.consecutive_failures = 0;
+        health.last_success_at_ms = Some(now);
+        health.cooldown_until_ms = None;
+        health.last_error = None;
+        health.last_status_code = Some(status_code);
+    } else {
+        health.failures_total = health.failures_total.saturating_add(1);
+        health.consecutive_failures = health.consecutive_failures.saturating_add(1);
+        health.last_failure_at_ms = Some(now);
+        health.last_status_code = Some(status_code);
+        health.last_error = truncated_error(error_message, status_code);
+        if should_rotate_provider_credential(failure_kind) || health.consecutive_failures >= 3 {
+            let seconds = cooldown_seconds(health.consecutive_failures);
+            health.cooldown_until_ms = Some(now.saturating_add(seconds.saturating_mul(1_000)));
+        }
+    }
+}
+
+fn truncated_error(error_message: Option<&str>, status_code: u16) -> Option<String> {
+    error_message
+        .map(|value| value.chars().take(240).collect())
+        .or_else(|| Some(format!("HTTP {status_code}")))
+}
+
+fn select_provider_credential_locked(
+    inner: &mut ControlInner,
+    provider_id: &str,
+    now: u64,
+) -> Option<ProviderCredentialRecord> {
+    let mode = provider_credential_pool_mode_locked(inner, provider_id);
+    let active_id = inner.active_provider_credentials.get(provider_id).cloned();
+    let (available, fallback) = {
+        let credentials = inner.provider_credentials.get(provider_id)?;
+        let health = inner.provider_credential_health.get(provider_id);
+        let available = credentials
+            .values()
+            .filter(|credential| provider_credential_is_usable(credential, health, now))
+            .cloned()
+            .collect::<Vec<_>>();
+        let fallback = active_id
+            .as_deref()
+            .and_then(|id| credentials.get(id))
+            .filter(|credential| credential.status != "disabled")
+            .or_else(|| {
+                credentials
+                    .values()
+                    .find(|credential| credential.status != "disabled")
+            })
+            .cloned();
+        (available, fallback)
+    };
+
+    let selected = match mode.as_str() {
+        "manual" => fallback,
+        "round_robin" => round_robin_provider_credential(&available, active_id.as_deref())
+            .or_else(|| available.first().cloned())
+            .or(fallback),
+        _ => active_id
+            .as_deref()
+            .and_then(|id| available.iter().find(|credential| credential.id == id))
+            .cloned()
+            .or_else(|| available.first().cloned())
+            .or(fallback),
+    };
+
+    if let Some(selected) = selected.as_ref()
+        && selected.status != "disabled"
+    {
+        inner
+            .active_provider_credentials
+            .insert(provider_id.to_owned(), selected.id.clone());
+    }
+    selected
+}
+
+fn round_robin_provider_credential(
+    candidates: &[ProviderCredentialRecord],
+    current_id: Option<&str>,
+) -> Option<ProviderCredentialRecord> {
+    if candidates.is_empty() {
+        return None;
+    }
+    let Some(current_id) = current_id else {
+        return candidates.first().cloned();
+    };
+    candidates
+        .iter()
+        .skip_while(|credential| credential.id != current_id)
+        .skip(1)
+        .chain(candidates.iter())
+        .find(|credential| credential.id != current_id)
+        .cloned()
+        .or_else(|| candidates.first().cloned())
+}
+
+fn has_usable_provider_credential_locked(
+    inner: &ControlInner,
+    provider_id: &str,
+    now: u64,
+) -> bool {
+    let Some(credentials) = inner.provider_credentials.get(provider_id) else {
+        return false;
+    };
+    let health = inner.provider_credential_health.get(provider_id);
+    credentials
+        .values()
+        .any(|credential| provider_credential_is_usable(credential, health, now))
+}
+
+fn provider_credential_is_usable(
+    credential: &ProviderCredentialRecord,
+    health: Option<&BTreeMap<String, ProviderCredentialHealthRecord>>,
+    now: u64,
+) -> bool {
+    credential.status != "disabled"
+        && env::var(&credential.api_key_env)
+            .ok()
+            .is_some_and(|value| !value.trim().is_empty())
+        && !health
+            .and_then(|health| health.get(&credential.id))
+            .and_then(|record| record.cooldown_until_ms)
+            .is_some_and(|until| until > now)
+}
+
+fn provider_credential_pool_mode_locked(inner: &ControlInner, provider_id: &str) -> String {
+    inner
+        .provider_credential_pool_modes
+        .get(provider_id)
+        .map(String::as_str)
+        .unwrap_or("failover")
+        .to_owned()
+}
+
+fn trim_activities_locked(inner: &mut ControlInner) {
+    let overflow = inner.activities.len().saturating_sub(500);
+    if overflow > 0 {
+        inner.activities.drain(0..overflow);
+    }
+}
+
+fn provider_failure_guidance(
+    status_code: Option<u16>,
+    error: Option<&str>,
+) -> (&'static str, &'static str) {
+    let normalized_error = error.unwrap_or("").to_ascii_lowercase();
+    if normalized_error.contains("insufficient_balance")
+        || normalized_error.contains("insufficient account balance")
+        || normalized_error.contains("balance")
+    {
+        return ("account", "检查上游账号余额，或切换到另一个账号/Provider。");
+    }
+    if status_code == Some(401) || status_code == Some(403) {
+        return (
+            "account",
+            "检查上游 API Key、账号权限或余额，必要时切换账号。",
+        );
+    }
+    if status_code == Some(429) || normalized_error.contains("rate limit") {
+        return ("rate_limit", "上游限流中，可等待冷却、降低流量或切换账号。");
+    }
+    if normalized_error.contains("missing") || normalized_error.contains("api key") {
+        return (
+            "config",
+            "检查 Provider 凭证环境变量是否已配置并重新加载配置。",
+        );
+    }
+    if status_code.is_some_and(|status| status >= 500) {
+        return (
+            "upstream_unavailable",
+            "上游服务临时不可用，可等待恢复或切换 Provider。",
+        );
+    }
+    if error.is_some() {
+        return ("unknown", "查看请求日志和上游错误详情。");
+    }
+    ("none", "")
+}
+
+fn should_rotate_provider_credential(failure_kind: &str) -> bool {
+    matches!(failure_kind, "account" | "rate_limit" | "config")
+}
+
+fn rotate_provider_credential_locked(
+    inner: &mut ControlInner,
+    provider_id: &str,
+    now: u64,
+) -> Option<(String, String, String)> {
+    let credentials = inner.provider_credentials.get(provider_id)?;
+    let current_id = inner.active_provider_credentials.get(provider_id).cloned();
+    let health = inner.provider_credential_health.get(provider_id);
+    let candidates = credentials
+        .values()
+        .filter(|credential| provider_credential_is_usable(credential, health, now))
+        .cloned()
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return None;
+    }
+    let next = if let Some(current_id) = current_id.as_deref() {
+        candidates
+            .iter()
+            .skip_while(|credential| credential.id != current_id)
+            .skip(1)
+            .chain(candidates.iter())
+            .find(|credential| credential.id != current_id)?
+    } else {
+        &candidates[0]
+    };
+    let from_id = current_id.unwrap_or_else(|| "default".to_owned());
+    inner
+        .active_provider_credentials
+        .insert(provider_id.to_owned(), next.id.clone());
+    Some((from_id, next.id.clone(), next.name.clone()))
+}
+
+fn next_enabled_provider_credential_id(
+    credentials: &BTreeMap<String, ProviderCredentialRecord>,
+    exclude_id: Option<&str>,
+) -> Option<String> {
+    credentials
+        .values()
+        .find(|credential| {
+            credential.status != "disabled" && exclude_id != Some(credential.id.as_str())
+        })
+        .map(|credential| credential.id.clone())
+}
+
+pub fn provider_credential_rows(
+    credentials: Option<&BTreeMap<String, ProviderCredentialRecord>>,
+    active_id: Option<&str>,
+    health: Option<&BTreeMap<String, serde_json::Value>>,
+) -> Vec<serde_json::Value> {
+    credentials
+        .into_iter()
+        .flat_map(|items| items.values())
+        .map(|record| {
+            provider_credential_row_with_health(
+                record,
+                active_id == Some(record.id.as_str()),
+                health.and_then(|items| items.get(&record.id)),
+            )
+        })
+        .collect()
+}
+
+pub fn provider_credential_row(
+    record: &ProviderCredentialRecord,
+    active: bool,
+) -> serde_json::Value {
+    provider_credential_row_with_health(record, active, None)
+}
+
+fn provider_credential_row_with_health(
+    record: &ProviderCredentialRecord,
+    active: bool,
+    health: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    json!({
+        "id": record.id,
+        "providerId": record.provider_id,
+        "name": record.name,
+        "apiKeyEnv": record.api_key_env,
+        "baseUrl": record.base_url,
+        "status": record.status,
+        "active": active,
+        "hasApiKey": env::var(&record.api_key_env).ok().is_some_and(|value| !value.trim().is_empty()),
+        "health": health.cloned(),
+        "createdAt": record.created_at_ms.to_string(),
+        "updatedAt": record.updated_at_ms.to_string(),
     })
 }
 
@@ -2448,6 +3168,74 @@ fn cooldown_seconds(consecutive_failures: u32) -> u64 {
         2 | 3 => 60,
         4 | 5 => 180,
         _ => 300,
+    }
+}
+
+fn default_credential_status() -> String {
+    "active".to_owned()
+}
+
+fn default_credential_pool_mode() -> String {
+    "failover".to_owned()
+}
+
+fn validate_provider_credential_id(value: &str) -> Result<String, AppError> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.is_empty() || normalized.len() > 80 {
+        return Err(AppError::InvalidRequest(
+            "credential id must be 1-80 characters".to_owned(),
+        ));
+    }
+    if !normalized
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return Err(AppError::InvalidRequest(
+            "credential id can only contain letters, numbers, '_' and '-'".to_owned(),
+        ));
+    }
+    Ok(normalized)
+}
+
+fn validate_env_name(value: &str) -> Result<String, AppError> {
+    let normalized = value.trim();
+    if normalized.is_empty() || normalized.len() > 120 {
+        return Err(AppError::InvalidRequest(
+            "apiKeyEnv must be 1-120 characters".to_owned(),
+        ));
+    }
+    let mut chars = normalized.chars();
+    let Some(first) = chars.next() else {
+        return Err(AppError::InvalidRequest("apiKeyEnv is required".to_owned()));
+    };
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return Err(AppError::InvalidRequest(
+            "apiKeyEnv must start with a letter or '_'".to_owned(),
+        ));
+    }
+    if !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+        return Err(AppError::InvalidRequest(
+            "apiKeyEnv can only contain letters, numbers and '_'".to_owned(),
+        ));
+    }
+    Ok(normalized.to_owned())
+}
+
+fn validate_credential_status(value: &str) -> Result<String, AppError> {
+    match value.trim() {
+        "active" | "disabled" => Ok(value.trim().to_owned()),
+        _ => Err(AppError::InvalidRequest(
+            "credential status must be active or disabled".to_owned(),
+        )),
+    }
+}
+
+fn validate_credential_pool_mode(value: &str) -> Result<String, AppError> {
+    match value.trim() {
+        "manual" | "failover" | "round_robin" => Ok(value.trim().to_owned()),
+        _ => Err(AppError::InvalidRequest(
+            "credential pool mode must be manual, failover, or round_robin".to_owned(),
+        )),
     }
 }
 

@@ -1,8 +1,11 @@
 import type {
   ModelAlias,
   Provider,
+  ProviderCredential,
+  ProviderCredentialPoolMode,
   ProviderModelDiscovery,
   ProviderModelInventory,
+  ProviderCredentialWritePayload,
   ProviderModelWritePayload,
   ProviderWritePayload,
 } from '@/types'
@@ -55,6 +58,7 @@ export const modelsService = {
       status: payload.disabled ? 'disabled' : 'active',
       runtimeStatus: 'healthy',
       hasApiKey: true,
+      credentialPoolMode: 'failover',
       health: null,
       lastTest: null,
       modelInventory: models.map((model) => ({ model, status: 'active', default: model === payload.defaultModel })),
@@ -154,6 +158,96 @@ export const modelsService = {
     return mockDelay(next)
   },
 
+  createProviderCredential: async (providerId: string, payload: ProviderCredentialWritePayload): Promise<Provider> => {
+    if (!isMockMode) {
+      const result = await api.post<{ provider: Provider }>(`/admin/providers/${encodeURIComponent(providerId)}/credentials`, payload)
+      return result.provider
+    }
+    const provider = mockProviderStore.find((item) => item.id === providerId)
+    if (!provider) throw new Error('供应商不存在')
+    const credential = mockCredential(providerId, payload, (provider.credentials?.length ?? 0) === 0)
+    const credentials = [...(provider.credentials ?? []).filter((item) => item.id !== credential.id), credential]
+    const activeCredentialId = mockActiveCredentialId(credentials, provider.activeCredentialId ?? credential.id)
+    const next = {
+      ...provider,
+      credentials: credentials.map((item) => ({ ...item, active: item.id === activeCredentialId })),
+      activeCredentialId,
+    }
+    mockProviderStore = mockProviderStore.map((item) => item.id === providerId ? next : item)
+    return mockDelay(next)
+  },
+
+  updateProviderCredential: async (providerId: string, credentialId: string, payload: ProviderCredentialWritePayload): Promise<Provider> => {
+    if (!isMockMode) {
+      const result = await api.put<{ provider: Provider }>(`/admin/providers/${encodeURIComponent(providerId)}/credentials/${encodeURIComponent(credentialId)}`, payload)
+      return result.provider
+    }
+    const provider = mockProviderStore.find((item) => item.id === providerId)
+    if (!provider) throw new Error('供应商不存在')
+    const credential = mockCredential(providerId, { ...payload, id: credentialId }, provider.activeCredentialId === credentialId)
+    const credentials = [...(provider.credentials ?? []).filter((item) => item.id !== credentialId), credential]
+    const activeCredentialId = mockActiveCredentialId(credentials, provider.activeCredentialId)
+    const next = {
+      ...provider,
+      activeCredentialId,
+      credentials: credentials.map((item) => ({ ...item, active: item.id === activeCredentialId })),
+    }
+    mockProviderStore = mockProviderStore.map((item) => item.id === providerId ? next : item)
+    return mockDelay(next)
+  },
+
+  selectProviderCredential: async (providerId: string, credentialId: string): Promise<Provider> => {
+    if (!isMockMode) {
+      const result = await api.post<{ provider: Provider }>(`/admin/providers/${encodeURIComponent(providerId)}/credentials/${encodeURIComponent(credentialId)}/select`)
+      return result.provider
+    }
+    const provider = mockProviderStore.find((item) => item.id === providerId)
+    if (!provider) throw new Error('供应商不存在')
+    const selected = provider.credentials?.find((item) => item.id === credentialId)
+    if (!selected) throw new Error('账号不存在')
+    if (selected?.status === 'disabled') throw new Error('禁用账号不能被选中')
+    const next = {
+      ...provider,
+      activeCredentialId: credentialId,
+      credentials: (provider.credentials ?? []).map((item) => ({ ...item, active: item.id === credentialId })),
+    }
+    mockProviderStore = mockProviderStore.map((item) => item.id === providerId ? next : item)
+    return mockDelay(next)
+  },
+
+  updateProviderCredentialPoolMode: async (providerId: string, mode: ProviderCredentialPoolMode): Promise<Provider> => {
+    if (!isMockMode) {
+      const result = await api.put<{ provider: Provider }>(`/admin/providers/${encodeURIComponent(providerId)}/credential-pool`, { mode })
+      return result.provider
+    }
+    const provider = mockProviderStore.find((item) => item.id === providerId)
+    if (!provider) throw new Error('供应商不存在')
+    const next = {
+      ...provider,
+      credentialPoolMode: mode,
+    }
+    mockProviderStore = mockProviderStore.map((item) => item.id === providerId ? next : item)
+    return mockDelay(next)
+  },
+
+  deleteProviderCredential: async (providerId: string, credentialId: string): Promise<Provider> => {
+    if (!isMockMode) {
+      const result = await api.delete<{ provider: Provider }>(`/admin/providers/${encodeURIComponent(providerId)}/credentials/${encodeURIComponent(credentialId)}`)
+      return result.provider
+    }
+    const provider = mockProviderStore.find((item) => item.id === providerId)
+    if (!provider) throw new Error('供应商不存在')
+    const credentials = (provider.credentials ?? []).filter((item) => item.id !== credentialId)
+    const activeCredentialId = mockActiveCredentialId(credentials, provider.activeCredentialId === credentialId ? null : provider.activeCredentialId)
+    const next = {
+      ...provider,
+      activeCredentialId,
+      credentials: credentials.map((item) => ({ ...item, active: item.id === activeCredentialId })),
+    }
+    mockProviderStore = mockProviderStore.map((item) => item.id === providerId ? next : item)
+    return mockDelay(next)
+  },
+
   toggleModel: async (providerId: string, model: string, enabled: boolean): Promise<Provider> =>
     modelsService.updateProviderModel(providerId, { model, status: enabled ? 'active' : 'disabled' }),
 
@@ -200,6 +294,30 @@ export const modelsService = {
     if (isMockMode) return mockDelay(undefined)
     await api.put('/admin/settings', { gateway: { defaultProvider: providerId } })
   },
+}
+
+function mockCredential(providerId: string, payload: ProviderCredentialWritePayload, active = false): ProviderCredential {
+  const id = payload.id?.trim() || payload.name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-|-$/g, '') || `account-${Date.now()}`
+  return {
+    id,
+    providerId,
+    name: payload.name,
+    apiKeyEnv: payload.apiKeyEnv,
+    baseUrl: payload.baseUrl,
+    status: payload.status ?? 'active',
+    active,
+    hasApiKey: true,
+    health: null,
+    createdAt: Date.now().toString(),
+    updatedAt: Date.now().toString(),
+  }
+}
+
+function mockActiveCredentialId(credentials: ProviderCredential[], preferred?: string | null): string | null {
+  if (preferred && credentials.some((item) => item.id === preferred && item.status !== 'disabled')) {
+    return preferred
+  }
+  return credentials.find((item) => item.status !== 'disabled')?.id ?? null
 }
 
 function normalizedModels(models: string[] = [], defaultModel?: string): string[] {

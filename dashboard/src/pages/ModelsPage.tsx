@@ -2,16 +2,22 @@ import { Fragment, useMemo, useState } from 'react'
 import {
   useProviders,
   useAliases,
+  useBulkToggleModels,
   useCreateAlias,
   useCreateProvider,
+  useCreateProviderCredential,
   useDeleteProvider,
+  useDeleteProviderCredential,
   useDeleteAlias,
   useDiscoverProviderModels,
+  useSelectProviderCredential,
   useSetProviderDisabled,
   useToggleModel,
   useUpdateDefaultModel,
   useUpdateDefaultProvider,
   useUpdateProvider,
+  useUpdateProviderCredential,
+  useUpdateProviderCredentialPoolMode,
 } from '@/hooks'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { TableToolbar } from '@/components/shared/TableToolbar'
@@ -68,6 +74,9 @@ import type {
   FidelityMode,
   MaxTokensField,
   Provider,
+  ProviderCredential,
+  ProviderCredentialPoolMode,
+  ProviderCredentialWritePayload,
   ProviderDeleteBlocked,
   ProviderModelInventory,
   ProviderProtocol,
@@ -106,6 +115,14 @@ interface ProviderFormState {
   disabled: boolean
 }
 
+interface ProviderCredentialFormState {
+  id: string
+  name: string
+  apiKeyEnv: string
+  baseUrl: string
+  status: 'active' | 'disabled'
+}
+
 interface ProviderInventoryGroup {
   title: string
   brand: string
@@ -130,6 +147,19 @@ const DEFAULT_PROVIDER_FORM: ProviderFormState = {
   bufferStreamText: false,
   fidelityMode: 'best_effort',
   disabled: false,
+}
+
+const DEFAULT_CREDENTIAL_FORM: ProviderCredentialFormState = {
+  id: '',
+  name: '',
+  apiKeyEnv: '',
+  baseUrl: '',
+  status: 'active',
+}
+const CREDENTIAL_POOL_MODE_LABELS: Record<ProviderCredentialPoolMode, string> = {
+  manual: '手动',
+  failover: '故障切换',
+  round_robin: '轮询',
 }
 const PROVIDER_BRAND_NAMES: Record<string, string> = {
   deepseek: 'DeepSeek',
@@ -194,8 +224,14 @@ export function ModelsPage() {
   const createProvider = useCreateProvider()
   const updateProvider = useUpdateProvider()
   const setProviderDisabled = useSetProviderDisabled()
+  const createProviderCredential = useCreateProviderCredential()
+  const updateProviderCredential = useUpdateProviderCredential()
+  const selectProviderCredential = useSelectProviderCredential()
+  const updateProviderCredentialPoolMode = useUpdateProviderCredentialPoolMode()
+  const deleteProviderCredential = useDeleteProviderCredential()
   const deleteProvider = useDeleteProvider()
   const toggleModel = useToggleModel()
+  const bulkToggleModels = useBulkToggleModels()
   const updateDefaultModel = useUpdateDefaultModel()
   const updateDefault = useUpdateDefaultProvider()
 
@@ -204,9 +240,12 @@ export function ModelsPage() {
   const [discoveringProvider, setDiscoveringProvider] = useState<string | null>(null)
   const [showAliasDialog, setShowAliasDialog] = useState(false)
   const [showProviderDialog, setShowProviderDialog] = useState(false)
+  const [credentialDialogProvider, setCredentialDialogProvider] = useState<Provider | null>(null)
   const [selectedTemplate, setSelectedTemplate] = useState<ProviderTemplate | null>(null)
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null)
+  const [editingCredential, setEditingCredential] = useState<ProviderCredential | null>(null)
   const [providerForm, setProviderForm] = useState<ProviderFormState>(DEFAULT_PROVIDER_FORM)
+  const [credentialForm, setCredentialForm] = useState<ProviderCredentialFormState>(DEFAULT_CREDENTIAL_FORM)
   const [deleteTarget, setDeleteTarget] = useState<Provider | null>(null)
   const [deleteBlock, setDeleteBlock] = useState<ProviderDeleteBlocked | null>(null)
   const [aliasForm, setAliasForm] = useState({ alias: '', target: '' })
@@ -278,6 +317,12 @@ export function ModelsPage() {
   const defaultModelMutationKey = updateDefaultModel.isPending && updateDefaultModel.variables
     ? `${updateDefaultModel.variables.providerId}:${updateDefaultModel.variables.model}`
     : null
+  const bulkModelMutation = bulkToggleModels.isPending && bulkToggleModels.variables
+    ? {
+        providerId: bulkToggleModels.variables.providerId,
+        enabled: bulkToggleModels.variables.enabled,
+      }
+    : null
 
   const copyText = async (text: string) => {
     await navigator.clipboard.writeText(text)
@@ -315,6 +360,18 @@ export function ModelsPage() {
     setProviderForm(DEFAULT_PROVIDER_FORM)
   }
 
+  const openCredentialDialog = (provider: Provider, credential?: ProviderCredential) => {
+    setCredentialDialogProvider(provider)
+    setEditingCredential(credential ?? null)
+    setCredentialForm(credentialToForm(provider, credential))
+  }
+
+  const closeCredentialDialog = () => {
+    setCredentialDialogProvider(null)
+    setEditingCredential(null)
+    setCredentialForm(DEFAULT_CREDENTIAL_FORM)
+  }
+
   const handleSubmitProvider = () => {
     const payload = providerPayloadFromForm(providerForm, !editingProvider)
     const options = {
@@ -332,11 +389,57 @@ export function ModelsPage() {
     }
   }
 
+  const handleSubmitCredential = () => {
+    if (!credentialDialogProvider) return
+    const data = credentialPayloadFromForm(credentialForm, !editingCredential)
+    const options = {
+      onSuccess: () => {
+        toast.success(editingCredential ? '账号已更新' : '账号已新增')
+        closeCredentialDialog()
+      },
+      onError: (error: unknown) => toast.error(error instanceof Error ? error.message : '保存账号失败'),
+    }
+
+    if (editingCredential) {
+      updateProviderCredential.mutate({
+        providerId: credentialDialogProvider.id,
+        credentialId: editingCredential.id,
+        data,
+      }, options)
+    } else {
+      createProviderCredential.mutate({
+        providerId: credentialDialogProvider.id,
+        data,
+      }, options)
+    }
+  }
+
   const handleSetProviderDisabled = (provider: Provider) => {
     const disabled = provider.status !== 'disabled'
     setProviderDisabled.mutate({ providerId: provider.id, disabled }, {
       onSuccess: () => toast.success(disabled ? `已禁用 ${provider.displayName}` : `已恢复 ${provider.displayName}`),
       onError: (error) => toast.error(error instanceof Error ? error.message : '更新供应商状态失败'),
+    })
+  }
+
+  const handleSelectProviderCredential = (provider: Provider, credentialId: string) => {
+    selectProviderCredential.mutate({ providerId: provider.id, credentialId }, {
+      onSuccess: () => toast.success(`已切换 ${provider.displayName} 账号`),
+      onError: (error) => toast.error(error instanceof Error ? error.message : '切换账号失败'),
+    })
+  }
+
+  const handleUpdateProviderCredentialPoolMode = (provider: Provider, mode: ProviderCredentialPoolMode) => {
+    updateProviderCredentialPoolMode.mutate({ providerId: provider.id, mode }, {
+      onSuccess: () => toast.success(`已更新 ${provider.displayName} 号池策略`),
+      onError: (error) => toast.error(error instanceof Error ? error.message : '更新号池策略失败'),
+    })
+  }
+
+  const handleDeleteProviderCredential = (provider: Provider, credential: ProviderCredential) => {
+    deleteProviderCredential.mutate({ providerId: provider.id, credentialId: credential.id }, {
+      onSuccess: () => toast.success(`已删除账号 ${credential.name}`),
+      onError: (error) => toast.error(error instanceof Error ? error.message : '删除账号失败'),
     })
   }
 
@@ -363,6 +466,27 @@ export function ModelsPage() {
     toggleModel.mutate({ providerId: provider.id, model, enabled }, {
       onSuccess: () => toast.success(enabled ? `已启用 ${model}` : `已禁用 ${model}`),
       onError: (error) => toast.error(error instanceof Error ? error.message : '更新模型状态失败'),
+    })
+  }
+
+  const handleBulkToggleProviderModels = (provider: Provider, enabled: boolean) => {
+    const inventory = providerInventoryItems(provider)
+    const models = inventory
+      .filter((item) => {
+        const itemEnabled = item.status !== 'disabled'
+        if (enabled) return !itemEnabled
+        return itemEnabled && item.model !== provider.defaultModel
+      })
+      .map((item) => item.model)
+
+    if (models.length === 0) {
+      toast.info(enabled ? '没有需要启用的模型' : '没有可禁用的非默认模型')
+      return
+    }
+
+    bulkToggleModels.mutate({ providerId: provider.id, models, enabled }, {
+      onSuccess: ({ updated }) => toast.success(enabled ? `已启用 ${updated} 个模型` : `已禁用 ${updated} 个非默认模型`),
+      onError: (error) => toast.error(error instanceof Error ? error.message : '批量更新模型状态失败'),
     })
   }
 
@@ -649,6 +773,7 @@ export function ModelsPage() {
                 key={provider.id}
                 provider={provider}
                 expanded={expandedProvider === provider.id}
+                className={expandedProvider === provider.id ? 'md:col-span-2 xl:col-span-3' : undefined}
                 discovering={discoveringProvider === provider.id && discoverModels.isPending}
                 onDiscover={() => handleDiscoverModels(provider.id)}
                 onToggleList={() => setExpandedProvider(expandedProvider === provider.id ? null : provider.id)}
@@ -657,9 +782,17 @@ export function ModelsPage() {
                 onDelete={() => { setDeleteTarget(provider); setDeleteBlock(null) }}
                 onCopy={copyText}
                 onAlias={openAliasDialog}
+                onCreateCredential={() => openCredentialDialog(provider)}
+                onEditCredential={(credential) => openCredentialDialog(provider, credential)}
+                onSelectCredential={(credentialId) => handleSelectProviderCredential(provider, credentialId)}
+                onUpdateCredentialPoolMode={(mode) => handleUpdateProviderCredentialPoolMode(provider, mode)}
+                onDeleteCredential={(credential) => handleDeleteProviderCredential(provider, credential)}
                 onToggleModel={(model, enabled) => handleToggleProviderModel(provider, model, enabled)}
+                onBulkToggleModels={(enabled) => handleBulkToggleProviderModels(provider, enabled)}
                 onSetDefaultModel={(model) => handleSetDefaultModel(provider, model)}
                 modelMutationKey={modelMutationKey}
+                bulkModelMutation={bulkModelMutation}
+                credentialBusy={selectProviderCredential.isPending || updateProviderCredentialPoolMode.isPending || deleteProviderCredential.isPending}
                 defaultModelMutationKey={defaultModelMutationKey}
               />
             ))}
@@ -935,6 +1068,70 @@ export function ModelsPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={!!credentialDialogProvider} onOpenChange={(open) => { if (!open) closeCredentialDialog() }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingCredential ? '编辑上游账号' : '新增上游账号'}</DialogTitle>
+            <DialogDescription>
+              账号只保存环境变量名；真实 API Key 仍放在 .env 或系统环境变量中。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {!editingCredential && (
+              <Field label="账号 ID">
+                <Input
+                  value={credentialForm.id}
+                  onChange={(event) => setCredentialForm({ ...credentialForm, id: event.target.value })}
+                  placeholder="例如: account-a"
+                />
+              </Field>
+            )}
+            <Field label="显示名称">
+              <Input
+                value={credentialForm.name}
+                onChange={(event) => setCredentialForm({ ...credentialForm, name: event.target.value })}
+                placeholder="例如: Mimo 主账号"
+              />
+            </Field>
+            <Field label="API Key 环境变量">
+              <Input
+                value={credentialForm.apiKeyEnv}
+                onChange={(event) => setCredentialForm({ ...credentialForm, apiKeyEnv: event.target.value })}
+                placeholder="例如: MIMO_OPENAI_API_KEY_ALT"
+              />
+            </Field>
+            <Field label="Base URL">
+              <Input
+                value={credentialForm.baseUrl}
+                onChange={(event) => setCredentialForm({ ...credentialForm, baseUrl: event.target.value })}
+                placeholder="可选，不填则沿用供应商 Base URL"
+              />
+            </Field>
+            <div className="rounded-md border bg-muted/20 p-3">
+              <SwitchRow
+                label="启用账号"
+                checked={credentialForm.status === 'active'}
+                onCheckedChange={(checked) => setCredentialForm({ ...credentialForm, status: checked ? 'active' : 'disabled' })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeCredentialDialog}>取消</Button>
+            <Button
+              onClick={handleSubmitCredential}
+              disabled={
+                createProviderCredential.isPending
+                || updateProviderCredential.isPending
+                || !credentialForm.name.trim()
+                || !credentialForm.apiKeyEnv.trim()
+              }
+            >
+              {createProviderCredential.isPending || updateProviderCredential.isPending ? '保存中' : '保存'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteBlock(null) } }}>
         <DialogContent>
           <DialogHeader>
@@ -1071,13 +1268,7 @@ function providerModelGroups(provider: Provider) {
 }
 
 function providerInventoryGroups(provider: Provider): ProviderInventoryGroup[] {
-  const inventory: ProviderModelInventory[] = provider.modelInventory && provider.modelInventory.length > 0
-    ? provider.modelInventory
-    : provider.models.map((model): ProviderModelInventory => ({
-        model,
-        status: 'active',
-        default: model === provider.defaultModel,
-      }))
+  const inventory = providerInventoryItems(provider)
   const groups = new Map<string, ProviderInventoryGroup>()
   const origin = providerOrigin(provider)
   const originClassName = providerOriginClassName(origin)
@@ -1091,6 +1282,24 @@ function providerInventoryGroups(provider: Provider): ProviderInventoryGroup[] {
   }
 
   return Array.from(groups.values()).sort((a, b) => b.items.length - a.items.length || a.brand.localeCompare(b.brand))
+}
+
+function providerInventoryItems(provider: Provider): ProviderModelInventory[] {
+  const inventory: ProviderModelInventory[] = provider.modelInventory && provider.modelInventory.length > 0
+    ? provider.modelInventory
+    : provider.models.map((model): ProviderModelInventory => ({
+        model,
+        status: 'active',
+        default: model === provider.defaultModel,
+      }))
+
+  return [...inventory].sort((a, b) => {
+    const aDefault = a.model === provider.defaultModel ? 0 : 1
+    const bDefault = b.model === provider.defaultModel ? 0 : 1
+    if (aDefault !== bDefault) return aDefault - bDefault
+    if (a.status !== b.status) return a.status === 'active' ? -1 : 1
+    return a.model.localeCompare(b.model)
+  })
 }
 
 function providerOrigin(provider: Provider) {
@@ -1156,6 +1365,22 @@ function providerToForm(provider: Provider): ProviderFormState {
   }
 }
 
+function credentialToForm(provider: Provider, credential?: ProviderCredential): ProviderCredentialFormState {
+  if (!credential) {
+    return {
+      ...DEFAULT_CREDENTIAL_FORM,
+      apiKeyEnv: provider.apiKeyEnv ? `${provider.apiKeyEnv}_ALT` : '',
+    }
+  }
+  return {
+    id: credential.id,
+    name: credential.name,
+    apiKeyEnv: credential.apiKeyEnv,
+    baseUrl: credential.baseUrl || '',
+    status: credential.status,
+  }
+}
+
 function providerPayloadFromForm(form: ProviderFormState, includeId: boolean): ProviderWritePayload {
   return {
     ...(includeId ? { id: form.id.trim() } : {}),
@@ -1173,6 +1398,19 @@ function providerPayloadFromForm(form: ProviderFormState, includeId: boolean): P
     bufferStreamText: form.bufferStreamText,
     fidelityMode: form.fidelityMode,
     disabled: form.disabled,
+  }
+}
+
+function credentialPayloadFromForm(
+  form: ProviderCredentialFormState,
+  includeId: boolean,
+): ProviderCredentialWritePayload {
+  return {
+    ...(includeId && form.id.trim() ? { id: form.id.trim() } : {}),
+    name: form.name.trim(),
+    apiKeyEnv: form.apiKeyEnv.trim(),
+    baseUrl: form.baseUrl.trim() || null,
+    status: form.status,
   }
 }
 
@@ -1203,6 +1441,7 @@ function dependencyLabel(type: string) {
 function ProviderCard({
   provider,
   expanded,
+  className,
   discovering,
   onDiscover,
   onToggleList,
@@ -1211,13 +1450,22 @@ function ProviderCard({
   onDelete,
   onCopy,
   onAlias,
+  onCreateCredential,
+  onEditCredential,
+  onSelectCredential,
+  onUpdateCredentialPoolMode,
+  onDeleteCredential,
   onToggleModel,
+  onBulkToggleModels,
   onSetDefaultModel,
   modelMutationKey,
+  bulkModelMutation,
+  credentialBusy,
   defaultModelMutationKey,
 }: {
   provider: Provider
   expanded: boolean
+  className?: string
   discovering: boolean
   onDiscover: () => void
   onToggleList: () => void
@@ -1226,9 +1474,17 @@ function ProviderCard({
   onDelete: () => void
   onCopy: (value: string) => Promise<void>
   onAlias: (alias?: string, target?: string) => void
+  onCreateCredential: () => void
+  onEditCredential: (credential: ProviderCredential) => void
+  onSelectCredential: (credentialId: string) => void
+  onUpdateCredentialPoolMode: (mode: ProviderCredentialPoolMode) => void
+  onDeleteCredential: (credential: ProviderCredential) => void
   onToggleModel: (model: string, enabled: boolean) => void
+  onBulkToggleModels: (enabled: boolean) => void
   onSetDefaultModel: (model: string) => void
   modelMutationKey: string | null
+  bulkModelMutation: { providerId: string; enabled: boolean } | null
+  credentialBusy: boolean
   defaultModelMutationKey: string | null
 }) {
   const credentialReady = provider.hasApiKey || !provider.apiKeyRequired
@@ -1240,11 +1496,21 @@ function ProviderCard({
   const modelListId = `provider-models-${provider.id}`
   const identity = providerIdentity(provider)
   const displayTitle = providerDisplayTitle(provider)
+  const credentials = provider.credentials ?? []
+  const activeCredential = credentials.find((credential) => credential.active)
+    ?? credentials.find((credential) => credential.id === provider.activeCredentialId)
+    ?? null
+  const credentialPoolMode = provider.credentialPoolMode ?? 'failover'
   const modelGroups = providerModelGroups(provider)
   const inventoryGroups = providerInventoryGroups(provider)
+  const inventoryItems = providerInventoryItems(provider)
+  const enabledModelCount = inventoryItems.filter((item) => item.status !== 'disabled').length
+  const disabledModelCount = inventoryItems.length - enabledModelCount
+  const disableCandidateCount = inventoryItems.filter((item) => item.status !== 'disabled' && item.model !== provider.defaultModel).length
+  const isBulkUpdating = bulkModelMutation?.providerId === provider.id
 
   return (
-    <Card className="overflow-hidden" data-testid={`provider-card-${provider.id}`}>
+    <Card className={cn('overflow-hidden transition-all', className)} data-testid={`provider-card-${provider.id}`}>
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -1284,6 +1550,146 @@ function ProviderCard({
           </Badge>
           {provider.fidelityMode && <Badge variant="outline">{fidelityModeLabel(provider.fidelityMode)}</Badge>}
           {provider.passthroughUnknownModels && <Badge variant="warning">透传未知模型</Badge>}
+        </div>
+
+        {provider.health?.recommendedAction && provider.health.failureKind !== 'none' && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="min-w-0 space-y-1">
+              <p className="font-medium">{provider.health.recommendedAction}</p>
+              {provider.health.lastError && (
+                <p className="line-clamp-2 opacity-80">{provider.health.lastError}</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="rounded-md border bg-muted/20 p-3">
+          <div className="mb-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+            <div>
+              <p className="text-sm font-medium">上游账号</p>
+              <p className="text-xs text-muted-foreground">
+                {credentials.length > 0 ? `${credentials.length} 个账号 · ${CREDENTIAL_POOL_MODE_LABELS[credentialPoolMode]}` : '默认凭证'}
+              </p>
+            </div>
+            <div className="flex min-w-0 items-center gap-2">
+              <Select
+                value={credentialPoolMode}
+                onValueChange={(value) => onUpdateCredentialPoolMode(value as ProviderCredentialPoolMode)}
+                disabled={credentialBusy || credentials.length === 0}
+              >
+                <SelectTrigger className="h-9 min-w-0">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="manual">手动</SelectItem>
+                  <SelectItem value="failover">故障切换</SelectItem>
+                  <SelectItem value="round_robin">轮询</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="outline" size="sm" onClick={onCreateCredential}>
+                <Plus className="h-3.5 w-3.5" />
+                新增
+              </Button>
+            </div>
+          </div>
+          {credentials.length === 0 ? (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Badge variant={credentialReady ? 'success' : 'destructive'}>
+                {credentialReady ? '默认环境变量可用' : '缺少默认密钥'}
+              </Badge>
+              <code className="rounded bg-background px-2 py-1 text-xs">{provider.apiKeyEnv || '无需 API Key'}</code>
+            </div>
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+              <Select
+                value={activeCredential?.id || provider.activeCredentialId || credentials[0]?.id}
+                onValueChange={onSelectCredential}
+                disabled={credentialBusy}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="选择账号" />
+                </SelectTrigger>
+                <SelectContent>
+                  {credentials.map((credential) => (
+                    <SelectItem key={credential.id} value={credential.id} disabled={credential.status === 'disabled'}>
+                      {credential.name} · {credential.apiKeyEnv}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="flex flex-wrap items-center gap-2">
+                {activeCredential && (
+                  <>
+                    <Badge variant={activeCredential.hasApiKey ? 'success' : 'destructive'}>
+                      {activeCredential.hasApiKey ? 'Key 可用' : 'Key 缺失'}
+                    </Badge>
+                    <Button variant="outline" size="sm" onClick={() => onEditCredential(activeCredential)} disabled={credentialBusy}>
+                      <Pencil className="h-3.5 w-3.5" />
+                      编辑
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => onDeleteCredential(activeCredential)}
+                      disabled={credentialBusy}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      删除
+                    </Button>
+                  </>
+                )}
+              </div>
+              {activeCredential && (
+                <div className="min-w-0 space-y-1 text-xs text-muted-foreground lg:col-span-2">
+                  <p className="truncate">
+                    环境变量：<code className="text-foreground">{activeCredential.apiKeyEnv}</code>
+                  </p>
+                  {activeCredential.baseUrl && (
+                    <p className="truncate">
+                      Base URL：<code className="text-foreground">{activeCredential.baseUrl}</code>
+                    </p>
+                  )}
+                </div>
+              )}
+              <div className="space-y-2 lg:col-span-2">
+                {credentials.map((credential) => {
+                  const health = credential.health
+                  const healthStatus = health?.status ?? (credential.hasApiKey ? 'healthy' : 'degraded')
+                  return (
+                    <div key={credential.id} className="grid gap-2 rounded-md border bg-background/70 px-3 py-2 md:grid-cols-[minmax(0,1fr)_auto]">
+                      <div className="min-w-0">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <span className="truncate text-sm font-medium">{credential.name}</span>
+                          {credential.active && <Badge variant="outline">当前</Badge>}
+                          {credential.status === 'disabled' && <Badge variant="secondary">禁用</Badge>}
+                        </div>
+                        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                          <code className="max-w-full truncate text-foreground">{credential.apiKeyEnv}</code>
+                          {health?.lastUsedAt && <span>最近 {formatRelativeTime(health.lastUsedAt)}</span>}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 md:justify-end">
+                        <Badge variant={credential.hasApiKey ? 'success' : 'destructive'}>
+                          {credential.hasApiKey ? 'Key 可用' : 'Key 缺失'}
+                        </Badge>
+                        <Badge variant={credentialHealthVariant(healthStatus)}>
+                          {credentialHealthLabel(healthStatus)}
+                        </Badge>
+                        <span className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground">
+                          {health?.requestsTotal ? `${formatNumber(health.requestsTotal)} 次 · ${Math.round(health.successRate)}%` : '暂无请求'}
+                        </span>
+                      </div>
+                      {health?.lastError && (
+                        <p className="line-clamp-2 text-xs text-muted-foreground md:col-span-2">{health.lastError}</p>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="grid gap-2 sm:grid-cols-2">
@@ -1356,15 +1762,36 @@ function ProviderCard({
                 <p className="text-sm font-medium">可路由模型列表</p>
                 <p className="text-xs text-muted-foreground">复制路由名或创建别名</p>
               </div>
-              <Badge variant="secondary">{provider.models.length}</Badge>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <Badge variant="success">{enabledModelCount} 启用</Badge>
+                <Badge variant={disabledModelCount > 0 ? 'secondary' : 'outline'}>{disabledModelCount} 禁用</Badge>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isBulkUpdating || disabledModelCount === 0}
+                  onClick={() => onBulkToggleModels(true)}
+                >
+                  {isBulkUpdating && bulkModelMutation?.enabled ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Power className="h-3.5 w-3.5" />}
+                  启用全部
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isBulkUpdating || disableCandidateCount === 0}
+                  onClick={() => onBulkToggleModels(false)}
+                >
+                  {isBulkUpdating && !bulkModelMutation?.enabled ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PowerOff className="h-3.5 w-3.5" />}
+                  禁用非默认
+                </Button>
+              </div>
             </div>
 
-            {provider.models.length === 0 ? (
+            {inventoryItems.length === 0 ? (
               <div className="px-3 py-6 text-center text-sm text-muted-foreground">
                 暂无可路由模型，可先发现上游模型或在配置文件中补充 models。
               </div>
             ) : (
-              <div className={cn('grid gap-3 p-2', inventoryGroups.length > 1 && 'xl:grid-cols-2')}>
+              <div className={cn('mx-auto grid w-full max-w-6xl gap-3 p-3', inventoryGroups.length > 1 && 'xl:grid-cols-2')}>
                 {inventoryGroups.map((group) => (
                   <ProviderModelGroupPanel
                     key={group.title}
@@ -1376,6 +1803,7 @@ function ProviderCard({
                     onCopy={onCopy}
                     onToggleModel={onToggleModel}
                     onSetDefaultModel={onSetDefaultModel}
+                    bulkUpdating={isBulkUpdating}
                     modelMutationKey={modelMutationKey}
                     defaultModelMutationKey={defaultModelMutationKey}
                   />
@@ -1405,6 +1833,7 @@ function ProviderModelGroupPanel({
   onAlias,
   onToggleModel,
   onSetDefaultModel,
+  bulkUpdating,
   modelMutationKey,
   defaultModelMutationKey,
 }: {
@@ -1416,6 +1845,7 @@ function ProviderModelGroupPanel({
   onAlias: (alias?: string, target?: string) => void
   onToggleModel: (model: string, enabled: boolean) => void
   onSetDefaultModel: (model: string) => void
+  bulkUpdating: boolean
   modelMutationKey: string | null
   defaultModelMutationKey: string | null
 }) {
@@ -1444,7 +1874,7 @@ function ProviderModelGroupPanel({
                 </div>
                 <Switch
                   checked={enabled}
-                  disabled={modelBusy}
+                  disabled={modelBusy || bulkUpdating}
                   onCheckedChange={(checked) => onToggleModel(item.model, checked)}
                   aria-label={`${enabled ? '禁用' : '启用'} ${item.model}`}
                 />
@@ -1482,6 +1912,17 @@ function InfoRow({ label, value, mono }: { label: string; value: string; mono?: 
       <span className={cn('min-w-0 truncate text-xs', mono && 'font-mono')}>{value}</span>
     </div>
   )
+}
+
+function credentialHealthLabel(status: string) {
+  if (status === 'cooldown') return '冷却'
+  if (status === 'degraded') return '降级'
+  return '健康'
+}
+
+function credentialHealthVariant(status: string): 'success' | 'warning' {
+  if (status === 'cooldown' || status === 'degraded') return 'warning'
+  return 'success'
 }
 
 function Field({ label, className, children }: { label: string; className?: string; children: React.ReactNode }) {

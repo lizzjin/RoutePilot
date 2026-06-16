@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { modelsService } from '@/services/models.service'
 import { queryKeys } from './use-dashboard'
-import type { Provider, ProviderWritePayload } from '@/types'
+import type { Provider, ProviderCredentialPoolMode, ProviderCredentialWritePayload, ProviderWritePayload } from '@/types'
 
 export function useProviders() {
   return useQuery({
@@ -31,6 +31,26 @@ export function useToggleModel() {
     mutationFn: ({ providerId, model, enabled }: { providerId: string; model: string; enabled: boolean }) =>
       modelsService.toggleModel(providerId, model, enabled),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.providers })
+      qc.invalidateQueries({ queryKey: queryKeys.dashboard })
+    },
+  })
+}
+
+export function useBulkToggleModels() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ providerId, models, enabled }: { providerId: string; models: string[]; enabled: boolean }) => {
+      const results = await Promise.allSettled(
+        models.map((model) => modelsService.toggleModel(providerId, model, enabled)),
+      )
+      const failures = results.filter((result) => result.status === 'rejected')
+      if (failures.length > 0) {
+        throw new Error(`${failures.length} 个模型更新失败`)
+      }
+      return { updated: results.length }
+    },
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: queryKeys.providers })
       qc.invalidateQueries({ queryKey: queryKeys.dashboard })
     },
@@ -79,6 +99,71 @@ export function useSetProviderDisabled() {
   return useMutation({
     mutationFn: ({ providerId, disabled }: { providerId: string; disabled: boolean }) =>
       modelsService.setProviderDisabled(providerId, disabled),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.providers })
+      qc.invalidateQueries({ queryKey: queryKeys.settings })
+      qc.invalidateQueries({ queryKey: queryKeys.dashboard })
+    },
+  })
+}
+
+export function useCreateProviderCredential() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ providerId, data }: { providerId: string; data: ProviderCredentialWritePayload }) =>
+      modelsService.createProviderCredential(providerId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.providers })
+      qc.invalidateQueries({ queryKey: queryKeys.settings })
+      qc.invalidateQueries({ queryKey: queryKeys.dashboard })
+    },
+  })
+}
+
+export function useUpdateProviderCredential() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ providerId, credentialId, data }: { providerId: string; credentialId: string; data: ProviderCredentialWritePayload }) =>
+      modelsService.updateProviderCredential(providerId, credentialId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.providers })
+      qc.invalidateQueries({ queryKey: queryKeys.settings })
+      qc.invalidateQueries({ queryKey: queryKeys.dashboard })
+    },
+  })
+}
+
+export function useSelectProviderCredential() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ providerId, credentialId }: { providerId: string; credentialId: string }) =>
+      modelsService.selectProviderCredential(providerId, credentialId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.providers })
+      qc.invalidateQueries({ queryKey: queryKeys.settings })
+      qc.invalidateQueries({ queryKey: queryKeys.dashboard })
+    },
+  })
+}
+
+export function useUpdateProviderCredentialPoolMode() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ providerId, mode }: { providerId: string; mode: ProviderCredentialPoolMode }) =>
+      modelsService.updateProviderCredentialPoolMode(providerId, mode),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.providers })
+      qc.invalidateQueries({ queryKey: queryKeys.settings })
+      qc.invalidateQueries({ queryKey: queryKeys.dashboard })
+    },
+  })
+}
+
+export function useDeleteProviderCredential() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ providerId, credentialId }: { providerId: string; credentialId: string }) =>
+      modelsService.deleteProviderCredential(providerId, credentialId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.providers })
       qc.invalidateQueries({ queryKey: queryKeys.settings })

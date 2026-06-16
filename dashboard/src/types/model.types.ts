@@ -3,6 +3,26 @@ export type MaxTokensField = 'max_completion_tokens' | 'max_tokens' | 'both'
 export type FidelityMode = 'strict' | 'best_effort' | 'stability'
 export type ProviderStatus = 'active' | 'inactive' | 'disabled' | 'error'
 export type ProviderModelStatus = 'active' | 'disabled'
+export type ProviderCredentialPoolMode = 'manual' | 'failover' | 'round_robin'
+
+export interface ProviderHealth {
+  providerId: string
+  credentialId?: string
+  requestsTotal: number
+  successesTotal: number
+  failuresTotal: number
+  consecutiveFailures: number
+  successRate: number
+  status: 'healthy' | 'degraded' | 'cooldown'
+  lastSuccessAt?: string | null
+  lastFailureAt?: string | null
+  lastUsedAt?: string | null
+  cooldownUntil?: string | null
+  lastError?: string | null
+  lastStatusCode?: number | null
+  failureKind?: 'none' | 'account' | 'rate_limit' | 'upstream_unavailable' | 'config' | 'unknown'
+  recommendedAction?: string | null
+}
 
 export interface ProviderModelInventory {
   providerId?: string
@@ -12,6 +32,20 @@ export interface ProviderModelInventory {
   family?: string | null
   contextWindow?: number | null
   default?: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ProviderCredential {
+  id: string
+  providerId: string
+  name: string
+  apiKeyEnv: string
+  baseUrl?: string | null
+  status: 'active' | 'disabled'
+  active: boolean
+  hasApiKey: boolean
+  health?: ProviderHealth | null
   createdAt?: string
   updatedAt?: string
 }
@@ -33,21 +67,12 @@ export interface Provider {
   bufferStreamText: boolean
   fidelityMode?: FidelityMode
   status: ProviderStatus
+  credentials?: ProviderCredential[]
+  activeCredentialId?: string | null
+  credentialPoolMode?: ProviderCredentialPoolMode
   runtimeStatus?: 'healthy' | 'degraded' | 'cooldown'
   hasApiKey: boolean
-  health?: {
-    providerId: string
-    requestsTotal: number
-    successesTotal: number
-    failuresTotal: number
-    consecutiveFailures: number
-    successRate: number
-    status: 'healthy' | 'degraded' | 'cooldown'
-    lastSuccessAt?: string | null
-    lastFailureAt?: string | null
-    cooldownUntil?: string | null
-    lastError?: string | null
-  } | null
+  health?: ProviderHealth | null
   lastTest?: {
     testedAt: string
     success: boolean
@@ -82,6 +107,14 @@ export interface ProviderModelWritePayload {
   displayName?: string | null
   family?: string | null
   contextWindow?: number | null
+}
+
+export interface ProviderCredentialWritePayload {
+  id?: string
+  name: string
+  apiKeyEnv: string
+  baseUrl?: string | null
+  status?: 'active' | 'disabled'
 }
 
 export interface ProviderDeleteDependency {

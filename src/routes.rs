@@ -32,9 +32,10 @@ use crate::{
         ProviderProtocol, ResolvedProvider, RuntimeConfig,
     },
     control::{
-        ActivityInput, ClientIdentity, ControlStore, CreateApiKeyInput,
+        ActivityInput, ClientIdentity, ControlStore, CreateApiKeyInput, ProviderCredentialRecord,
         ProviderModelOverrideRecord, ProviderOverrideRecord, UpdateApiKeyInput, UpsertQuotaInput,
-        UpsertTeamInput, UsageEstimate, UsageEventInput,
+        UpsertTeamInput, UsageEstimate, UsageEventInput, provider_credential_row,
+        provider_credential_rows,
     },
     error::AppError,
     http::{Header, HttpTransport},
@@ -160,6 +161,23 @@ pub fn router(state: AppState) -> Router {
                 .post(admin_providers::admin_provider_models)
                 .put(admin_providers::admin_upsert_provider_model)
                 .delete(admin_providers::admin_delete_provider_model),
+        )
+        .route(
+            "/admin/providers/{provider_id}/credentials",
+            post(admin_providers::admin_create_provider_credential),
+        )
+        .route(
+            "/admin/providers/{provider_id}/credential-pool",
+            put(admin_providers::admin_set_provider_credential_pool_mode),
+        )
+        .route(
+            "/admin/providers/{provider_id}/credentials/{credential_id}",
+            put(admin_providers::admin_update_provider_credential)
+                .delete(admin_providers::admin_delete_provider_credential),
+        )
+        .route(
+            "/admin/providers/{provider_id}/credentials/{credential_id}/select",
+            post(admin_providers::admin_select_provider_credential),
         )
         .route(
             "/admin/aliases",
@@ -504,7 +522,7 @@ async fn messages(
     let mut result = Err(AppError::ProviderNotFound(requested_model.clone()));
     let mut first_provider = None::<String>;
 
-    for (index, attempt) in attempts.into_iter().enumerate() {
+    for (index, mut attempt) in attempts.into_iter().enumerate() {
         if index > 0 {
             retry_count = retry_count.saturating_add(1);
             fallback_from_provider = first_provider.clone();
@@ -514,6 +532,9 @@ async fn messages(
         }
         provider_id = attempt.provider_id.clone();
         upstream_model = attempt.model.clone();
+        let credential_id = state
+            .control
+            .apply_selected_provider_credential_for_request(&provider_id, &mut attempt.provider);
         protocol = provider_protocol_value(attempt.provider.protocol).to_owned();
         if let Err(err) = state.control.check_quotas(
             &identity,
@@ -534,8 +555,9 @@ async fn messages(
             .map(|response| response.status().as_u16())
             .unwrap_or(500);
         let attempt_error = attempt_result.as_ref().err().map(ToString::to_string);
-        state.control.record_provider_outcome(
+        state.control.record_provider_outcome_for_credential(
             &provider_id,
+            credential_id.as_deref(),
             attempt_success,
             attempt_status,
             attempt_error.as_deref(),
@@ -1890,6 +1912,7 @@ fn provider_rows(state: &AppState) -> Vec<Value> {
     let controls = state.control.provider_control_snapshot();
     let provider_tests = state.control.provider_test_rows();
     let provider_health = state.control.provider_health_rows();
+    let credential_health = state.control.provider_credential_health_rows();
     config
         .provider_order
         .iter()
@@ -1897,6 +1920,20 @@ fn provider_rows(state: &AppState) -> Vec<Value> {
             let provider = config.providers.get(id)?;
             let has_api_key = provider.api_key().ok().flatten().is_some();
             let health = provider_health.get(id).cloned();
+            let active_credential_id = controls
+                .active_provider_credentials
+                .get(id)
+                .map(String::as_str);
+            let credential_pool_mode = controls
+                .provider_credential_pool_modes
+                .get(id)
+                .map(String::as_str)
+                .unwrap_or("failover");
+            let credentials = provider_credential_rows(
+                controls.provider_credentials.get(id),
+                active_credential_id,
+                credential_health.get(id),
+            );
             let runtime_status = health
                 .as_ref()
                 .and_then(|value| value.get("status"))
@@ -1931,6 +1968,9 @@ fn provider_rows(state: &AppState) -> Vec<Value> {
                 "status": status,
                 "runtimeStatus": runtime_status,
                 "hasApiKey": has_api_key,
+                "credentials": credentials,
+                "activeCredentialId": active_credential_id,
+                "credentialPoolMode": credential_pool_mode,
                 "lastTest": provider_tests.get(id).cloned(),
                 "health": health,
                 "modelInventory": provider_inventory_rows(id, provider, &controls),
@@ -2224,6 +2264,7 @@ fn merged_config(state: &AppState, include_disabled: bool) -> AppConfig {
         }
     }
 
+    apply_provider_credentials(&mut config, &controls);
     apply_provider_model_overrides(&mut config, &controls.provider_model_overrides);
     config.aliases = state.control.effective_aliases(&config.aliases);
 
@@ -2251,6 +2292,32 @@ fn merged_config(state: &AppState, include_disabled: bool) -> AppConfig {
     }
 
     config
+}
+
+fn apply_provider_credentials(
+    config: &mut AppConfig,
+    controls: &crate::control::ProviderControlSnapshot,
+) {
+    for (provider_id, credential_id) in &controls.active_provider_credentials {
+        let Some(provider) = config.providers.get_mut(provider_id) else {
+            continue;
+        };
+        let Some(record) = controls
+            .provider_credentials
+            .get(provider_id)
+            .and_then(|credentials| credentials.get(credential_id))
+        else {
+            continue;
+        };
+        if record.status == "disabled" {
+            continue;
+        }
+        provider.api_key_env = Some(record.api_key_env.clone());
+        provider.api_key = env::var(&record.api_key_env).ok();
+        if let Some(base_url) = &record.base_url {
+            provider.base_url = base_url.clone();
+        }
+    }
 }
 
 fn provider_record_to_config(record: &ProviderOverrideRecord) -> Result<ProviderConfig, AppError> {
@@ -3554,6 +3621,290 @@ data: [DONE]
             .collect::<Vec<_>>();
         assert!(ids.contains(&"mimo-v2.6-pro"));
         assert_eq!(config.resolve("mimo-v2.6-pro").unwrap().provider_id, "mimo");
+    }
+
+    #[test]
+    fn active_provider_credential_overrides_key_env_and_base_url() {
+        let state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
+        unsafe {
+            env::set_var("MIMO_TEST_ACCOUNT_A", "account-a-key");
+            env::set_var("MIMO_TEST_ACCOUNT_B", "account-b-key");
+        }
+        state
+            .control
+            .upsert_provider_credential(ProviderCredentialRecord {
+                id: "account-a".to_owned(),
+                provider_id: "mimo".to_owned(),
+                name: "Account A".to_owned(),
+                api_key_env: "MIMO_TEST_ACCOUNT_A".to_owned(),
+                base_url: Some("http://account-a.local/v1".to_owned()),
+                status: "active".to_owned(),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+        state
+            .control
+            .upsert_provider_credential(ProviderCredentialRecord {
+                id: "account-b".to_owned(),
+                provider_id: "mimo".to_owned(),
+                name: "Account B".to_owned(),
+                api_key_env: "MIMO_TEST_ACCOUNT_B".to_owned(),
+                base_url: Some("http://account-b.local/v1".to_owned()),
+                status: "active".to_owned(),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+        state
+            .control
+            .set_active_provider_credential("mimo", "account-b")
+            .unwrap();
+
+        let config = effective_config(&state);
+        let provider = config.providers.get("mimo").unwrap();
+        assert_eq!(provider.api_key_env.as_deref(), Some("MIMO_TEST_ACCOUNT_B"));
+        assert_eq!(provider.api_key().unwrap(), Some("account-b-key"));
+        assert_eq!(provider.base_url, "http://account-b.local/v1");
+
+        unsafe {
+            env::remove_var("MIMO_TEST_ACCOUNT_A");
+            env::remove_var("MIMO_TEST_ACCOUNT_B");
+        }
+    }
+
+    #[test]
+    fn rate_limit_rotates_provider_credential_and_clears_cooldown() {
+        let state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
+        unsafe {
+            env::set_var("MIMO_ROTATE_ACCOUNT_A", "account-a-key");
+            env::set_var("MIMO_ROTATE_ACCOUNT_B", "account-b-key");
+        }
+        state
+            .control
+            .upsert_provider_credential(ProviderCredentialRecord {
+                id: "account-a".to_owned(),
+                provider_id: "mimo".to_owned(),
+                name: "Account A".to_owned(),
+                api_key_env: "MIMO_ROTATE_ACCOUNT_A".to_owned(),
+                base_url: None,
+                status: "active".to_owned(),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+        state
+            .control
+            .upsert_provider_credential(ProviderCredentialRecord {
+                id: "account-b".to_owned(),
+                provider_id: "mimo".to_owned(),
+                name: "Account B".to_owned(),
+                api_key_env: "MIMO_ROTATE_ACCOUNT_B".to_owned(),
+                base_url: None,
+                status: "active".to_owned(),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+
+        state
+            .control
+            .record_provider_outcome_for_credential(
+                "mimo",
+                Some("account-a"),
+                false,
+                429,
+                Some("rate limit"),
+            )
+            .unwrap();
+
+        let controls = state.control.provider_control_snapshot();
+        assert_eq!(
+            controls
+                .active_provider_credentials
+                .get("mimo")
+                .map(String::as_str),
+            Some("account-b")
+        );
+        assert!(!state.control.provider_in_cooldown("mimo"));
+
+        unsafe {
+            env::remove_var("MIMO_ROTATE_ACCOUNT_A");
+            env::remove_var("MIMO_ROTATE_ACCOUNT_B");
+        }
+    }
+
+    #[test]
+    fn disabled_active_provider_credential_selects_next_enabled_account() {
+        let state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
+        state
+            .control
+            .upsert_provider_credential(ProviderCredentialRecord {
+                id: "account-a".to_owned(),
+                provider_id: "mimo".to_owned(),
+                name: "Account A".to_owned(),
+                api_key_env: "MIMO_DISABLE_ACCOUNT_A".to_owned(),
+                base_url: None,
+                status: "active".to_owned(),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+        state
+            .control
+            .upsert_provider_credential(ProviderCredentialRecord {
+                id: "account-b".to_owned(),
+                provider_id: "mimo".to_owned(),
+                name: "Account B".to_owned(),
+                api_key_env: "MIMO_DISABLE_ACCOUNT_B".to_owned(),
+                base_url: None,
+                status: "active".to_owned(),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+        state
+            .control
+            .upsert_provider_credential(ProviderCredentialRecord {
+                id: "account-a".to_owned(),
+                provider_id: "mimo".to_owned(),
+                name: "Account A".to_owned(),
+                api_key_env: "MIMO_DISABLE_ACCOUNT_A".to_owned(),
+                base_url: None,
+                status: "disabled".to_owned(),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+
+        let controls = state.control.provider_control_snapshot();
+        assert_eq!(
+            controls
+                .active_provider_credentials
+                .get("mimo")
+                .map(String::as_str),
+            Some("account-b")
+        );
+    }
+
+    #[test]
+    fn round_robin_provider_credential_selection_rotates_available_accounts() {
+        let state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
+        unsafe {
+            env::set_var("MIMO_POOL_ACCOUNT_A", "account-a-key");
+            env::set_var("MIMO_POOL_ACCOUNT_B", "account-b-key");
+        }
+        state
+            .control
+            .upsert_provider_credential(ProviderCredentialRecord {
+                id: "account-a".to_owned(),
+                provider_id: "mimo".to_owned(),
+                name: "Account A".to_owned(),
+                api_key_env: "MIMO_POOL_ACCOUNT_A".to_owned(),
+                base_url: None,
+                status: "active".to_owned(),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+        state
+            .control
+            .upsert_provider_credential(ProviderCredentialRecord {
+                id: "account-b".to_owned(),
+                provider_id: "mimo".to_owned(),
+                name: "Account B".to_owned(),
+                api_key_env: "MIMO_POOL_ACCOUNT_B".to_owned(),
+                base_url: None,
+                status: "active".to_owned(),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+        state
+            .control
+            .set_provider_credential_pool_mode("mimo", "round_robin")
+            .unwrap();
+
+        let first = state
+            .control
+            .select_provider_credential_for_request("mimo")
+            .unwrap();
+        let second = state
+            .control
+            .select_provider_credential_for_request("mimo")
+            .unwrap();
+        assert_eq!(first.id, "account-b");
+        assert_eq!(second.id, "account-a");
+
+        unsafe {
+            env::remove_var("MIMO_POOL_ACCOUNT_A");
+            env::remove_var("MIMO_POOL_ACCOUNT_B");
+        }
+    }
+
+    #[test]
+    fn manual_provider_credential_pool_does_not_auto_rotate() {
+        let state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
+        unsafe {
+            env::set_var("MIMO_MANUAL_ACCOUNT_A", "account-a-key");
+            env::set_var("MIMO_MANUAL_ACCOUNT_B", "account-b-key");
+        }
+        state
+            .control
+            .upsert_provider_credential(ProviderCredentialRecord {
+                id: "account-a".to_owned(),
+                provider_id: "mimo".to_owned(),
+                name: "Account A".to_owned(),
+                api_key_env: "MIMO_MANUAL_ACCOUNT_A".to_owned(),
+                base_url: None,
+                status: "active".to_owned(),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+        state
+            .control
+            .upsert_provider_credential(ProviderCredentialRecord {
+                id: "account-b".to_owned(),
+                provider_id: "mimo".to_owned(),
+                name: "Account B".to_owned(),
+                api_key_env: "MIMO_MANUAL_ACCOUNT_B".to_owned(),
+                base_url: None,
+                status: "active".to_owned(),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+        state
+            .control
+            .set_provider_credential_pool_mode("mimo", "manual")
+            .unwrap();
+
+        state
+            .control
+            .record_provider_outcome_for_credential(
+                "mimo",
+                Some("account-a"),
+                false,
+                429,
+                Some("rate limit"),
+            )
+            .unwrap();
+
+        let controls = state.control.provider_control_snapshot();
+        assert_eq!(
+            controls
+                .active_provider_credentials
+                .get("mimo")
+                .map(String::as_str),
+            Some("account-a")
+        );
+        assert!(state.control.provider_in_cooldown("mimo"));
+
+        unsafe {
+            env::remove_var("MIMO_MANUAL_ACCOUNT_A");
+            env::remove_var("MIMO_MANUAL_ACCOUNT_B");
+        }
     }
 
     #[test]

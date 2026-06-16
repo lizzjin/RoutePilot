@@ -51,6 +51,22 @@ pub(super) struct ProviderModelWriteBody {
     context_window: Option<u64>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ProviderCredentialWriteBody {
+    id: Option<String>,
+    name: String,
+    api_key_env: String,
+    base_url: Option<String>,
+    status: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ProviderCredentialPoolBody {
+    mode: String,
+}
+
 pub(super) async fn admin_providers(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -344,6 +360,193 @@ pub(super) async fn admin_delete_provider_model(
         "model": provider_model_row(&record),
         "provider": provider_row_by_id(&state, &provider_id)?,
     })))
+}
+
+pub(super) async fn admin_create_provider_credential(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(provider_id): Path<String>,
+    Json(body): Json<ProviderCredentialWriteBody>,
+) -> Result<Json<Value>, AppError> {
+    let actor = require_admin_write_user(&state, &headers)?;
+    ensure_provider_exists(&state, &provider_id)?;
+    let credential_id = body.id.unwrap_or_else(|| slugify_credential_id(&body.name));
+    let record = state
+        .control
+        .upsert_provider_credential(ProviderCredentialRecord {
+            id: credential_id,
+            provider_id: provider_id.clone(),
+            name: body.name,
+            api_key_env: body.api_key_env,
+            base_url: body.base_url,
+            status: body.status.unwrap_or_else(|| "active".to_owned()),
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        })?;
+    record_admin_activity(
+        &state,
+        &actor,
+        "config_change",
+        format!("provider:{provider_id}:credential:{}", record.id),
+        format!("新增供应商 {provider_id} 账号 {}", record.name),
+        "info",
+    );
+    Ok(Json(json!({
+        "ok": true,
+        "credential": provider_credential_row(&record, false),
+        "provider": provider_row_by_id(&state, &provider_id)?,
+    })))
+}
+
+pub(super) async fn admin_update_provider_credential(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((provider_id, credential_id)): Path<(String, String)>,
+    Json(body): Json<ProviderCredentialWriteBody>,
+) -> Result<Json<Value>, AppError> {
+    let actor = require_admin_write_user(&state, &headers)?;
+    ensure_provider_exists(&state, &provider_id)?;
+    let active_id = state
+        .control
+        .provider_control_snapshot()
+        .active_provider_credentials
+        .get(&provider_id)
+        .cloned();
+    let record = state
+        .control
+        .upsert_provider_credential(ProviderCredentialRecord {
+            id: credential_id,
+            provider_id: provider_id.clone(),
+            name: body.name,
+            api_key_env: body.api_key_env,
+            base_url: body.base_url,
+            status: body.status.unwrap_or_else(|| "active".to_owned()),
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        })?;
+    record_admin_activity(
+        &state,
+        &actor,
+        "config_change",
+        format!("provider:{provider_id}:credential:{}", record.id),
+        format!("更新供应商 {provider_id} 账号 {}", record.name),
+        "info",
+    );
+    Ok(Json(json!({
+        "ok": true,
+        "credential": provider_credential_row(&record, active_id.as_deref() == Some(record.id.as_str())),
+        "provider": provider_row_by_id(&state, &provider_id)?,
+    })))
+}
+
+pub(super) async fn admin_select_provider_credential(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((provider_id, credential_id)): Path<(String, String)>,
+) -> Result<Json<Value>, AppError> {
+    let actor = require_admin_write_user(&state, &headers)?;
+    ensure_provider_exists(&state, &provider_id)?;
+    let record = state
+        .control
+        .set_active_provider_credential(&provider_id, &credential_id)?;
+    record_admin_activity(
+        &state,
+        &actor,
+        "config_change",
+        format!("provider:{provider_id}:credential:{}", record.id),
+        format!("切换供应商 {provider_id} 当前账号为 {}", record.name),
+        "info",
+    );
+    Ok(Json(json!({
+        "ok": true,
+        "credential": provider_credential_row(&record, true),
+        "provider": provider_row_by_id(&state, &provider_id)?,
+    })))
+}
+
+pub(super) async fn admin_set_provider_credential_pool_mode(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(provider_id): Path<String>,
+    Json(body): Json<ProviderCredentialPoolBody>,
+) -> Result<Json<Value>, AppError> {
+    let actor = require_admin_write_user(&state, &headers)?;
+    ensure_provider_exists(&state, &provider_id)?;
+    let mode = state
+        .control
+        .set_provider_credential_pool_mode(&provider_id, &body.mode)?;
+    record_admin_activity(
+        &state,
+        &actor,
+        "config_change",
+        format!("provider:{provider_id}:credential-pool"),
+        format!("更新供应商 {provider_id} 号池策略为 {mode}"),
+        "info",
+    );
+    Ok(Json(json!({
+        "ok": true,
+        "providerId": provider_id,
+        "credentialPoolMode": mode,
+        "provider": provider_row_by_id(&state, &provider_id)?,
+    })))
+}
+
+pub(super) async fn admin_delete_provider_credential(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((provider_id, credential_id)): Path<(String, String)>,
+) -> Result<Json<Value>, AppError> {
+    let actor = require_admin_write_user(&state, &headers)?;
+    ensure_provider_exists(&state, &provider_id)?;
+    let record = state
+        .control
+        .delete_provider_credential(&provider_id, &credential_id)?;
+    record_admin_activity(
+        &state,
+        &actor,
+        "config_change",
+        format!("provider:{provider_id}:credential:{}", record.id),
+        format!("删除供应商 {provider_id} 账号 {}", record.name),
+        "warning",
+    );
+    Ok(Json(json!({
+        "ok": true,
+        "credential": provider_credential_row(&record, false),
+        "provider": provider_row_by_id(&state, &provider_id)?,
+    })))
+}
+
+fn ensure_provider_exists(state: &AppState, provider_id: &str) -> Result<(), AppError> {
+    let config = management_config(state);
+    if config.providers.contains_key(provider_id) {
+        Ok(())
+    } else {
+        Err(AppError::ProviderNotFound(provider_id.to_owned()))
+    }
+}
+
+fn slugify_credential_id(name: &str) -> String {
+    let mut slug = name
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    while slug.contains("--") {
+        slug = slug.replace("--", "-");
+    }
+    slug = slug.trim_matches('-').to_owned();
+    if slug.is_empty() {
+        format!("credential-{}", uuid::Uuid::new_v4().simple())
+    } else {
+        slug
+    }
 }
 
 fn provider_body_to_record(

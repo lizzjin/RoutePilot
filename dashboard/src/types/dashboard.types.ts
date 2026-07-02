@@ -38,11 +38,14 @@ export interface DashboardStats {
     cacheWriteTokensTotal?: number
     cacheReadTokensTotal?: number
     costEstimateUsdTotal?: number
+    accountIssue?: 'none' | 'insufficient_balance' | 'auth'
+    rechargeRequired?: boolean
+    rechargeBadge?: string | null
   }>
   recentActivity: Array<{
     id: string
     timestamp: string
-    type: 'request' | 'error' | 'config_change'
+    type: 'request' | 'error' | 'config_change' | 'auto_governance' | 'account_issue' | string
     message: string
     severity: 'info' | 'warning' | 'error'
   }>

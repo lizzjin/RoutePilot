@@ -12,7 +12,7 @@ export const mockSettings: SystemSettings = {
     allowNoAuth: false,
   },
   gateway: {
-    defaultProvider: 'mimo',
+    defaultProvider: 'deepseek',
     providerOrder: [
       'deepseek',
       'mimo',
@@ -52,7 +52,7 @@ export const mockSettings: SystemSettings = {
       { id: 'admin', label: '管理员账号', status: 'ok', detail: '至少一个活跃管理员' },
       { id: 'auth', label: 'API 认证', status: 'ok', detail: '已启用请求认证' },
       { id: 'providers', label: '供应商凭证', status: 'ok', detail: '2 个供应商可用' },
-      { id: 'defaultProvider', label: '默认供应商', status: 'ok', detail: 'mimo 可用' },
+      { id: 'defaultProvider', label: '默认供应商', status: 'ok', detail: 'deepseek 可用' },
       { id: 'persistence', label: '控制面数据', status: 'ok', detail: '已启用本地持久化' },
       { id: 'config', label: '配置校验', status: 'ok', detail: '无配置告警' },
     ],

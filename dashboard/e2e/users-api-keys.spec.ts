@@ -39,8 +39,8 @@ test.describe('users and API keys', () => {
         username,
         name: keyName,
         group: 'e2e',
-        allowedModels: ['mimo-v2.5-pro'],
-        allowedProviders: ['mimo'],
+        allowedModels: ['deepseek-v4-flash'],
+        allowedProviders: ['deepseek'],
       },
     })
     expect(createKeyResponse.ok()).toBeTruthy()
@@ -60,6 +60,7 @@ test.describe('users and API keys', () => {
     await expect(page.getByRole('row').filter({ hasText: updatedEmail })).toBeVisible()
 
     await page.goto('/api-keys')
+    await page.getByPlaceholder('搜索名称、用户或 Key...').fill(keyName)
     const keyRow = page.getByRole('row').filter({ hasText: keyName })
     await expect(keyRow).toBeVisible()
     await expect(keyRow).toContainText(username)
@@ -72,7 +73,7 @@ test.describe('users and API keys', () => {
       allowedProviders?: string[]
     }>
     const savedKey = apiKeys.find((apiKey) => apiKey.name === keyName)
-    expect(savedKey?.allowedModels).toContain('mimo-v2.5-pro')
-    expect(savedKey?.allowedProviders).toContain('mimo')
+    expect(savedKey?.allowedModels).toContain('deepseek-v4-flash')
+    expect(savedKey?.allowedProviders).toContain('deepseek')
   })
 })

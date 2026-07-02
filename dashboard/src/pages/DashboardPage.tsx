@@ -377,7 +377,14 @@ function ProviderBreakdown({
             <div key={provider.providerId} className="rounded-lg border bg-muted/20 p-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">{provider.displayName}</p>
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <p className="truncate text-sm font-semibold">{provider.displayName}</p>
+                    {provider.rechargeRequired && (
+                      <span className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-medium text-white">
+                        {provider.rechargeBadge || '代充值'}
+                      </span>
+                    )}
+                  </div>
                   <p className="mt-1 text-xs text-muted-foreground">{provider.providerId}</p>
                 </div>
                 <span

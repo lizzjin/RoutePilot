@@ -25,24 +25,17 @@ The script checks:
 
 It reads secrets from `.env` but does not print them.
 
-## Current Verified Baseline
+## Standard Sample Baseline
 
-Verified on 2026-06-14 in the local WSL/VS Code environment:
+The project's default sample route is DeepSeek's official Anthropic-compatible API:
 
 | Provider | Protocol | Model | Non-stream | Stream | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `mimo` | OpenAI-compatible | `mimo-v2.5-pro` | Verified | Verified | Tested through local ModelPort and Claude-compatible settings; stream text de-duplication is enabled for Mimo. |
+| `deepseek` | Anthropic-compatible | `deepseek-v4-flash` | Standard sample | Standard sample | Use this path for docs, smoke tests, and adapter examples. |
 
 ## Pricing Notes
 
-ModelPort uses provider pricing only for operational cost estimates; upstream providers remain the source of truth for billing. As of the current table, `mimo-v2.5-pro` overseas pay-as-you-go is represented as:
-
-| Model | Input cache hit | Input cache miss | Output | Cache write |
-| --- | --- | --- | --- | --- |
-| `mimo-v2.5-pro` | `$0.0036 / 1M` | `$0.435 / 1M` | `$0.87 / 1M` | limited-time free, represented as `$0` |
-| `mimo-v2.5` / generic `mimo-*` fallback | `$0.0028 / 1M` | `$0.14 / 1M` | `$0.28 / 1M` | limited-time free, represented as `$0` |
-
-Reference: <https://mimo.mi.com/docs/en-US/price/pay-as-you-go>
+ModelPort uses provider pricing only for operational cost estimates; upstream providers remain the source of truth for billing. Avoid adding model-specific pricing branches unless the model is part of the active standard sample or a real deployment needs the estimate.
 
 ## Built-In Providers
 
@@ -50,9 +43,9 @@ These providers are built into the router. A "Pending real-key verification" sta
 
 | Provider | Protocol | Default Model | Status | Key Variables |
 | --- | --- | --- | --- | --- |
-| `mimo` | OpenAI-compatible | `mimo-v2.5-pro` | Verified | `BASE_URL`, `MIMO_OPENAI_BASE_URL`, `MIMO_OPENAI_API_KEY`, `MIMO_MODEL` |
-| `deepseek` | Anthropic-compatible | `deepseek-v4-pro` | Pending real-key verification | `DEEPSEEK_ANTHROPIC_AUTH_TOKEN`, `DEEPSEEK_MODEL` |
+| `deepseek` | Anthropic-compatible | `deepseek-v4-flash` | Standard sample | `DEEPSEEK_ANTHROPIC_AUTH_TOKEN`, `DEEPSEEK_MODEL` |
 | `deepseek_openai` | OpenAI-compatible | `deepseek-chat` | Pending real-key verification | `DEEPSEEK_OPENAI_API_KEY`, `DEEPSEEK_OPENAI_MODEL`, `DEEPSEEK_API_KEY` |
+| `mimo` | OpenAI-compatible | `mimo-v2.5-pro` | Generic OpenAI-compatible provider | `BASE_URL`, `MIMO_OPENAI_BASE_URL`, `MIMO_OPENAI_API_KEY`, `MIMO_MODEL` |
 | `anthropic` | Anthropic-compatible | `claude-sonnet-4-20250514` | Pending real-key verification | `ANTHROPIC_API_KEY`, `ANTHROPIC_UPSTREAM_MODEL` |
 | `openai` | OpenAI-compatible | `gpt-4o` | Pending real-key verification | `OPENAI_API_KEY`, `OPENAI_MODEL` |
 | `openrouter` | OpenAI-compatible | `openrouter/auto` | Pending real-key verification | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` |
@@ -85,7 +78,7 @@ Before marking a provider as verified:
 ## Known Caveats
 
 - Some OpenAI-compatible providers use `max_tokens`, while others require `max_completion_tokens`; ModelPort supports provider-level `max_tokens_field`.
-- Some streaming providers replay previous text fragments; Mimo uses `deduplicate_stream_text = true`.
+- Some streaming providers replay previous text fragments; use provider-level `deduplicate_stream_text` only when a real upstream needs it.
 - Streaming upstream failures may arrive as Anthropic SSE `event: error` with HTTP 200, so stream tests must inspect the event body.
 - `openrouter`, `custom`, and `ollama` are best suited for arbitrary model passthrough.
 - Image and Responses API work should remain separate from the Claude Code text path.

@@ -14,6 +14,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/v1': 'http://127.0.0.1:17878',
+      '/livez': 'http://127.0.0.1:17878',
+      '/readyz': 'http://127.0.0.1:17878',
       '/health': 'http://127.0.0.1:17878',
       '/metrics': 'http://127.0.0.1:17878',
       '/admin': 'http://127.0.0.1:17878',

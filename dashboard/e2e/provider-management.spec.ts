@@ -24,7 +24,7 @@ test.describe('provider management', () => {
 
     await page.getByPlaceholder('例如: siliconflow', { exact: true }).fill(providerId)
     await page.getByPlaceholder('例如: 第三方 · OpenAI').fill(displayName)
-    await page.getByPlaceholder('https://example.com/v1').fill('http://127.0.0.1:9/v1')
+    await page.getByPlaceholder('https://example.com/v1').fill('https://example.com/v1')
     await page.getByPlaceholder('例如: gpt-4o-mini').fill(firstModel)
     await page.getByPlaceholder(/每行一个模型/).fill(`${firstModel}\n${secondModel}`)
     await page.getByRole('switch', { name: '需要 API Key' }).click()
@@ -73,7 +73,7 @@ test.describe('provider management', () => {
 
     await page.getByPlaceholder('例如: siliconflow', { exact: true }).fill(providerId)
     await page.getByPlaceholder('例如: 第三方 · OpenAI').fill(`E2E Pool ${suffix}`)
-    await page.getByPlaceholder('https://example.com/v1').fill('http://127.0.0.1:9/v1')
+    await page.getByPlaceholder('https://example.com/v1').fill('https://example.com/v1')
     await page.getByPlaceholder('例如: gpt-4o-mini').fill(model)
     await page.getByPlaceholder(/每行一个模型/).fill(model)
     await page.getByRole('button', { name: '保存' }).click()

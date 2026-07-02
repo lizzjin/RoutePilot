@@ -35,10 +35,10 @@ test.describe('models', () => {
     }
   })
 
-  test('models page shows the currently usable Mimo models', async ({ page }) => {
+  test('models page shows the standard DeepSeek model', async ({ page }) => {
     await page.goto('/models')
     await expect(page.getByRole('heading', { name: '模型管理' })).toBeVisible()
-    await expect(page.getByText('mimo-v2.5-pro').first()).toBeVisible()
-    await expect(page.getByText(/小米 MiMo/).first()).toBeVisible()
+    await expect(page.getByText('deepseek-v4-flash').first()).toBeVisible()
+    await expect(page.getByText(/DeepSeek/).first()).toBeVisible()
   })
 })

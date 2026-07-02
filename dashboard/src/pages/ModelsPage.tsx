@@ -130,7 +130,15 @@ interface ProviderInventoryGroup {
   items: ProviderModelInventory[]
 }
 
+type ProviderOperationalFilter = 'all' | 'healthy' | 'degraded' | 'recharge'
+
 const ALL = '__all__'
+const PROVIDER_OPERATIONAL_FILTERS: Array<{ value: ProviderOperationalFilter; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'healthy', label: '健康' },
+  { value: 'degraded', label: '异常' },
+  { value: 'recharge', label: '待代充值' },
+]
 const DEFAULT_PROVIDER_FORM: ProviderFormState = {
   id: '',
   displayName: '',
@@ -252,6 +260,7 @@ export function ModelsPage() {
   const [defaultProvider, setDefaultProvider] = useState(providers[0]?.id || 'mimo')
   const [search, setSearch] = useState('')
   const [family, setFamily] = useState(ALL)
+  const [providerFilter, setProviderFilter] = useState<ProviderOperationalFilter>('all')
   const [modelPage, setModelPage] = useState(1)
   const [modelPageSize, setModelPageSize] = useState(20)
   const [aliasPage, setAliasPage] = useState(1)
@@ -259,6 +268,14 @@ export function ModelsPage() {
 
   const configuredProviderIds = useMemo(() => new Set(providers.map((provider) => provider.id)), [providers])
   const activeProviders = providers.filter((provider) => provider.status === 'active')
+  const rechargeProviders = useMemo(() => providers.filter(providerNeedsRecharge), [providers])
+  const degradedProviders = useMemo(() => providers.filter(providerIsDegraded), [providers])
+  const filteredProviders = useMemo(() => providers.filter((provider) => {
+    if (providerFilter === 'recharge') return providerNeedsRecharge(provider)
+    if (providerFilter === 'healthy') return providerIsHealthy(provider)
+    if (providerFilter === 'degraded') return providerIsDegraded(provider)
+    return true
+  }), [providers, providerFilter])
   const totalConfiguredModels = providers.reduce((sum, provider) => sum + provider.models.length, 0)
 
   const modelRows = useMemo<ModelRow[]>(() => {
@@ -525,7 +542,7 @@ export function ModelsPage() {
     <div className="space-y-6">
       <PageHeader title="模型管理" description="按模型查看所有渠道，生成供应商配置和路由别名" />
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Card>
           <CardContent className="flex items-center gap-3 p-4">
             <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
@@ -556,6 +573,17 @@ export function ModelsPage() {
             <div>
               <p className="text-sm text-muted-foreground">渠道映射</p>
               <p className="text-2xl font-semibold">{formatNumber(totalConfiguredModels)}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex items-center gap-3 p-4">
+            <div className="flex h-10 w-10 items-center justify-center rounded-md bg-amber-500/10 text-amber-600">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">待代充值</p>
+              <p className="text-2xl font-semibold">{rechargeProviders.length}</p>
             </div>
           </CardContent>
         </Card>
@@ -763,12 +791,34 @@ export function ModelsPage() {
               </Button>
             )}
           >
-            <div className="text-sm text-muted-foreground">
-              发现模型会读取供应商模型列表并进入运行时可路由列表；这里可以新增、编辑、禁用或删除供应商。
+            <div className="flex flex-wrap items-center gap-2">
+              {PROVIDER_OPERATIONAL_FILTERS.map((filter) => (
+                <Button
+                  key={filter.value}
+                  type="button"
+                  size="sm"
+                  variant={providerFilter === filter.value ? 'default' : 'outline'}
+                  onClick={() => {
+                    setProviderFilter(filter.value)
+                    setExpandedProvider(null)
+                  }}
+                >
+                  {filter.label}
+                  <span className="ml-2 rounded bg-background/20 px-1.5 py-0.5 text-[11px]">
+                    {providerFilterCount(filter.value, providers, rechargeProviders, degradedProviders)}
+                  </span>
+                </Button>
+              ))}
             </div>
           </TableToolbar>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {providers.map((provider) => (
+            {filteredProviders.length === 0 ? (
+              <Card className="md:col-span-2 xl:col-span-3">
+                <CardContent className="flex h-32 items-center justify-center text-sm text-muted-foreground">
+                  当前筛选下没有供应商
+                </CardContent>
+              </Card>
+            ) : filteredProviders.map((provider) => (
               <ProviderCard
                 key={provider.id}
                 provider={provider}
@@ -1007,7 +1057,7 @@ export function ModelsPage() {
                   className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   value={providerForm.models}
                   onChange={(event) => setProviderForm({ ...providerForm, models: event.target.value })}
-                  placeholder={'每行一个模型，或用逗号分隔\nmimo-v2.5-pro\ngpt-4o-mini'}
+                  placeholder={'每行一个模型，或用逗号分隔\ndeepseek-v4-flash\ngpt-4o-mini'}
                 />
               </Field>
               <Field label="模型前缀" className="md:col-span-2">
@@ -1423,6 +1473,41 @@ function parseList(value: string): string[] {
   ))
 }
 
+function providerNeedsRecharge(provider: Provider): boolean {
+  return Boolean(
+    provider.health?.rechargeRequired
+    || provider.credentials?.some((credential) => credential.health?.rechargeRequired),
+  )
+}
+
+function providerRuntimeState(provider: Provider): 'healthy' | 'degraded' | 'cooldown' {
+  return provider.runtimeStatus || provider.health?.status || 'healthy'
+}
+
+function providerIsHealthy(provider: Provider): boolean {
+  return provider.status === 'active'
+    && providerRuntimeState(provider) === 'healthy'
+    && !providerNeedsRecharge(provider)
+}
+
+function providerIsDegraded(provider: Provider): boolean {
+  return provider.status !== 'active'
+    || providerRuntimeState(provider) !== 'healthy'
+    || providerNeedsRecharge(provider)
+}
+
+function providerFilterCount(
+  filter: ProviderOperationalFilter,
+  providers: Provider[],
+  rechargeProviders: Provider[],
+  degradedProviders: Provider[],
+): number {
+  if (filter === 'recharge') return rechargeProviders.length
+  if (filter === 'healthy') return providers.filter(providerIsHealthy).length
+  if (filter === 'degraded') return degradedProviders.length
+  return providers.length
+}
+
 function providerDeleteBlockedFromError(error: unknown): ProviderDeleteBlocked | null {
   if (!(error instanceof ApiError) || error.status !== 409) return null
   const payload = error.payload as Partial<ProviderDeleteBlocked> | undefined
@@ -1508,6 +1593,7 @@ function ProviderCard({
   const disabledModelCount = inventoryItems.length - enabledModelCount
   const disableCandidateCount = inventoryItems.filter((item) => item.status !== 'disabled' && item.model !== provider.defaultModel).length
   const isBulkUpdating = bulkModelMutation?.providerId === provider.id
+  const rechargeBadge = provider.health?.rechargeRequired ? provider.health.rechargeBadge || '代充值' : null
 
   return (
     <Card className={cn('overflow-hidden transition-all', className)} data-testid={`provider-card-${provider.id}`}>
@@ -1520,6 +1606,7 @@ function ProviderCard({
               <Badge variant="outline">{PROVIDER_PROTOCOL_LABELS[provider.protocol]}</Badge>
               <code className="rounded bg-muted px-2 py-1 text-xs">{provider.id}</code>
               {runtimeStatus && <StatusBadge status={runtimeStatus} />}
+              {rechargeBadge && <Badge variant="warning">{rechargeBadge}</Badge>}
             </div>
           </div>
           <StatusBadge status={provider.status} />
@@ -1556,7 +1643,10 @@ function ProviderCard({
           <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <div className="min-w-0 space-y-1">
-              <p className="font-medium">{provider.health.recommendedAction}</p>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                {rechargeBadge && <Badge variant="warning">{rechargeBadge}</Badge>}
+                <p className="font-medium">{provider.health.recommendedAction}</p>
+              </div>
               {provider.health.lastError && (
                 <p className="line-clamp-2 opacity-80">{provider.health.lastError}</p>
               )}
@@ -1657,6 +1747,7 @@ function ProviderCard({
                 {credentials.map((credential) => {
                   const health = credential.health
                   const healthStatus = health?.status ?? (credential.hasApiKey ? 'healthy' : 'degraded')
+                  const credentialRechargeBadge = health?.rechargeRequired ? health.rechargeBadge || '代充值' : null
                   return (
                     <div key={credential.id} className="grid gap-2 rounded-md border bg-background/70 px-3 py-2 md:grid-cols-[minmax(0,1fr)_auto]">
                       <div className="min-w-0">
@@ -1677,6 +1768,7 @@ function ProviderCard({
                         <Badge variant={credentialHealthVariant(healthStatus)}>
                           {credentialHealthLabel(healthStatus)}
                         </Badge>
+                        {credentialRechargeBadge && <Badge variant="warning">{credentialRechargeBadge}</Badge>}
                         <span className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground">
                           {health?.requestsTotal ? `${formatNumber(health.requestsTotal)} 次 · ${Math.round(health.successRate)}%` : '暂无请求'}
                         </span>

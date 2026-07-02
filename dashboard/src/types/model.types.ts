@@ -21,6 +21,9 @@ export interface ProviderHealth {
   lastError?: string | null
   lastStatusCode?: number | null
   failureKind?: 'none' | 'account' | 'rate_limit' | 'upstream_unavailable' | 'config' | 'unknown'
+  accountIssue?: 'none' | 'insufficient_balance' | 'auth'
+  rechargeRequired?: boolean
+  rechargeBadge?: string | null
   recommendedAction?: string | null
 }
 

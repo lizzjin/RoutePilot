@@ -6,7 +6,7 @@ ModelPort 面向个人和小团队时，推荐保持轻量：
 | --- | --- | --- |
 | `postgres` | 是 | PostgreSQL 16，保存控制面持久化状态；默认只在 Docker 内网监听，不占用宿主机 5432。 |
 | `modelport` | 是 | Rust 后端、Anthropic-compatible API、控制面 API、鉴权、路由、日志和配额。 |
-| `dashboard` | 是 | 静态后台 UI，并把 `/admin`、`/v1`、`/health`、`/metrics` 反代到后端。 |
+| `dashboard` | 是 | 静态后台 UI，并把 `/admin`、`/v1`、`/livez`、`/readyz`、`/health`、`/metrics` 反代到后端。 |
 | `modelport-postgres` | 是 | PostgreSQL 数据卷，保存用户、API Key、审计、用量和路由配置。 |
 | `modelport-data` | 是 | 后端辅助数据卷，可放 CLI 备份文件；未配置数据库时会作为 JSON 文件存储位置。 |
 | Caddy/Nginx | 否 | 只有需要局域网域名、HTTPS 或统一入口时再加。 |
@@ -31,7 +31,7 @@ Claude Code / VS Code Claude 继续使用：
 ```bash
 ANTHROPIC_BASE_URL=http://127.0.0.1:17878
 ANTHROPIC_AUTH_TOKEN=<same-as-MODELPORT_AUTH_TOKEN>
-ANTHROPIC_MODEL=mimo-v2.5-pro
+ANTHROPIC_MODEL=deepseek-v4-flash
 ```
 
 ## 日常命令

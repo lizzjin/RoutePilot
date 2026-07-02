@@ -8,7 +8,7 @@ ModelPort is a local Anthropic-compatible model gateway for Claude Code and VS C
 
 中文表达：
 
-> ModelPort 是本机 Claude 模型端口，把 Claude Code 的 Anthropic Messages 请求路由到 Mimo、DeepSeek、OpenAI-compatible provider 和自定义上游，并提供小团队 API Key、额度和日志控制面。
+> ModelPort 是本机 Claude 模型端口，以 DeepSeek 官方 Anthropic-compatible 适配为标准样例，同时可把 Claude Code 的 Anthropic Messages 请求路由到 OpenAI-compatible provider 和自定义上游，并提供小团队 API Key、额度和日志控制面。
 
 ## 当前主线
 
@@ -18,7 +18,7 @@ ModelPort is a local Anthropic-compatible model gateway for Claude Code and VS C
 - 目标用户：个人开发者，以及需要共享模型网关的小团队/初创团队。
 - 主要价值：快速切换模型、本机密钥隔离、provider 协议转换、稳定流式输出。
 - 控制面价值：用户、API Key、项目/团队、预算、provider 策略、审计、备份、请求日志和用量/费用看板。
-- 默认场景：`MODELPORT_DEFAULT_PROVIDER=deepseek` + `ANTHROPIC_MODEL=deepseek-v4-pro`；Mimo 作为可切换 provider，受上游额度、余额和限流影响。
+- 默认场景：`MODELPORT_DEFAULT_PROVIDER=deepseek` + `ANTHROPIC_MODEL=deepseek-v4-flash`。
 
 ## 架构分层
 
@@ -31,7 +31,7 @@ ModelPort local gateway
         |
         | auth, policy, route, alias, protocol conversion, usage logging
         v
-Mimo / DeepSeek / OpenAI-compatible / custom provider
+DeepSeek official / OpenAI-compatible / custom provider
 ```
 
 代码边界：
@@ -79,7 +79,7 @@ Mimo / DeepSeek / OpenAI-compatible / custom provider
 
 建议按风险从低到高推进：
 
-- Provider 实测矩阵：用 `scripts/provider-matrix.sh` 记录 Mimo、DeepSeek、OpenRouter、DashScope、Gemini 等真实测试状态。
+- Provider 实测矩阵：用 `scripts/provider-matrix.sh` 记录 DeepSeek、OpenRouter、DashScope、Gemini、Mimo 等真实测试状态。
 - 路由策略：按模型名前缀、别名、fallback、provider 优先级扩展。
 - 上游账号池：同一 provider 已支持多个上游账号配置，控制面只保存 API Key 环境变量名和可选 Base URL，不保存明文 key；API 请求可按手动、故障切换或轮询策略选择账号，并记录账号级健康、冷却和最近错误。
 - 账号池后续优化：补充每账号速率阈值、权重、长期成功率趋势和更细的冷却原因分布。

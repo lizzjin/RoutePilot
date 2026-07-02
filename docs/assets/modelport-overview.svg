@@ -35,7 +35,7 @@
   <text class="title" x="80" y="82">ModelPort</text>
   <text class="subtitle" x="80" y="116">Local Anthropic-compatible gateway for Claude Code, VS Code Claude, and common model providers</text>
   <rect class="chip-hot" x="1260" y="48" width="260" height="44" rx="8"/>
-  <text class="chip-hot-text" x="1290" y="77">Mimo v2.5 Pro verified</text>
+  <text class="chip-hot-text" x="1290" y="77">DeepSeek v4 flash</text>
 
   <rect class="panel" x="80" y="206" width="360" height="440" rx="8"/>
   <text class="h2" x="114" y="260">Claude clients</text>
@@ -73,10 +73,10 @@
 
   <rect x="570" y="534" width="460" height="56" rx="8" fill="#f2f6fa" stroke="#d7e0e8" stroke-width="1.5"/>
   <text class="h3" x="596" y="569">Streaming SSE</text>
-  <text class="small" x="800" y="569">Mimo text de-dup</text>
+  <text class="small" x="800" y="569">DeepSeek official</text>
 
   <rect x="570" y="608" width="460" height="44" rx="8" fill="#ecf8f6" stroke="#b8ddd7" stroke-width="1.5"/>
-  <text class="code" x="596" y="636">/health  /metrics  /v1/models</text>
+  <text class="code" x="596" y="636">/livez  /metrics  /v1/models</text>
 
   <line x1="1086" y1="426" x2="1144" y2="426" stroke="#0f766e" stroke-width="4" marker-end="url(#arrow)"/>
   <text class="arrow-label" x="1104" y="396">API</text>
@@ -86,10 +86,10 @@
   <text class="body" x="1194" y="294">Use one config model name per tool.</text>
 
   <rect class="chip-hot" x="1194" y="332" width="292" height="42" rx="8"/>
-  <text class="chip-hot-text" x="1218" y="359">Mimo v2.5 Pro</text>
+  <text class="chip-hot-text" x="1218" y="359">DeepSeek v4 flash</text>
 
   <rect class="chip" x="1194" y="388" width="292" height="42" rx="8"/>
-  <text class="chip-text" x="1218" y="415">DeepSeek</text>
+  <text class="chip-text" x="1218" y="415">OpenAI-compatible</text>
 
   <rect class="chip" x="1194" y="444" width="292" height="42" rx="8"/>
   <text class="chip-text" x="1218" y="471">Anthropic</text>

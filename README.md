@@ -19,10 +19,10 @@ This workspace is currently configured and verified with:
 | Dashboard | `http://127.0.0.1:5173` |
 | Local API | `http://127.0.0.1:17878` |
 | Default provider | `deepseek` |
-| Claude model | `deepseek-v4-pro` |
+| Claude model | `deepseek-v4-flash` |
 | Storage | Docker Compose PostgreSQL volume |
 
-`mimo-v2.5-pro` is still supported by the router, but upstream quota, balance, and rate limits decide whether it is usable at any moment. The current local Claude settings point to `deepseek-v4-pro`.
+The standard sample path is DeepSeek's official Anthropic-compatible API with `deepseek-v4-flash`.
 
 ## Product Screens
 
@@ -79,15 +79,15 @@ MODELPORT_POSTGRES_PASSWORD=replace-with-a-long-random-postgres-password
 MODELPORT_DEFAULT_PROVIDER=deepseek
 DEEPSEEK_ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic
 DEEPSEEK_ANTHROPIC_AUTH_TOKEN=replace-with-real-deepseek-api-key
-DEEPSEEK_MODEL=deepseek-v4-pro
+DEEPSEEK_MODEL=deepseek-v4-flash
 
 ANTHROPIC_BASE_URL=http://127.0.0.1:17878
-ANTHROPIC_MODEL=deepseek-v4-pro
-ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro
-ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-pro
-ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-pro
-ANTHROPIC_SMALL_FAST_MODEL=deepseek-v4-pro
-CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-pro
+ANTHROPIC_MODEL=deepseek-v4-flash
+ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-flash
+ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-flash
+ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash
+ANTHROPIC_SMALL_FAST_MODEL=deepseek-v4-flash
+CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash
 ```
 
 Start the stack:
@@ -100,7 +100,7 @@ docker compose ps
 Open:
 
 - Dashboard: `http://127.0.0.1:5173`
-- Health check: `http://127.0.0.1:17878/health`
+- Liveness check: `http://127.0.0.1:17878/livez`
 - Messages API: `http://127.0.0.1:17878/v1/messages`
 
 Log in to the dashboard with `MODELPORT_ADMIN_USERNAME` and `MODELPORT_ADMIN_PASSWORD`.
@@ -123,7 +123,7 @@ Recommended settings:
 
 ```json
 {
-  "claudeCode.selectedModel": "deepseek-v4-pro",
+  "claudeCode.selectedModel": "deepseek-v4-flash",
   "claudeCode.environmentVariables": [
     {
       "name": "ANTHROPIC_BASE_URL",
@@ -135,27 +135,27 @@ Recommended settings:
     },
     {
       "name": "ANTHROPIC_MODEL",
-      "value": "deepseek-v4-pro"
+      "value": "deepseek-v4-flash"
     },
     {
       "name": "ANTHROPIC_DEFAULT_OPUS_MODEL",
-      "value": "deepseek-v4-pro"
+      "value": "deepseek-v4-flash"
     },
     {
       "name": "ANTHROPIC_DEFAULT_SONNET_MODEL",
-      "value": "deepseek-v4-pro"
+      "value": "deepseek-v4-flash"
     },
     {
       "name": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-      "value": "deepseek-v4-pro"
+      "value": "deepseek-v4-flash"
     },
     {
       "name": "ANTHROPIC_SMALL_FAST_MODEL",
-      "value": "deepseek-v4-pro"
+      "value": "deepseek-v4-flash"
     },
     {
       "name": "CLAUDE_CODE_SUBAGENT_MODEL",
-      "value": "deepseek-v4-pro"
+      "value": "deepseek-v4-flash"
     }
   ]
 }
@@ -168,7 +168,7 @@ Reload VS Code or restart the Claude Code session after editing settings.
 Local service health:
 
 ```bash
-curl http://127.0.0.1:17878/health
+curl http://127.0.0.1:17878/livez
 ```
 
 Authenticated model list:
@@ -180,7 +180,7 @@ curl -sS \
   http://127.0.0.1:17878/v1/models
 ```
 
-Real `deepseek-v4-pro` message call:
+Real `deepseek-v4-flash` message call:
 
 ```bash
 source .env
@@ -189,7 +189,7 @@ curl -sS \
   -H "Content-Type: application/json" \
   http://127.0.0.1:17878/v1/messages \
   -d '{
-    "model": "deepseek-v4-pro",
+    "model": "deepseek-v4-flash",
     "max_tokens": 96,
     "messages": [
       {
@@ -203,7 +203,7 @@ curl -sS \
 Provider compatibility check:
 
 ```bash
-scripts/provider-matrix.sh --model deepseek-v4-pro
+scripts/provider-matrix.sh --model deepseek-v4-flash
 ```
 
 Full local checks:
@@ -220,7 +220,9 @@ scripts/acceptance.sh
 
 | Endpoint | Auth | Purpose |
 | --- | --- | --- |
-| `GET /health` | No | Runtime health and provider status. |
+| `GET /livez` | No | Minimal liveness probe. |
+| `GET /health` | No | Minimal public health; authenticated requests include detailed provider status. |
+| `GET /readyz` | Yes | Detailed readiness, provider health, and storage status. |
 | `GET /v1/models` | Yes | Anthropic-style model listing. |
 | `POST /v1/messages` | Yes | Anthropic-compatible messages API. |
 | `GET /metrics` | Yes | Prometheus text metrics. |
@@ -234,6 +236,28 @@ Authorization: Bearer <MODELPORT_AUTH_TOKEN>
 ```
 
 The dashboard uses account login, not the router token. The first admin is bootstrapped from `MODELPORT_ADMIN_USERNAME` and `MODELPORT_ADMIN_PASSWORD`.
+
+For shared team deployments, set `MODELPORT_REQUIRE_CONTROL_API_KEYS=1` after creating dashboard-issued API keys. This disables the legacy single router token on `/v1/*` and `/metrics`, so per-key model/provider policy, IP restrictions, quotas, and rate limits are enforced consistently.
+
+## Request Guardrails
+
+ModelPort ships with in-process limits that are intentionally simple enough for personal and small-team deployments:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MODELPORT_RATE_LIMIT_GLOBAL_PER_MINUTE` | `6000` | Total messages per minute. |
+| `MODELPORT_RATE_LIMIT_API_KEY_PER_MINUTE` | `600` | Messages per API key or legacy router token. |
+| `MODELPORT_RATE_LIMIT_IP_PER_MINUTE` | `1200` | Messages per client IP. |
+| `MODELPORT_RATE_LIMIT_PROVIDER_PER_MINUTE` | `3000` | Messages per resolved provider. |
+| `MODELPORT_RATE_LIMIT_MODEL_PER_MINUTE` | `1200` | Messages per resolved upstream model. |
+| `MODELPORT_MAX_MESSAGES` | `200` | Maximum Anthropic messages in one request. |
+| `MODELPORT_MAX_MESSAGES_JSON_CHARS` | `2097152` | Maximum serialized `messages` size before routing. |
+| `MODELPORT_MAX_SYSTEM_JSON_CHARS` | `262144` | Maximum serialized top-level `system` size before routing. |
+| `MODELPORT_MAX_TOOLS` | `256` | Maximum Anthropic tools in one request. |
+| `MODELPORT_MAX_TOOLS_JSON_CHARS` | `1048576` | Maximum serialized `tools` size before routing. |
+| `MODELPORT_MAX_OUTPUT_TOKENS` | `131072` | Maximum accepted `max_tokens`. |
+
+Set a rate limit to `0` to disable that specific dimension. `MODELPORT_RATE_LIMIT_DISABLED=1` disables the in-process limiter entirely. Local rate-limit responses include `Retry-After`; quota and budget failures remain regular `quota_exceeded` errors.
 
 ## Providers
 
@@ -269,7 +293,7 @@ Each provider can have multiple upstream account profiles. A profile stores:
 - API key environment variable name
 - Optional Base URL override
 
-ModelPort does not store plaintext upstream API keys in the control plane. Put real keys in `.env` or the process environment, then create profiles such as `MIMO_OPENAI_API_KEY_MAIN` and `MIMO_OPENAI_API_KEY_BACKUP` in the provider card on the dashboard.
+ModelPort does not store plaintext upstream API keys in the control plane. Put real keys in `.env` or the process environment, then create profiles such as `DEEPSEEK_ANTHROPIC_AUTH_TOKEN_MAIN` and `DEEPSEEK_ANTHROPIC_AUTH_TOKEN_BACKUP` in the provider card on the dashboard.
 
 Upstream accounts support three pool modes:
 
@@ -286,16 +310,15 @@ The provider card's account area exposes the pool mode, current account, per-acc
 Set a model directly:
 
 ```bash
-export ANTHROPIC_MODEL=deepseek-v4-pro
-export ANTHROPIC_MODEL=mimo-v2.5-pro
+export ANTHROPIC_MODEL=deepseek-v4-flash
+export ANTHROPIC_MODEL=deepseek-chat
 export ANTHROPIC_MODEL=qwen-plus
 ```
 
 Force a provider:
 
 ```bash
-export ANTHROPIC_MODEL=deepseek:deepseek-v4-pro
-export ANTHROPIC_MODEL=mimo:mimo-v2.5-pro
+export ANTHROPIC_MODEL=deepseek:deepseek-v4-flash
 export ANTHROPIC_MODEL=openrouter:anthropic/claude-sonnet-4
 export ANTHROPIC_MODEL=custom:any-model-name-from-your-upstream
 ```
@@ -304,8 +327,8 @@ Configure aliases in `config.toml`:
 
 ```toml
 [aliases]
-main = "deepseek:deepseek-v4-pro"
-mimo = "mimo:mimo-v2.5-pro"
+main = "deepseek:deepseek-v4-flash"
+fast = "deepseek:deepseek-chat"
 local = "local_vllm:qwen2.5-coder"
 ```
 
@@ -335,7 +358,7 @@ npm ci
 npm run dev
 ```
 
-The Vite dashboard listens on `http://127.0.0.1:5173` and proxies `/admin`, `/v1`, `/health`, and `/metrics` to the backend.
+The Vite dashboard listens on `http://127.0.0.1:5173` and proxies `/admin`, `/v1`, `/livez`, `/readyz`, `/health`, and `/metrics` to the backend.
 
 Foreground backend development:
 
@@ -387,7 +410,7 @@ Useful scripts:
 | `scripts/start.sh` | Build and start the local backend in the background. |
 | `scripts/stop.sh` | Stop the local backend started by scripts. |
 | `scripts/restart.sh` | Restart the local backend. |
-| `scripts/status.sh` | Show PID, log path, listener, and `/health` status. |
+| `scripts/status.sh` | Show PID, log path, listener, and `/livez` status. |
 | `scripts/doctor.sh` | Check env, service, auth, VS Code settings, and key endpoints. |
 | `scripts/provider-matrix.sh` | Verify non-streaming and streaming compatibility for selected models. |
 | `scripts/acceptance.sh` | Run personal/small-team production acceptance checks. |
@@ -405,6 +428,7 @@ Useful scripts:
 | Provider is `degraded` or `cooldown` | Recent upstream calls failed | Open dashboard settings/logs, test the provider, then check upstream quota and status. |
 | Upstream returns 403 | Provider account or key was rejected | Check upstream key, account permission, and balance. |
 | Upstream returns 429 | Provider rate limit or quota was hit | Wait, reduce traffic, or switch provider. |
+| Local request returns 400 | Request failed protocol guardrails before routing | Check `model`, `messages`, and `max_tokens`; tune the `MODELPORT_MAX_*` limits only if needed. |
 | Large request returns 413 | Request body is above the configured limit | Increase `MODELPORT_MAX_REQUEST_BODY_BYTES`. |
 | Streaming returns `event: error` | Upstream streaming failed after the local request started | Inspect request logs and backend logs. |
 

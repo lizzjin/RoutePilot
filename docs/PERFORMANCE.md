@@ -44,7 +44,7 @@ scripts/bench.sh --upstream -n 5
 
 建议关注：
 
-- `/health`：本机服务和进程调度开销。
+- `/livez`：本机服务和进程调度开销。
 - `/v1/models`：本机鉴权、路由配置和 JSON 响应开销。
 - `/v1/messages`：真实上游耗时，主要反映 provider 质量。
 

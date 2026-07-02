@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
   <title id="title">ModelPort quick start</title>
-  <desc id="desc">Four readable quick-start steps for configuring ModelPort, validating configuration, starting the gateway, and connecting VS Code Claude to Mimo v2.5 Pro.</desc>
+  <desc id="desc">Four readable quick-start steps for configuring ModelPort, validating configuration, starting the gateway, and connecting VS Code Claude to DeepSeek v4 flash.</desc>
 
   <defs>
     <style>
@@ -31,9 +31,9 @@
   <line x1="0" y1="132" x2="1600" y2="132" stroke="#d7e0e8" stroke-width="2"/>
 
   <text class="title" x="80" y="82">Quick Start</text>
-  <text class="subtitle" x="80" y="116">Configure once, validate locally, then let VS Code Claude use Mimo through ModelPort</text>
+  <text class="subtitle" x="80" y="116">Configure once, validate locally, then let VS Code Claude use DeepSeek through ModelPort</text>
   <rect class="chip-hot" x="1260" y="48" width="260" height="44" rx="8"/>
-  <text class="chip-hot-text" x="1292" y="77">mimo-v2.5-pro</text>
+  <text class="chip-hot-text" x="1292" y="77">deepseek-v4-flash</text>
 
   <rect class="card" x="80" y="188" width="680" height="232" rx="8"/>
   <circle cx="128" cy="236" r="25" fill="#0f766e"/>
@@ -42,7 +42,7 @@
   <text class="body" x="176" y="286">Copy the template and set tokens.</text>
   <rect class="code-bg" x="112" y="318" width="616" height="72" rx="8"/>
   <text class="code" x="138" y="348">cp .env.example .env</text>
-  <text class="code-dim" x="138" y="376">BASE_URL=https://w.ciykj.cn/v1</text>
+  <text class="code-dim" x="138" y="376">DEEPSEEK_MODEL=deepseek-v4-flash</text>
 
   <rect class="card" x="840" y="188" width="680" height="232" rx="8"/>
   <circle cx="888" cy="236" r="25" fill="#0f766e"/>
@@ -66,9 +66,9 @@
   <circle cx="888" cy="524" r="25" fill="#0f766e"/>
   <text class="step-num" x="880" y="533">4</text>
   <text class="h2" x="936" y="534">Connect Claude</text>
-  <text class="body" x="936" y="574">VS Code Claude points to ModelPort and selects Mimo.</text>
+  <text class="body" x="936" y="574">VS Code Claude points to ModelPort and selects DeepSeek.</text>
   <rect class="code-bg" x="872" y="606" width="616" height="72" rx="8"/>
-  <text class="code" x="898" y="636">ANTHROPIC_MODEL=mimo-v2.5-pro</text>
+  <text class="code" x="898" y="636">ANTHROPIC_MODEL=deepseek-v4-flash</text>
   <text class="code-dim" x="898" y="664">ANTHROPIC_BASE_URL=http://127.0.0.1:17878</text>
 
   <rect class="band" x="80" y="756" width="1440" height="88" rx="8"/>
@@ -80,7 +80,7 @@
   <rect x="1008" y="779" width="104" height="42" rx="8" fill="#ffffff" opacity="0.95"/>
   <text class="chip-text" x="1032" y="806">auth ok</text>
   <rect x="1130" y="779" width="220" height="42" rx="8" fill="#ffffff" opacity="0.95"/>
-  <text class="chip-text" x="1156" y="806">Mimo upstream ok</text>
+  <text class="chip-text" x="1156" y="806">DeepSeek upstream ok</text>
   <rect x="1370" y="779" width="116" height="42" rx="8" fill="#ffffff" opacity="0.95"/>
   <text class="chip-text" x="1388" y="806">stream ok</text>
 </svg>

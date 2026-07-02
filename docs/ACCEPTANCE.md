@@ -35,7 +35,8 @@ The `LD_LIBRARY_PATH` line is only needed on machines where Playwright's Chromiu
 
 The script verifies:
 
-- `/health` is reachable.
+- `/livez` is reachable.
+- Authenticated `/readyz` returns detailed readiness.
 - Dashboard URL is reachable when `MODELPORT_DASHBOARD_URL` points to it.
 - Admin login works.
 - Authenticated `/v1/models` works.
@@ -104,7 +105,7 @@ The dashboard E2E suite currently covers:
 - Dashboard range filters: last 1 day, 3 days, 7 days, and custom range.
 - No `Invalid Date` labels in trend charts.
 - Public model catalog visibility for active configured providers.
-- Mimo model visibility when the provider is usable.
+- DeepSeek standard model visibility when the provider is usable.
 - Provider lifecycle and model inventory workflows: create, disable/restore, change default model, enable/disable a model, and delete.
 - System settings configuration reload, including the returned restart-required scope.
 - User and API key create/edit/cleanup flows.

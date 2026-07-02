@@ -83,7 +83,7 @@ On machines where Playwright Chromium cannot find system libraries, use the loca
 LD_LIBRARY_PATH=../.modelport/playwright-deps/root/usr/lib/x86_64-linux-gnu npm run e2e
 ```
 
-The E2E suite covers dashboard trend filters, model catalog visibility, Mimo model availability, provider lifecycle/model inventory workflows, and admin user/API-key workflows.
+The E2E suite covers dashboard trend filters, model catalog visibility, DeepSeek standard model availability, provider lifecycle/model inventory workflows, and admin user/API-key workflows.
 
 ## UI Guidelines
 
@@ -101,4 +101,4 @@ Production build:
 npm run build
 ```
 
-The Docker dashboard image serves the generated static assets through Nginx and proxies `/admin`, `/v1`, `/health`, and `/metrics` to the backend.
+The Docker dashboard image serves the generated static assets through Nginx and proxies `/admin`, `/v1`, `/livez`, `/readyz`, `/health`, and `/metrics` to the backend.

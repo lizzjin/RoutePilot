@@ -5,6 +5,9 @@ use uuid::Uuid;
 
 use crate::{config::MaxTokensField, error::AppError};
 
+pub use crate::fidelity::validate_anthropic_to_openai_fidelity;
+pub use crate::tool_use::{validate_anthropic_tool_capabilities, validate_anthropic_tooling};
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AnthropicRequest {
     pub model: String,
@@ -32,6 +35,8 @@ pub fn anthropic_to_openai_request(
     stream: bool,
     max_tokens_field: MaxTokensField,
 ) -> Result<Value, AppError> {
+    validate_anthropic_tooling(request)?;
+
     let mut body = Map::new();
     body.insert("model".to_owned(), Value::String(model.to_owned()));
     body.insert("stream".to_owned(), Value::Bool(stream));
@@ -83,32 +88,15 @@ pub fn anthropic_to_openai_request(
 
     if let Some(tool_choice) = request.extra.get("tool_choice") {
         body.insert("tool_choice".to_owned(), convert_tool_choice(tool_choice));
+        if let Some(disable_parallel) = tool_choice
+            .get("disable_parallel_tool_use")
+            .and_then(Value::as_bool)
+        {
+            body.insert("parallel_tool_calls".to_owned(), json!(!disable_parallel));
+        }
     }
 
     Ok(Value::Object(body))
-}
-
-pub fn validate_anthropic_to_openai_fidelity(request: &AnthropicRequest) -> Result<(), AppError> {
-    let mut issues = Vec::new();
-
-    if let Some(system) = &request.system {
-        audit_system(system, &mut issues);
-    }
-
-    for (index, message) in request.messages.iter().enumerate() {
-        audit_message(message, index, &mut issues);
-    }
-
-    audit_extra_fields(request, &mut issues);
-
-    if issues.is_empty() {
-        return Ok(());
-    }
-
-    Err(AppError::InvalidRequest(format!(
-        "strict fidelity refused Anthropic -> OpenAI-compatible conversion: {}. Use fidelity_mode=\"best_effort\" or route this model to an Anthropic-compatible provider.",
-        issues.join("; ")
-    )))
 }
 
 pub fn openai_response_to_anthropic(
@@ -136,8 +124,10 @@ pub fn openai_response_to_anthropic(
         }));
     }
 
+    let mut emitted_tool_call = false;
     if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
         for call in tool_calls {
+            emitted_tool_call = true;
             let id = call
                 .get("id")
                 .and_then(Value::as_str)
@@ -152,8 +142,7 @@ pub fn openai_response_to_anthropic(
                 .get("arguments")
                 .and_then(Value::as_str)
                 .unwrap_or("{}");
-            let input = serde_json::from_str::<Value>(arguments)
-                .unwrap_or_else(|_| json!({ "_raw_arguments": arguments }));
+            let input = parse_tool_arguments(arguments);
 
             content.push(json!({
                 "type": "tool_use",
@@ -162,6 +151,23 @@ pub fn openai_response_to_anthropic(
                 "input": input
             }));
         }
+    }
+    if !emitted_tool_call && let Some(function_call) = message.get("function_call") {
+        let name = function_call
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("tool");
+        let arguments = function_call
+            .get("arguments")
+            .and_then(Value::as_str)
+            .unwrap_or("{}");
+
+        content.push(json!({
+            "type": "tool_use",
+            "id": format!("toolu_{}", Uuid::new_v4().simple()),
+            "name": name,
+            "input": parse_tool_arguments(arguments)
+        }));
     }
 
     let finish_reason = choice
@@ -420,173 +426,15 @@ fn convert_tool_choice(tool_choice: &Value) -> Value {
     tool_choice.clone()
 }
 
-fn audit_system(system: &Value, issues: &mut Vec<String>) {
-    if system.is_string() {
-        return;
+fn parse_tool_arguments(arguments: &str) -> Value {
+    if arguments.trim().is_empty() {
+        return json!({});
     }
 
-    let Some(blocks) = system.as_array() else {
-        issues.push("system must be a string for strict OpenAI-compatible conversion".to_owned());
-        return;
-    };
-
-    if blocks.len() != 1 {
-        issues.push("system content block boundaries cannot be preserved".to_owned());
-    }
-
-    for (index, block) in blocks.iter().enumerate() {
-        audit_block_keys(
-            block,
-            &format!("system[{index}]"),
-            &["type", "text"],
-            issues,
-        );
-        if block.get("type").and_then(Value::as_str) != Some("text") {
-            issues.push(format!(
-                "system[{index}] non-text block cannot be preserved"
-            ));
-        }
-    }
-}
-
-fn audit_message(message: &Value, index: usize, issues: &mut Vec<String>) {
-    let role = message.get("role").and_then(Value::as_str).unwrap_or("");
-    let content = message.get("content").unwrap_or(&Value::Null);
-    let path = format!("messages[{index}].content");
-
-    if content.is_string() {
-        return;
-    }
-
-    let Some(blocks) = content.as_array() else {
-        issues.push(format!(
-            "{path} must be a string or supported content blocks"
-        ));
-        return;
-    };
-
-    match role {
-        "assistant" => audit_assistant_blocks(blocks, &path, issues),
-        "user" => audit_user_blocks(blocks, &path, issues),
-        _ => issues.push(format!(
-            "role `{role}` with structured content cannot be preserved"
-        )),
-    }
-}
-
-fn audit_assistant_blocks(blocks: &[Value], path: &str, issues: &mut Vec<String>) {
-    for (index, block) in blocks.iter().enumerate() {
-        let block_path = format!("{path}[{index}]");
-        match block.get("type").and_then(Value::as_str) {
-            Some("text") => audit_block_keys(block, &block_path, &["type", "text"], issues),
-            Some("tool_use") => {
-                audit_block_keys(block, &block_path, &["type", "id", "name", "input"], issues);
-            }
-            Some(kind) => issues.push(format!("{block_path} `{kind}` block cannot be preserved")),
-            None => issues.push(format!("{block_path} block type is missing")),
-        }
-    }
-}
-
-fn audit_user_blocks(blocks: &[Value], path: &str, issues: &mut Vec<String>) {
-    for (index, block) in blocks.iter().enumerate() {
-        let block_path = format!("{path}[{index}]");
-        match block.get("type").and_then(Value::as_str) {
-            Some("text") => audit_block_keys(block, &block_path, &["type", "text"], issues),
-            Some("tool_result") => {
-                audit_block_keys(
-                    block,
-                    &block_path,
-                    &["type", "tool_use_id", "content"],
-                    issues,
-                );
-                if let Some(content) = block.get("content") {
-                    audit_tool_result_content(content, &block_path, issues);
-                }
-            }
-            Some(kind) => issues.push(format!("{block_path} `{kind}` block cannot be preserved")),
-            None => issues.push(format!("{block_path} block type is missing")),
-        }
-    }
-}
-
-fn audit_tool_result_content(content: &Value, path: &str, issues: &mut Vec<String>) {
-    if content.is_string() {
-        return;
-    }
-
-    let Some(blocks) = content.as_array() else {
-        issues.push(format!("{path}.content cannot be converted without loss"));
-        return;
-    };
-
-    for (index, block) in blocks.iter().enumerate() {
-        let block_path = format!("{path}.content[{index}]");
-        audit_block_keys(block, &block_path, &["type", "text"], issues);
-        if block.get("type").and_then(Value::as_str) != Some("text") {
-            issues.push(format!(
-                "{block_path} non-text tool result cannot be preserved"
-            ));
-        }
-    }
-}
-
-fn audit_extra_fields(request: &AnthropicRequest, issues: &mut Vec<String>) {
-    const SUPPORTED: &[&str] = &[
-        "temperature",
-        "top_p",
-        "presence_penalty",
-        "frequency_penalty",
-        "seed",
-        "stop_sequences",
-        "tools",
-        "tool_choice",
-    ];
-
-    for key in request.extra.keys() {
-        if !SUPPORTED.contains(&key.as_str()) {
-            issues.push(format!("request field `{key}` cannot be preserved"));
-        }
-    }
-
-    if let Some(tools) = request.extra.get("tools").and_then(Value::as_array) {
-        for (index, tool) in tools.iter().enumerate() {
-            audit_block_keys(
-                tool,
-                &format!("tools[{index}]"),
-                &["name", "description", "input_schema"],
-                issues,
-            );
-        }
-    }
-
-    if let Some(tool_choice) = request.extra.get("tool_choice") {
-        audit_tool_choice(tool_choice, issues);
-    }
-}
-
-fn audit_tool_choice(tool_choice: &Value, issues: &mut Vec<String>) {
-    let Some(choice) = tool_choice.as_object() else {
-        return;
-    };
-    let allowed = ["type", "name"];
-    for key in choice.keys() {
-        if !allowed.contains(&key.as_str()) {
-            issues.push(format!("tool_choice field `{key}` cannot be preserved"));
-        }
-    }
-}
-
-fn audit_block_keys(block: &Value, path: &str, allowed: &[&str], issues: &mut Vec<String>) {
-    let Some(object) = block.as_object() else {
-        issues.push(format!("{path} must be an object"));
-        return;
-    };
-
-    for key in object.keys() {
-        if !allowed.contains(&key.as_str()) {
-            issues.push(format!("{path}.{key} cannot be preserved"));
-        }
+    match serde_json::from_str::<Value>(arguments) {
+        Ok(value @ Value::Object(_)) => value,
+        Ok(value) => json!({ "_raw_arguments": value }),
+        Err(_) => json!({ "_raw_arguments": arguments }),
     }
 }
 
@@ -756,6 +604,95 @@ mod tests {
     }
 
     #[test]
+    fn converts_disable_parallel_tool_use_to_openai_parallel_tool_calls() {
+        let request: AnthropicRequest = serde_json::from_value(json!({
+            "model": STANDARD_MODEL,
+            "max_tokens": 128,
+            "tools": [{
+                "name": "read_file",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" }
+                    }
+                }
+            }],
+            "tool_choice": {
+                "type": "auto",
+                "disable_parallel_tool_use": true
+            },
+            "messages": [{
+                "role": "user",
+                "content": "hello"
+            }]
+        }))
+        .unwrap();
+
+        let body = anthropic_to_openai_request(
+            &request,
+            STANDARD_MODEL,
+            false,
+            MaxTokensField::MaxCompletionTokens,
+        )
+        .unwrap();
+
+        assert_eq!(body["tool_choice"], "auto");
+        assert_eq!(body["parallel_tool_calls"], false);
+    }
+
+    #[test]
+    fn rejects_duplicate_tool_names() {
+        let request: AnthropicRequest = serde_json::from_value(json!({
+            "model": STANDARD_MODEL,
+            "max_tokens": 128,
+            "tools": [
+                {
+                    "name": "read_file",
+                    "input_schema": { "type": "object" }
+                },
+                {
+                    "name": "read_file",
+                    "input_schema": { "type": "object" }
+                }
+            ],
+            "messages": [{
+                "role": "user",
+                "content": "hello"
+            }]
+        }))
+        .unwrap();
+
+        let err = validate_anthropic_tooling(&request).unwrap_err();
+
+        assert!(err.to_string().contains("duplicates another tool"));
+    }
+
+    #[test]
+    fn rejects_tool_choice_name_that_is_not_defined() {
+        let request: AnthropicRequest = serde_json::from_value(json!({
+            "model": STANDARD_MODEL,
+            "max_tokens": 128,
+            "tools": [{
+                "name": "read_file",
+                "input_schema": { "type": "object" }
+            }],
+            "tool_choice": {
+                "type": "tool",
+                "name": "write_file"
+            },
+            "messages": [{
+                "role": "user",
+                "content": "hello"
+            }]
+        }))
+        .unwrap();
+
+        let err = validate_anthropic_tooling(&request).unwrap_err();
+
+        assert!(err.to_string().contains("must match a defined tool"));
+    }
+
+    #[test]
     fn can_use_legacy_openai_max_tokens_field() {
         let request: AnthropicRequest = serde_json::from_value(json!({
             "model": "qwen-plus",
@@ -804,6 +741,152 @@ mod tests {
         assert_eq!(body["stop_reason"], "tool_use");
         assert_eq!(body["content"][0]["type"], "tool_use");
         assert_eq!(body["content"][0]["input"]["path"], "Cargo.toml");
+    }
+
+    #[test]
+    fn wraps_non_object_openai_tool_arguments_for_anthropic_input() {
+        let response = json!({
+            "id": "chatcmpl-1",
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "[\"Cargo.toml\"]"
+                        }
+                    }]
+                }
+            }]
+        });
+
+        let body = openai_response_to_anthropic(&response, STANDARD_MODEL).unwrap();
+
+        assert_eq!(body["content"][0]["type"], "tool_use");
+        assert_eq!(
+            body["content"][0]["input"]["_raw_arguments"][0],
+            "Cargo.toml"
+        );
+    }
+
+    #[test]
+    fn converts_legacy_openai_function_call_to_anthropic_tool_use() {
+        let response = json!({
+            "id": "chatcmpl-legacy",
+            "choices": [{
+                "finish_reason": "function_call",
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "function_call": {
+                        "name": "read_file",
+                        "arguments": "{\"path\":\"Cargo.toml\"}"
+                    }
+                }
+            }]
+        });
+
+        let body = openai_response_to_anthropic(&response, STANDARD_MODEL).unwrap();
+
+        assert_eq!(body["stop_reason"], "tool_use");
+        assert_eq!(body["content"][0]["type"], "tool_use");
+        assert_eq!(body["content"][0]["name"], "read_file");
+        assert_eq!(body["content"][0]["input"]["path"], "Cargo.toml");
+    }
+
+    #[test]
+    fn rejects_tool_use_without_id_before_openai_conversion() {
+        let request: AnthropicRequest = serde_json::from_value(json!({
+            "model": STANDARD_MODEL,
+            "max_tokens": 128,
+            "messages": [{
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "name": "read_file",
+                    "input": { "path": "Cargo.toml" }
+                }]
+            }]
+        }))
+        .unwrap();
+
+        let err = anthropic_to_openai_request(
+            &request,
+            STANDARD_MODEL,
+            false,
+            MaxTokensField::MaxCompletionTokens,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("tool_use"));
+        assert!(err.to_string().contains(".id is required"));
+    }
+
+    #[test]
+    fn rejects_tool_result_without_prior_tool_use() {
+        let request: AnthropicRequest = serde_json::from_value(json!({
+            "model": STANDARD_MODEL,
+            "max_tokens": 128,
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_missing",
+                    "content": "missing"
+                }]
+            }]
+        }))
+        .unwrap();
+
+        let err = validate_anthropic_tooling(&request).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("does not match a previous tool_use id")
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_tool_result_for_same_tool_use() {
+        let request: AnthropicRequest = serde_json::from_value(json!({
+            "model": STANDARD_MODEL,
+            "max_tokens": 128,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "toolu_read",
+                        "name": "read_file",
+                        "input": { "path": "Cargo.toml" }
+                    }]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_read",
+                            "content": "first"
+                        },
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_read",
+                            "content": "second"
+                        }
+                    ]
+                }
+            ]
+        }))
+        .unwrap();
+
+        let err = validate_anthropic_tooling(&request).unwrap_err();
+
+        assert!(err.to_string().contains("has already been answered"));
     }
 
     #[test]

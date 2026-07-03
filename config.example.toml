@@ -47,6 +47,12 @@ models = [
 model_prefixes = ["deepseek-"]
 passthrough_unknown_models = false
 
+[providers.deepseek.tool_use]
+supported = true
+tool_choice = true
+parallel_tool_calls = true
+streaming_arguments = "native"
+
 [providers.mimo]
 display_name = "Xiaomi Mimo OpenAI-Compatible"
 protocol = "openai-compat"
@@ -61,6 +67,12 @@ models = [
 model_prefixes = ["mimo-"]
 passthrough_unknown_models = false
 max_tokens_field = "max_completion_tokens"
+
+[providers.mimo.tool_use]
+supported = true
+tool_choice = true
+parallel_tool_calls = true
+streaming_arguments = "delta"
 
 [providers.deepseek_openai]
 display_name = "DeepSeek Official OpenAI-Compatible"

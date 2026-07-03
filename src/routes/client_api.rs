@@ -14,7 +14,7 @@ use crate::{
     control::{UsageEstimate, UsageEventInput},
     pricing::{self, TokenUsageBreakdown},
     providers,
-    types::AnthropicRequest,
+    types::{AnthropicRequest, validate_anthropic_tool_capabilities, validate_anthropic_tooling},
 };
 
 use super::*;
@@ -383,6 +383,11 @@ async fn send_message_attempt(
         &resolved.provider.base_url,
         state.security.allow_private_provider_urls,
     )?;
+    validate_anthropic_tool_capabilities(
+        &request,
+        &resolved.provider_id,
+        &resolved.provider.tool_use,
+    )?;
     match resolved.provider.protocol {
         ProviderProtocol::Anthropic => {
             providers::anthropic::messages(state, resolved, request, headers)
@@ -567,6 +572,8 @@ fn validate_message_request(request: &AnthropicRequest) -> Result<(), AppError> 
             )));
         }
     }
+
+    validate_anthropic_tooling(request)?;
 
     Ok(())
 }

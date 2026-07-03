@@ -8,7 +8,7 @@ use std::{
 
 use axum::http::HeaderMap;
 use reqwest::Url;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 
@@ -48,6 +48,7 @@ pub struct ProviderConfig {
     pub deduplicate_stream_text: bool,
     pub buffer_stream_text: bool,
     pub fidelity_mode: FidelityMode,
+    pub tool_use: ToolUseConfig,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -71,6 +72,50 @@ pub enum FidelityMode {
     Strict,
     BestEffort,
     Stability,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolArgumentMode {
+    Native,
+    #[default]
+    Delta,
+    Cumulative,
+    BestEffort,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolUseConfig {
+    #[serde(default = "default_true", alias = "supported")]
+    pub supported: bool,
+    #[serde(default = "default_true", alias = "tool_choice")]
+    pub tool_choice: bool,
+    #[serde(default = "default_true", alias = "parallel_tool_calls")]
+    pub parallel_tool_calls: bool,
+    #[serde(default, alias = "streaming_arguments")]
+    pub streaming_arguments: ToolArgumentMode,
+}
+
+impl Default for ToolUseConfig {
+    fn default() -> Self {
+        Self {
+            supported: true,
+            tool_choice: true,
+            parallel_tool_calls: true,
+            streaming_arguments: ToolArgumentMode::Delta,
+        }
+    }
+}
+
+impl ToolUseConfig {
+    pub fn default_for_provider(
+        provider_id: &str,
+        protocol: ProviderProtocol,
+        deduplicate_stream_text: bool,
+    ) -> Self {
+        default_tool_use_config(provider_id, protocol, deduplicate_stream_text)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -147,6 +192,7 @@ struct ProviderSection {
     deduplicate_stream_text: Option<bool>,
     buffer_stream_text: Option<bool>,
     fidelity_mode: Option<FidelityMode>,
+    tool_use: Option<ToolUseConfig>,
 }
 
 struct ProviderSpec {
@@ -587,6 +633,9 @@ impl AppConfig {
 
             let deduplicate_stream_text = section.deduplicate_stream_text.unwrap_or(false);
             let buffer_stream_text = section.buffer_stream_text.unwrap_or(false);
+            let tool_use = section.tool_use.unwrap_or_else(|| {
+                default_tool_use_config(&id, section.protocol, deduplicate_stream_text)
+            });
 
             insert_provider(
                 &mut providers,
@@ -611,6 +660,7 @@ impl AppConfig {
                     fidelity_mode: section.fidelity_mode.unwrap_or_else(|| {
                         default_fidelity_mode(&id, deduplicate_stream_text, buffer_stream_text)
                     }),
+                    tool_use,
                 },
             );
         }
@@ -1267,6 +1317,7 @@ fn insert_spec(
                 spec.deduplicate_stream_text,
                 buffer_stream_text,
             ),
+            tool_use: default_tool_use_config(spec.id, spec.protocol, spec.deduplicate_stream_text),
         },
     );
 }
@@ -1291,6 +1342,46 @@ fn default_buffer_stream_text(provider_id: &str) -> bool {
         ),
         false,
     )
+}
+
+fn default_tool_use_config(
+    provider_id: &str,
+    protocol: ProviderProtocol,
+    deduplicate_stream_text: bool,
+) -> ToolUseConfig {
+    let streaming_arguments = match protocol {
+        ProviderProtocol::Anthropic => ToolArgumentMode::Native,
+        ProviderProtocol::OpenaiCompat if deduplicate_stream_text => ToolArgumentMode::Cumulative,
+        ProviderProtocol::OpenaiCompat if is_unknown_tool_runtime(provider_id) => {
+            ToolArgumentMode::BestEffort
+        }
+        ProviderProtocol::OpenaiCompat => ToolArgumentMode::Delta,
+    };
+
+    ToolUseConfig {
+        supported: true,
+        tool_choice: true,
+        parallel_tool_calls: !is_single_tool_runtime(provider_id),
+        streaming_arguments,
+    }
+}
+
+fn is_single_tool_runtime(provider_id: &str) -> bool {
+    matches!(
+        provider_id,
+        "ollama" | "local_sglang" | "local_vllm" | "local_llamacpp"
+    )
+}
+
+fn is_unknown_tool_runtime(provider_id: &str) -> bool {
+    matches!(
+        provider_id,
+        "custom" | "ollama" | "local_sglang" | "local_vllm" | "local_llamacpp"
+    )
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn insert_provider(
@@ -1707,6 +1798,22 @@ fn validate_provider(
             "provider `{id}` cannot use fidelity_mode=strict together with stream text rewriting"
         )));
     }
+
+    if !provider.tool_use.supported
+        && (provider.tool_use.tool_choice || provider.tool_use.parallel_tool_calls)
+    {
+        issues.push(ConfigIssue::error(format!(
+            "provider `{id}` cannot enable tool_choice or parallel_tool_calls when tool_use.supported=false"
+        )));
+    }
+
+    if provider.protocol == ProviderProtocol::Anthropic
+        && provider.tool_use.streaming_arguments != ToolArgumentMode::Native
+    {
+        issues.push(ConfigIssue::warning(format!(
+            "provider `{id}` uses Anthropic protocol; tool_use.streaming_arguments is normally native"
+        )));
+    }
 }
 
 fn validate_provider_base_url_policy(
@@ -1856,6 +1963,11 @@ mod tests {
             deduplicate_stream_text: true,
             buffer_stream_text: true,
             fidelity_mode: FidelityMode::Stability,
+            tool_use: ToolUseConfig::default_for_provider(
+                "mimo",
+                ProviderProtocol::OpenaiCompat,
+                true,
+            ),
         };
         let openrouter = ProviderConfig {
             display_name: "OpenRouter".to_owned(),
@@ -1872,6 +1984,11 @@ mod tests {
             deduplicate_stream_text: false,
             buffer_stream_text: false,
             fidelity_mode: FidelityMode::BestEffort,
+            tool_use: ToolUseConfig::default_for_provider(
+                "openrouter",
+                ProviderProtocol::OpenaiCompat,
+                false,
+            ),
         };
 
         AppConfig {
@@ -1930,6 +2047,10 @@ mod tests {
             passthrough_unknown_models = true
             max_tokens_field = "max_tokens"
             fidelity_mode = "strict"
+
+            [providers.local_vllm.tool_use]
+            parallel_tool_calls = false
+            streaming_arguments = "best_effort"
             "#,
         )
         .unwrap();
@@ -1948,6 +2069,15 @@ mod tests {
         assert_eq!(provider.api_key_required, Some(false));
         assert_eq!(provider.max_tokens_field, Some(MaxTokensField::MaxTokens));
         assert_eq!(provider.fidelity_mode, Some(FidelityMode::Strict));
+        assert_eq!(
+            provider.tool_use,
+            Some(ToolUseConfig {
+                supported: true,
+                tool_choice: true,
+                parallel_tool_calls: false,
+                streaming_arguments: ToolArgumentMode::BestEffort,
+            })
+        );
     }
 
     #[test]

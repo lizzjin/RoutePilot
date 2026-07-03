@@ -32,6 +32,7 @@ pub(super) struct ProviderWriteBody {
     deduplicate_stream_text: Option<bool>,
     buffer_stream_text: Option<bool>,
     fidelity_mode: Option<String>,
+    tool_use: Option<ToolUseConfig>,
     disabled: Option<bool>,
 }
 
@@ -566,7 +567,7 @@ fn provider_body_to_record(
             current_provider.map(|provider| provider_protocol_value(provider.protocol).to_owned())
         })
         .unwrap_or_else(|| "openai-compat".to_owned());
-    parse_provider_protocol(&protocol)?;
+    let protocol_kind = parse_provider_protocol(&protocol)?;
     let base_url = body
         .base_url
         .or_else(|| current_provider.map(|provider| provider.base_url.clone()))
@@ -604,6 +605,21 @@ fn provider_body_to_record(
         })
         .unwrap_or_else(|| "best_effort".to_owned());
     parse_fidelity_mode(&fidelity_mode)?;
+    let deduplicate_stream_text = body
+        .deduplicate_stream_text
+        .or_else(|| current_provider.map(|provider| provider.deduplicate_stream_text))
+        .unwrap_or(false);
+    let buffer_stream_text = body
+        .buffer_stream_text
+        .or_else(|| current_provider.map(|provider| provider.buffer_stream_text))
+        .unwrap_or(false);
+    let tool_use = body
+        .tool_use
+        .or_else(|| current_provider.map(|provider| provider.tool_use))
+        .unwrap_or_else(|| {
+            ToolUseConfig::default_for_provider(&id, protocol_kind, deduplicate_stream_text)
+        });
+    validate_provider_tool_use(&id, &tool_use)?;
 
     Ok(ProviderOverrideRecord {
         id,
@@ -623,16 +639,40 @@ fn provider_body_to_record(
             .or_else(|| current_provider.map(|provider| provider.passthrough_unknown_models))
             .unwrap_or(false),
         max_tokens_field,
-        deduplicate_stream_text: body
-            .deduplicate_stream_text
-            .or_else(|| current_provider.map(|provider| provider.deduplicate_stream_text))
-            .unwrap_or(false),
-        buffer_stream_text: body
-            .buffer_stream_text
-            .or_else(|| current_provider.map(|provider| provider.buffer_stream_text))
-            .unwrap_or(false),
+        deduplicate_stream_text,
+        buffer_stream_text,
         fidelity_mode,
+        tool_use,
         created_at_ms: 0,
         updated_at_ms: 0,
     })
+}
+
+fn validate_provider_tool_use(provider_id: &str, tool_use: &ToolUseConfig) -> Result<(), AppError> {
+    if !tool_use.supported && (tool_use.tool_choice || tool_use.parallel_tool_calls) {
+        return Err(AppError::InvalidRequest(format!(
+            "provider `{provider_id}` cannot enable toolChoice or parallelToolCalls when toolUse.supported=false"
+        )));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_inconsistent_tool_use_capability_matrix() {
+        let tool_use = ToolUseConfig {
+            supported: false,
+            tool_choice: true,
+            parallel_tool_calls: false,
+            ..ToolUseConfig::default()
+        };
+
+        let error = validate_provider_tool_use("local", &tool_use).unwrap_err();
+
+        assert!(error.to_string().contains("toolUse.supported=false"));
+    }
 }

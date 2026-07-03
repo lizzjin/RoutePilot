@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ElementType } from 'react'
 import { Link } from 'react-router-dom'
 import { useDashboard, useLogs } from '@/hooks'
 import { MetricCard } from '@/components/shared/MetricCard'
 import { LoadingPage } from '@/components/shared/LoadingPage'
 import { ErrorState } from '@/components/shared/ErrorState'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -18,11 +19,15 @@ import {
   Clock,
   Database,
   Gauge,
+  GitBranch,
   KeyRound,
   Layers,
+  Route,
   ScrollText,
+  ShieldCheck,
   TrendingUp,
   WalletCards,
+  Wrench,
   Zap,
 } from 'lucide-react'
 import {
@@ -349,6 +354,158 @@ function RangeSelector({
           />
         </div>
       )}
+    </div>
+  )
+}
+
+function providerStatusClass(status: DashboardStats['providerHealth'][number]['status']): string {
+  if (status === 'healthy') return 'bg-emerald-500'
+  if (status === 'degraded') return 'bg-amber-500'
+  if (status === 'cooldown') return 'bg-violet-500'
+  return 'bg-rose-500'
+}
+
+function GatewayStep({
+  title,
+  detail,
+  icon: Icon,
+}: {
+  title: string
+  detail: string
+  icon: ElementType
+}) {
+  return (
+    <div className="min-w-[132px] flex-1 rounded-lg border bg-background p-3">
+      <div className="flex items-center gap-2">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <Icon className="h-3.5 w-3.5" />
+        </div>
+        <p className="truncate text-sm font-semibold">{title}</p>
+      </div>
+      <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{detail}</p>
+    </div>
+  )
+}
+
+function GatewayOperationsPanel({
+  stats,
+  logs,
+  primaryModel,
+}: {
+  stats: DashboardStats
+  logs: RequestLog[]
+  primaryModel: string
+}) {
+  const primaryProvider = stats.providerHealth.find((provider) => provider.status === 'healthy')
+    ?? stats.providerHealth[0]
+  const streamCount = logs.filter((log) => log.stream === 'stream').length
+  const errorCount = logs.filter((log) => log.status !== 'success').length
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-[1.45fr_1fr]">
+      <Card className="overflow-hidden">
+        <CardHeader className="border-b bg-muted/20 pb-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <GitBranch className="h-4 w-4 text-primary" />
+                网关运行概览
+              </CardTitle>
+              <p className="mt-1 text-xs text-muted-foreground">
+                客户端请求进入 ModelPort 后的鉴权、协议适配、路由和上游状态。
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
+                Trace
+              </Badge>
+              <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
+                Tool Use
+              </Badge>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4 p-4">
+          <div className="grid gap-3 md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] md:items-stretch">
+            <GatewayStep title="客户端入口" detail="IDE / CLI / API 请求" icon={Zap} />
+            <div className="hidden items-center justify-center text-muted-foreground md:flex">
+              <ArrowRight className="h-4 w-4" />
+            </div>
+            <GatewayStep title="协议门禁" detail="鉴权、IP 策略、请求大小" icon={ShieldCheck} />
+            <div className="hidden items-center justify-center text-muted-foreground md:flex">
+              <ArrowRight className="h-4 w-4" />
+            </div>
+            <GatewayStep title="内部路由" detail="别名解析、工具映射、计量" icon={Route} />
+            <div className="hidden items-center justify-center text-muted-foreground md:flex">
+              <ArrowRight className="h-4 w-4" />
+            </div>
+            <GatewayStep
+              title={primaryProvider?.displayName || 'Provider'}
+              detail={primaryModel || '默认路由'}
+              icon={Database}
+            />
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-lg border bg-muted/20 p-3">
+              <p className="text-xs text-muted-foreground">Streaming</p>
+              <p className="mt-1 font-mono text-lg font-semibold">{formatNumber(streamCount)}</p>
+              <p className="mt-1 text-xs text-muted-foreground">当前范围流式请求</p>
+            </div>
+            <div className="rounded-lg border bg-muted/20 p-3">
+              <p className="text-xs text-muted-foreground">协议错误</p>
+              <p className="mt-1 font-mono text-lg font-semibold">{formatNumber(errorCount)}</p>
+              <p className="mt-1 text-xs text-muted-foreground">已进入错误映射</p>
+            </div>
+            <div className="rounded-lg border bg-muted/20 p-3">
+              <p className="text-xs text-muted-foreground">工具调用策略</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <Badge variant="outline" className="font-mono text-[10px]">tool_choice</Badge>
+                <Badge variant="outline" className="font-mono text-[10px]">parallel</Badge>
+                <Badge variant="outline" className="font-mono text-[10px]">delta</Badge>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="border-b bg-muted/20 pb-4">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Wrench className="h-4 w-4 text-primary" />
+            上游渠道状态
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="divide-y">
+            {stats.providerHealth.slice(0, 5).map((provider) => (
+              <div key={provider.providerId} className="flex items-center justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className={cn('h-2 w-2 shrink-0 rounded-full', providerStatusClass(provider.status))} />
+                    <p className="truncate text-sm font-medium">{provider.displayName}</p>
+                    {provider.rechargeRequired && (
+                      <Badge variant="warning" className="shrink-0 text-[10px]">
+                        {provider.rechargeBadge || '代充值'}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{provider.providerId}</p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <p className="font-mono text-sm font-semibold">{provider.successRate.toFixed(1)}%</p>
+                  <p className="text-xs text-muted-foreground">{formatLatency(provider.avgLatencyMs)}</p>
+                </div>
+              </div>
+            ))}
+            {stats.providerHealth.length === 0 && (
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                暂无 Provider
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -723,6 +880,7 @@ export function DashboardPage() {
   )
 
   const rangeName = rangeLabel(stats.trendRange?.range ?? trendRange)
+  const primaryModel = modelUsageRows[0]?.model ?? stats.topModels[0]?.model ?? '默认路由'
 
   // ---- Render ----
 
@@ -811,6 +969,12 @@ export function DashboardPage() {
           description={`缓存命中 ${formatPercentValue(cacheHitRate)}`}
         />
       </div>
+
+      <GatewayOperationsPanel
+        stats={stats}
+        logs={logsData?.logs ?? []}
+        primaryModel={primaryModel}
+      />
 
       {/* ---------------------------------------------------------------- */}
       {/* Full-width request volume chart                                  */}

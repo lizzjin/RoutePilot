@@ -8,6 +8,8 @@ import type {
   ProviderCredentialWritePayload,
   ProviderModelWritePayload,
   ProviderWritePayload,
+  ProviderProtocol,
+  ToolUseCapabilities,
 } from '@/types'
 import { api } from '@/lib/api-client'
 import { isMockMode, mockDelay } from '@/lib/mock-mode'
@@ -16,6 +18,7 @@ import { mockAliases, mockProviders } from '@/mock'
 let mockAliasStore = [...mockAliases]
 let mockProviderStore: Provider[] = mockProviders.map((provider) => ({
   ...provider,
+  toolUse: provider.toolUse ?? defaultToolUse(provider.protocol, provider.deduplicateStreamText, provider.id),
   modelInventory: provider.modelInventory ?? provider.models.map((model): ProviderModelInventory => ({
     model,
     status: 'active',
@@ -55,6 +58,7 @@ export const modelsService = {
       deduplicateStreamText: payload.deduplicateStreamText ?? false,
       bufferStreamText: payload.bufferStreamText ?? false,
       fidelityMode: payload.fidelityMode || 'best_effort',
+      toolUse: payload.toolUse ?? defaultToolUse(payload.protocol || 'openai-compat', payload.deduplicateStreamText ?? false, id),
       status: payload.disabled ? 'disabled' : 'active',
       runtimeStatus: 'healthy',
       hasApiKey: true,
@@ -81,6 +85,7 @@ export const modelsService = {
       defaultModel: payload.defaultModel ?? current.defaultModel,
       models,
       modelPrefixes: payload.modelPrefixes ?? current.modelPrefixes,
+      toolUse: payload.toolUse ?? current.toolUse,
       modelInventory: models.map((model) => ({ model, status: 'active', default: model === (payload.defaultModel ?? current.defaultModel) })),
       status: payload.disabled === undefined ? current.status : payload.disabled ? 'disabled' : 'active',
     }
@@ -325,4 +330,19 @@ function normalizedModels(models: string[] = [], defaultModel?: string): string[
   const normalizedDefault = defaultModel?.trim()
   if (normalizedDefault && !rows.includes(normalizedDefault)) rows.unshift(normalizedDefault)
   return rows
+}
+
+function defaultToolUse(protocol: ProviderProtocol, deduplicateStreamText: boolean, providerId: string): ToolUseCapabilities {
+  return {
+    supported: true,
+    toolChoice: true,
+    parallelToolCalls: !['ollama', 'local_sglang', 'local_vllm', 'local_llamacpp'].includes(providerId),
+    streamingArguments: protocol === 'anthropic'
+      ? 'native'
+      : deduplicateStreamText
+        ? 'cumulative'
+        : ['custom', 'ollama', 'local_sglang', 'local_vllm', 'local_llamacpp'].includes(providerId)
+          ? 'best_effort'
+          : 'delta',
+  }
 }

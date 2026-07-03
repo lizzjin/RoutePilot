@@ -1,7 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     env,
-    net::IpAddr,
     path::PathBuf,
     sync::Mutex,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -14,11 +13,39 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{config::ProviderConfig, error::AppError, pricing, storage::JsonStore};
+use crate::{
+    config::{ProviderConfig, ToolUseConfig},
+    control_view::{
+        ApiKeyViewRecord, ProviderCredentialHealthViewRecord, ProviderCredentialViewRecord,
+        ProviderHealthViewRecord, QuotaViewRecord, TeamViewRecord, UsageTokenRecord,
+        provider_credential_health_row, provider_health_row, public_api_key, public_quota,
+        public_team,
+    },
+    error::AppError,
+    policy::{
+        enforce_ip_policy, enforce_model_policy, enforce_provider_policy, enforce_spend_limit,
+        normalize_ip_rules, normalize_policy_list, policy_references_provider,
+    },
+    pricing,
+    provider_credentials::{
+        default_credential_pool_mode, validate_credential_base_url, validate_credential_pool_mode,
+        validate_credential_status, validate_env_name, validate_provider_credential_id,
+    },
+    provider_status::{
+        cooldown_seconds, credential_cooldown_seconds, provider_account_issue,
+        provider_failure_guidance, provider_failure_reason_label,
+        should_rotate_provider_credential,
+    },
+    storage::JsonStore,
+    usage::{
+        DAY_MS, UsageCostRecord, current_period, day_start, quota_increment,
+        usage_cost_for_api_key, usage_cost_for_team, usage_record_cost,
+    },
+};
+
+pub use crate::usage::UsageEstimate;
 
 const DEFAULT_USAGE_LIMIT: usize = 5_000;
-const DAY_MS: u64 = 24 * 60 * 60 * 1_000;
-const ACCOUNT_ISSUE_CREDENTIAL_COOLDOWN_SECONDS: u64 = 30 * 60;
 
 #[derive(Debug)]
 pub struct ControlStore {
@@ -143,6 +170,8 @@ pub struct ProviderOverrideRecord {
     pub buffer_stream_text: bool,
     #[serde(default = "default_fidelity_mode")]
     pub fidelity_mode: String,
+    #[serde(default)]
+    pub tool_use: ToolUseConfig,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -173,10 +202,44 @@ pub struct ProviderCredentialRecord {
     pub api_key_env: String,
     #[serde(default)]
     pub base_url: Option<String>,
-    #[serde(default = "default_credential_status")]
+    #[serde(default = "crate::provider_credentials::default_credential_status")]
     pub status: String,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
+}
+
+impl ProviderCredentialViewRecord for ProviderCredentialRecord {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn api_key_env(&self) -> &str {
+        &self.api_key_env
+    }
+
+    fn base_url(&self) -> Option<&str> {
+        self.base_url.as_deref()
+    }
+
+    fn status(&self) -> &str {
+        &self.status
+    }
+
+    fn created_at_ms(&self) -> u64 {
+        self.created_at_ms
+    }
+
+    fn updated_at_ms(&self) -> u64 {
+        self.updated_at_ms
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -206,6 +269,58 @@ pub struct ProviderCredentialHealthRecord {
     pub last_status_code: Option<u16>,
 }
 
+impl ProviderHealthViewRecord for ProviderCredentialHealthRecord {
+    fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+
+    fn requests_total(&self) -> u64 {
+        self.requests_total
+    }
+
+    fn successes_total(&self) -> u64 {
+        self.successes_total
+    }
+
+    fn failures_total(&self) -> u64 {
+        self.failures_total
+    }
+
+    fn consecutive_failures(&self) -> u32 {
+        self.consecutive_failures
+    }
+
+    fn last_success_at_ms(&self) -> Option<u64> {
+        self.last_success_at_ms
+    }
+
+    fn last_failure_at_ms(&self) -> Option<u64> {
+        self.last_failure_at_ms
+    }
+
+    fn cooldown_until_ms(&self) -> Option<u64> {
+        self.cooldown_until_ms
+    }
+
+    fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
+    }
+
+    fn last_status_code(&self) -> Option<u16> {
+        self.last_status_code
+    }
+}
+
+impl ProviderCredentialHealthViewRecord for ProviderCredentialHealthRecord {
+    fn credential_id(&self) -> &str {
+        &self.credential_id
+    }
+
+    fn last_used_at_ms(&self) -> Option<u64> {
+        self.last_used_at_ms
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TeamRecord {
@@ -224,6 +339,52 @@ struct TeamRecord {
     allowed_providers: Vec<String>,
     created_at_ms: u64,
     updated_at_ms: u64,
+}
+
+impl TeamViewRecord for TeamRecord {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn slug(&self) -> &str {
+        &self.slug
+    }
+
+    fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    fn status(&self) -> &str {
+        &self.status
+    }
+
+    fn daily_limit_usd(&self) -> f64 {
+        self.daily_limit_usd
+    }
+
+    fn monthly_limit_usd(&self) -> f64 {
+        self.monthly_limit_usd
+    }
+
+    fn allowed_models(&self) -> &[String] {
+        &self.allowed_models
+    }
+
+    fn allowed_providers(&self) -> &[String] {
+        &self.allowed_providers
+    }
+
+    fn created_at_ms(&self) -> u64 {
+        self.created_at_ms
+    }
+
+    fn updated_at_ms(&self) -> u64 {
+        self.updated_at_ms
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -248,6 +409,48 @@ struct ProviderHealthRecord {
     last_error: Option<String>,
     #[serde(default)]
     last_status_code: Option<u16>,
+}
+
+impl ProviderHealthViewRecord for ProviderHealthRecord {
+    fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+
+    fn requests_total(&self) -> u64 {
+        self.requests_total
+    }
+
+    fn successes_total(&self) -> u64 {
+        self.successes_total
+    }
+
+    fn failures_total(&self) -> u64 {
+        self.failures_total
+    }
+
+    fn consecutive_failures(&self) -> u32 {
+        self.consecutive_failures
+    }
+
+    fn last_success_at_ms(&self) -> Option<u64> {
+        self.last_success_at_ms
+    }
+
+    fn last_failure_at_ms(&self) -> Option<u64> {
+        self.last_failure_at_ms
+    }
+
+    fn cooldown_until_ms(&self) -> Option<u64> {
+        self.cooldown_until_ms
+    }
+
+    fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
+    }
+
+    fn last_status_code(&self) -> Option<u16> {
+        self.last_status_code
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -314,6 +517,100 @@ struct ApiKeyRecord {
     monthly_limit_usd: f64,
 }
 
+impl ApiKeyViewRecord for ApiKeyRecord {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+
+    fn username(&self) -> &str {
+        &self.username
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn key_prefix(&self) -> &str {
+        &self.key_prefix
+    }
+
+    fn key_preview(&self) -> &str {
+        &self.key_preview
+    }
+
+    fn group(&self) -> Option<&str> {
+        self.group.as_deref()
+    }
+
+    fn team_id(&self) -> Option<&str> {
+        self.team_id.as_deref()
+    }
+
+    fn team_name(&self) -> Option<&str> {
+        self.team_name.as_deref()
+    }
+
+    fn allowed_models(&self) -> &[String] {
+        &self.allowed_models
+    }
+
+    fn allowed_providers(&self) -> &[String] {
+        &self.allowed_providers
+    }
+
+    fn created_at_ms(&self) -> u64 {
+        self.created_at_ms
+    }
+
+    fn last_used_at_ms(&self) -> Option<u64> {
+        self.last_used_at_ms
+    }
+
+    fn expires_at_ms(&self) -> Option<u64> {
+        self.expires_at_ms
+    }
+
+    fn status(&self) -> &str {
+        &self.status
+    }
+
+    fn ip_restricted(&self) -> bool {
+        self.ip_restricted
+    }
+
+    fn allowed_ips(&self) -> &[String] {
+        &self.allowed_ips
+    }
+
+    fn spend_limit_usd(&self) -> f64 {
+        self.spend_limit_usd
+    }
+
+    fn rate_limited(&self) -> bool {
+        self.rate_limited
+    }
+
+    fn five_hour_limit_usd(&self) -> f64 {
+        self.five_hour_limit_usd
+    }
+
+    fn daily_limit_usd(&self) -> f64 {
+        self.daily_limit_usd
+    }
+
+    fn weekly_limit_usd(&self) -> f64 {
+        self.weekly_limit_usd
+    }
+
+    fn monthly_limit_usd(&self) -> f64 {
+        self.monthly_limit_usd
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct QuotaRecord {
@@ -327,6 +624,48 @@ struct QuotaRecord {
     period_start_ms: u64,
     period_end_ms: u64,
     reset_at_ms: u64,
+}
+
+impl QuotaViewRecord for QuotaRecord {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+
+    fn username(&self) -> &str {
+        &self.username
+    }
+
+    fn quota_type(&self) -> &str {
+        &self.quota_type
+    }
+
+    fn limit(&self) -> f64 {
+        self.limit
+    }
+
+    fn used(&self) -> f64 {
+        self.used
+    }
+
+    fn period(&self) -> &str {
+        &self.period
+    }
+
+    fn period_start_ms(&self) -> u64 {
+        self.period_start_ms
+    }
+
+    fn period_end_ms(&self) -> u64 {
+        self.period_end_ms
+    }
+
+    fn reset_at_ms(&self) -> u64 {
+        self.reset_at_ms
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -371,6 +710,55 @@ struct UsageRecord {
     #[serde(default)]
     request_path: Option<String>,
     error_message: Option<String>,
+}
+
+impl UsageCostRecord for UsageRecord {
+    fn timestamp_ms(&self) -> u64 {
+        self.timestamp_ms
+    }
+
+    fn api_key_id(&self) -> Option<&str> {
+        self.api_key_id.as_deref()
+    }
+
+    fn team_id(&self) -> Option<&str> {
+        self.team_id.as_deref()
+    }
+
+    fn resolved_model(&self) -> &str {
+        &self.resolved_model
+    }
+
+    fn token_usage(&self) -> pricing::TokenUsageBreakdown {
+        pricing::TokenUsageBreakdown {
+            input_tokens: self.input_tokens,
+            output_tokens: self.output_tokens,
+            cache_write_tokens: self.cache_write_tokens,
+            cache_read_tokens: self.cache_read_tokens,
+        }
+    }
+
+    fn cost_estimate(&self) -> f64 {
+        self.cost_estimate
+    }
+}
+
+impl UsageTokenRecord for UsageRecord {
+    fn input_tokens(&self) -> u64 {
+        self.input_tokens
+    }
+
+    fn output_tokens(&self) -> u64 {
+        self.output_tokens
+    }
+
+    fn cache_write_tokens(&self) -> u64 {
+        self.cache_write_tokens
+    }
+
+    fn cache_read_tokens(&self) -> u64 {
+        self.cache_read_tokens
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -468,15 +856,6 @@ pub struct PublicQuota {
     pub period_start: String,
     pub period_end: String,
     pub reset_at: String,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct UsageEstimate {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cache_write_tokens: u64,
-    pub cache_read_tokens: u64,
-    pub cost_estimate: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -936,24 +1315,11 @@ impl ControlStore {
         record.id = validate_provider_credential_id(&record.id)?;
         record.name = validate_non_empty("name", &record.name, 120)?;
         record.api_key_env = validate_env_name(&record.api_key_env)?;
-        record.base_url = record
-            .base_url
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty());
-        if let Some(base_url) = &record.base_url
-            && (!base_url.starts_with("http://") && !base_url.starts_with("https://"))
-        {
-            return Err(AppError::InvalidRequest(
-                "baseUrl must start with http:// or https://".to_owned(),
-            ));
-        }
-        if let Some(base_url) = &record.base_url {
-            crate::config::validate_provider_base_url_for_request(
-                &record.provider_id,
-                base_url,
-                env_flag("MODELPORT_ALLOW_PRIVATE_PROVIDER_URLS"),
-            )?;
-        }
+        record.base_url = validate_credential_base_url(
+            &record.provider_id,
+            record.base_url,
+            env_flag("MODELPORT_ALLOW_PRIVATE_PROVIDER_URLS"),
+        )?;
         record.status = validate_credential_status(&record.status)?;
         let now = now_millis();
 
@@ -1186,16 +1552,17 @@ impl ControlStore {
 
     pub fn export_snapshot(&self) -> serde_json::Value {
         let inner = self.inner.lock().expect("control lock poisoned");
+        let now = now_millis();
         json!({
             "teams": inner
                 .teams
                 .values()
-                .map(|record| public_team(record, &inner.api_keys, &inner.usage))
+                .map(|record| public_team(record, &inner.api_keys, &inner.usage, now))
                 .collect::<Vec<_>>(),
             "apiKeys": inner
                 .api_keys
                 .values()
-                .map(|record| public_api_key(record, &inner.usage))
+                .map(|record| public_api_key(record, &inner.usage, now))
                 .collect::<Vec<_>>(),
             "quotas": inner.quotas.values().map(public_quota).collect::<Vec<_>>(),
             "usage": &inner.usage,
@@ -1267,10 +1634,11 @@ impl ControlStore {
 
     pub fn list_teams(&self) -> Vec<serde_json::Value> {
         let inner = self.inner.lock().expect("control lock poisoned");
+        let now = now_millis();
         inner
             .teams
             .values()
-            .map(|team| public_team(team, &inner.api_keys, &inner.usage))
+            .map(|team| public_team(team, &inner.api_keys, &inner.usage, now))
             .collect()
     }
 
@@ -1344,7 +1712,7 @@ impl ControlStore {
             }
         }
         self.save_locked(&inner)?;
-        Ok(public_team(&team, &inner.api_keys, &inner.usage))
+        Ok(public_team(&team, &inner.api_keys, &inner.usage, now))
     }
 
     pub fn delete_team(&self, team_id: &str) -> Result<(), AppError> {
@@ -1640,11 +2008,12 @@ impl ControlStore {
 
     pub fn list_api_keys(&self) -> Vec<PublicApiKey> {
         let mut inner = self.inner.lock().expect("control lock poisoned");
-        reset_expired_quotas_locked(&mut inner, now_millis());
+        let now = now_millis();
+        reset_expired_quotas_locked(&mut inner, now);
         inner
             .api_keys
             .values()
-            .map(|record| public_api_key(record, &inner.usage))
+            .map(|record| public_api_key(record, &inner.usage, now))
             .collect()
     }
 
@@ -1723,7 +2092,7 @@ impl ControlStore {
         inner.api_keys.insert(record.id.clone(), record.clone());
         self.save_locked(&inner)?;
         Ok(CreatedApiKey {
-            public: public_api_key(&record, &inner.usage),
+            public: public_api_key(&record, &inner.usage, now),
             key,
         })
     }
@@ -1833,7 +2202,7 @@ impl ControlStore {
 
         inner.api_keys.insert(updated.id.clone(), updated.clone());
         self.save_locked(&inner)?;
-        Ok(public_api_key(&updated, &inner.usage))
+        Ok(public_api_key(&updated, &inner.usage, now_millis()))
     }
 
     pub fn delete_api_key(&self, key_id: &str) -> Result<(), AppError> {
@@ -1944,7 +2313,7 @@ impl ControlStore {
             .values()
             .filter(|quota| quota.user_id == identity.user_id)
         {
-            let increment = quota_increment(quota, estimate);
+            let increment = quota_increment(&quota.quota_type, estimate);
             if increment > 0.0 && quota.used + increment > quota.limit {
                 return Err(AppError::QuotaExceeded(format!(
                     "{} quota exceeded for user {}",
@@ -1965,7 +2334,7 @@ impl ControlStore {
                 .values_mut()
                 .filter(|quota| quota.user_id == input.identity.user_id)
             {
-                quota.used += quota_increment(quota, input.estimate);
+                quota.used += quota_increment(&quota.quota_type, input.estimate);
             }
         }
         inner.usage.push(UsageRecord {
@@ -2317,158 +2686,6 @@ impl ControlStore {
     }
 }
 
-fn public_api_key(record: &ApiKeyRecord, usage: &[UsageRecord]) -> PublicApiKey {
-    let today_start = day_start(now_millis());
-    let mut requests_today = 0u64;
-    let mut tokens_today = 0u64;
-    for usage in usage.iter().filter(|usage| {
-        usage.timestamp_ms >= today_start && usage.api_key_id.as_deref() == Some(&record.id)
-    }) {
-        requests_today += 1;
-        tokens_today = tokens_today
-            .saturating_add(usage.input_tokens)
-            .saturating_add(usage.output_tokens)
-            .saturating_add(usage.cache_write_tokens)
-            .saturating_add(usage.cache_read_tokens);
-    }
-
-    PublicApiKey {
-        id: record.id.clone(),
-        user_id: record.user_id.clone(),
-        username: record.username.clone(),
-        name: record.name.clone(),
-        key_prefix: record.key_prefix.clone(),
-        key_preview: record.key_preview.clone(),
-        group: record.group.clone(),
-        team_id: record.team_id.clone(),
-        team_name: record.team_name.clone(),
-        allowed_models: record.allowed_models.clone(),
-        allowed_providers: record.allowed_providers.clone(),
-        created_at: record.created_at_ms.to_string(),
-        last_used_at: record.last_used_at_ms.map(|value| value.to_string()),
-        expires_at: record.expires_at_ms.map(|value| value.to_string()),
-        status: record.status.clone(),
-        requests_today,
-        tokens_today,
-        ip_restricted: record.ip_restricted,
-        allowed_ips: record.allowed_ips.clone(),
-        spend_limit_usd: record.spend_limit_usd,
-        rate_limited: record.rate_limited,
-        five_hour_limit_usd: record.five_hour_limit_usd,
-        daily_limit_usd: record.daily_limit_usd,
-        weekly_limit_usd: record.weekly_limit_usd,
-        monthly_limit_usd: record.monthly_limit_usd,
-    }
-}
-
-fn public_team(
-    record: &TeamRecord,
-    api_keys: &BTreeMap<String, ApiKeyRecord>,
-    usage: &[UsageRecord],
-) -> serde_json::Value {
-    let today_start = day_start(now_millis());
-    let month_start = now_millis().saturating_sub(30 * DAY_MS);
-    let active_api_keys = api_keys
-        .values()
-        .filter(|key| key.team_id.as_deref() == Some(record.id.as_str()) && key.status == "active")
-        .count();
-    let requests_today = usage
-        .iter()
-        .filter(|event| {
-            event.team_id.as_deref() == Some(record.id.as_str())
-                && event.timestamp_ms >= today_start
-        })
-        .count();
-    json!({
-        "id": record.id,
-        "name": record.name,
-        "slug": record.slug,
-        "description": record.description,
-        "status": record.status,
-        "dailyLimitUsd": record.daily_limit_usd,
-        "monthlyLimitUsd": record.monthly_limit_usd,
-        "dailySpendUsd": usage_cost_for_team(usage, &record.id, Some(today_start)),
-        "monthlySpendUsd": usage_cost_for_team(usage, &record.id, Some(month_start)),
-        "allowedModels": record.allowed_models,
-        "allowedProviders": record.allowed_providers,
-        "activeApiKeys": active_api_keys,
-        "requestsToday": requests_today,
-        "createdAt": record.created_at_ms.to_string(),
-        "updatedAt": record.updated_at_ms.to_string(),
-    })
-}
-
-fn provider_health_row(record: &ProviderHealthRecord, now: u64) -> serde_json::Value {
-    let in_cooldown = record.cooldown_until_ms.is_some_and(|until| until > now);
-    let success_rate = if record.requests_total == 0 {
-        0.0
-    } else {
-        (record.successes_total as f64 / record.requests_total as f64) * 100.0
-    };
-    let (failure_kind, recommended_action) =
-        provider_failure_guidance(record.last_status_code, record.last_error.as_deref());
-    let account_issue =
-        provider_account_issue(record.last_status_code, record.last_error.as_deref());
-    let recharge_required = account_issue == "insufficient_balance";
-    json!({
-        "providerId": record.provider_id,
-        "requestsTotal": record.requests_total,
-        "successesTotal": record.successes_total,
-        "failuresTotal": record.failures_total,
-        "consecutiveFailures": record.consecutive_failures,
-        "successRate": success_rate,
-        "status": if in_cooldown { "cooldown" } else if record.consecutive_failures > 0 { "degraded" } else { "healthy" },
-        "lastSuccessAt": record.last_success_at_ms.map(|value| value.to_string()),
-        "lastFailureAt": record.last_failure_at_ms.map(|value| value.to_string()),
-        "cooldownUntil": record.cooldown_until_ms.map(|value| value.to_string()),
-        "lastError": record.last_error,
-        "lastStatusCode": record.last_status_code,
-        "failureKind": failure_kind,
-        "accountIssue": account_issue,
-        "rechargeRequired": recharge_required,
-        "rechargeBadge": if recharge_required { Some("代充值") } else { None },
-        "recommendedAction": recommended_action,
-    })
-}
-
-fn provider_credential_health_row(
-    record: &ProviderCredentialHealthRecord,
-    now: u64,
-) -> serde_json::Value {
-    let in_cooldown = record.cooldown_until_ms.is_some_and(|until| until > now);
-    let success_rate = if record.requests_total == 0 {
-        0.0
-    } else {
-        (record.successes_total as f64 / record.requests_total as f64) * 100.0
-    };
-    let (failure_kind, recommended_action) =
-        provider_failure_guidance(record.last_status_code, record.last_error.as_deref());
-    let account_issue =
-        provider_account_issue(record.last_status_code, record.last_error.as_deref());
-    let recharge_required = account_issue == "insufficient_balance";
-    json!({
-        "providerId": record.provider_id,
-        "credentialId": record.credential_id,
-        "requestsTotal": record.requests_total,
-        "successesTotal": record.successes_total,
-        "failuresTotal": record.failures_total,
-        "consecutiveFailures": record.consecutive_failures,
-        "successRate": success_rate,
-        "status": if in_cooldown { "cooldown" } else if record.consecutive_failures > 0 { "degraded" } else { "healthy" },
-        "lastSuccessAt": record.last_success_at_ms.map(|value| value.to_string()),
-        "lastFailureAt": record.last_failure_at_ms.map(|value| value.to_string()),
-        "lastUsedAt": record.last_used_at_ms.map(|value| value.to_string()),
-        "cooldownUntil": record.cooldown_until_ms.map(|value| value.to_string()),
-        "lastError": record.last_error,
-        "lastStatusCode": record.last_status_code,
-        "failureKind": failure_kind,
-        "accountIssue": account_issue,
-        "rechargeRequired": recharge_required,
-        "rechargeBadge": if recharge_required { Some("代充值") } else { None },
-        "recommendedAction": recommended_action,
-    })
-}
-
 fn record_provider_health_locked(
     inner: &mut ControlInner,
     provider_id: &str,
@@ -2731,86 +2948,6 @@ fn record_recharge_required_activity_locked(
     trim_activities_locked(inner);
 }
 
-fn provider_failure_guidance(
-    status_code: Option<u16>,
-    error: Option<&str>,
-) -> (&'static str, &'static str) {
-    let normalized_error = normalized_error_text(error);
-    if provider_account_issue(status_code, error) == "insufficient_balance" {
-        return (
-            "account",
-            "上游账号余额不足，可为该渠道处理代充值后重试，或切换到另一个账号/Provider。",
-        );
-    }
-    if status_code == Some(401) || status_code == Some(403) {
-        return (
-            "account",
-            "检查上游 API Key、账号权限或余额，必要时切换账号。",
-        );
-    }
-    if status_code == Some(429) || normalized_error.contains("rate limit") {
-        return ("rate_limit", "上游限流中，可等待冷却、降低流量或切换账号。");
-    }
-    if normalized_error.contains("missing") || normalized_error.contains("api key") {
-        return (
-            "config",
-            "检查 Provider 凭证环境变量是否已配置并重新加载配置。",
-        );
-    }
-    if status_code.is_some_and(|status| status >= 500) {
-        return (
-            "upstream_unavailable",
-            "上游服务临时不可用，可等待恢复或切换 Provider。",
-        );
-    }
-    if error.is_some() {
-        return ("unknown", "查看请求日志和上游错误详情。");
-    }
-    ("none", "")
-}
-
-fn provider_account_issue(status_code: Option<u16>, error: Option<&str>) -> &'static str {
-    let normalized_error = normalized_error_text(error);
-    if normalized_error.contains("insufficient_balance")
-        || normalized_error.contains("insufficient balance")
-        || normalized_error.contains("insufficient account balance")
-        || normalized_error.contains("balance not enough")
-        || normalized_error.contains("余额不足")
-    {
-        return "insufficient_balance";
-    }
-    if status_code == Some(401) || status_code == Some(403) {
-        return "auth";
-    }
-    "none"
-}
-
-fn normalized_error_text(error: Option<&str>) -> String {
-    error.unwrap_or("").to_ascii_lowercase()
-}
-
-fn should_rotate_provider_credential(failure_kind: &str) -> bool {
-    matches!(failure_kind, "account" | "rate_limit" | "config")
-}
-
-fn provider_failure_reason_label(failure_kind: &str) -> &'static str {
-    match failure_kind {
-        "account" => "账号异常，检查 API Key 或余额",
-        "rate_limit" => "上游限流",
-        "config" => "凭证配置异常",
-        "upstream_unavailable" => "上游不可用",
-        _ => "请求失败",
-    }
-}
-
-fn credential_cooldown_seconds(failure_kind: &str, consecutive_failures: u32) -> u64 {
-    let base = cooldown_seconds(consecutive_failures);
-    if failure_kind == "account" {
-        return base.max(ACCOUNT_ISSUE_CREDENTIAL_COOLDOWN_SECONDS);
-    }
-    base
-}
-
 fn rotate_provider_credential_locked(
     inner: &mut ControlInner,
     provider_id: &str,
@@ -2854,51 +2991,6 @@ fn next_enabled_provider_credential_id(
             credential.status != "disabled" && exclude_id != Some(credential.id.as_str())
         })
         .map(|credential| credential.id.clone())
-}
-
-pub fn provider_credential_rows(
-    credentials: Option<&BTreeMap<String, ProviderCredentialRecord>>,
-    active_id: Option<&str>,
-    health: Option<&BTreeMap<String, serde_json::Value>>,
-) -> Vec<serde_json::Value> {
-    credentials
-        .into_iter()
-        .flat_map(|items| items.values())
-        .map(|record| {
-            provider_credential_row_with_health(
-                record,
-                active_id == Some(record.id.as_str()),
-                health.and_then(|items| items.get(&record.id)),
-            )
-        })
-        .collect()
-}
-
-pub fn provider_credential_row(
-    record: &ProviderCredentialRecord,
-    active: bool,
-) -> serde_json::Value {
-    provider_credential_row_with_health(record, active, None)
-}
-
-fn provider_credential_row_with_health(
-    record: &ProviderCredentialRecord,
-    active: bool,
-    health: Option<&serde_json::Value>,
-) -> serde_json::Value {
-    json!({
-        "id": record.id,
-        "providerId": record.provider_id,
-        "name": record.name,
-        "apiKeyEnv": record.api_key_env,
-        "baseUrl": record.base_url,
-        "status": record.status,
-        "active": active,
-        "hasApiKey": env::var(&record.api_key_env).ok().is_some_and(|value| !value.trim().is_empty()),
-        "health": health.cloned(),
-        "createdAt": record.created_at_ms.to_string(),
-        "updatedAt": record.updated_at_ms.to_string(),
-    })
 }
 
 fn validate_usd_limit(field: &str, value: f64) -> Result<f64, AppError> {
@@ -2959,26 +3051,6 @@ fn slug_from_name(value: &str) -> String {
     }
 }
 
-fn normalize_policy_list(values: Vec<String>) -> Result<Vec<String>, AppError> {
-    let mut seen = BTreeSet::new();
-    let mut output = Vec::new();
-    for value in values {
-        let value = value.trim();
-        if value.is_empty() {
-            continue;
-        }
-        if value.len() > 160 {
-            return Err(AppError::InvalidRequest(
-                "policy entries must be 160 characters or shorter".to_owned(),
-            ));
-        }
-        if seen.insert(value.to_owned()) {
-            output.push(value.to_owned());
-        }
-    }
-    Ok(output)
-}
-
 fn validate_provider_id(value: &str) -> Result<String, AppError> {
     let value = value.trim().to_ascii_lowercase();
     if value.is_empty()
@@ -3014,12 +3086,6 @@ fn validate_model_status(value: &str) -> Result<String, AppError> {
     }
 }
 
-fn policy_references_provider(allowed_providers: &[String], provider_id: &str) -> bool {
-    allowed_providers
-        .iter()
-        .any(|rule| policy_value_matches(rule, provider_id))
-}
-
 fn default_true() -> bool {
     true
 }
@@ -3052,49 +3118,6 @@ fn resolve_team_ref(
     Ok((Some(team.id.clone()), Some(team.name.clone())))
 }
 
-fn normalize_ip_rules(values: Vec<String>) -> Result<Vec<String>, AppError> {
-    let mut seen = BTreeSet::new();
-    let mut rules = Vec::new();
-    for value in values {
-        let value = value.trim();
-        if value.is_empty() {
-            continue;
-        }
-        validate_ip_rule(value)?;
-        if seen.insert(value.to_owned()) {
-            rules.push(value.to_owned());
-        }
-    }
-    Ok(rules)
-}
-
-fn validate_ip_rule(value: &str) -> Result<(), AppError> {
-    if value.parse::<IpAddr>().is_ok() {
-        return Ok(());
-    }
-    let Some((addr, prefix)) = value.split_once('/') else {
-        return Err(AppError::InvalidRequest(format!(
-            "invalid IP allowlist entry: {value}"
-        )));
-    };
-    let addr = addr
-        .parse::<IpAddr>()
-        .map_err(|_| AppError::InvalidRequest(format!("invalid IP allowlist entry: {value}")))?;
-    let prefix = prefix
-        .parse::<u8>()
-        .map_err(|_| AppError::InvalidRequest(format!("invalid IP allowlist entry: {value}")))?;
-    let max_prefix = match addr {
-        IpAddr::V4(_) => 32,
-        IpAddr::V6(_) => 128,
-    };
-    if prefix > max_prefix {
-        return Err(AppError::InvalidRequest(format!(
-            "invalid IP allowlist entry: {value}"
-        )));
-    }
-    Ok(())
-}
-
 struct ApiKeyPolicyCheck<'a> {
     policy: &'a ApiKeyPolicy,
     usage: &'a [UsageRecord],
@@ -3120,7 +3143,7 @@ fn enforce_api_key_policy(check: ApiKeyPolicyCheck<'_>) -> Result<(), AppError> 
         now,
     } = check;
 
-    enforce_ip_policy(policy, client_ip)?;
+    enforce_ip_policy(policy.ip_restricted, &policy.allowed_ips, client_ip)?;
     enforce_model_policy(
         "API key",
         &policy.allowed_models,
@@ -3191,254 +3214,6 @@ fn enforce_api_key_policy(check: ApiKeyPolicyCheck<'_>) -> Result<(), AppError> 
     Ok(())
 }
 
-fn enforce_model_policy(
-    label: &str,
-    allowed_models: &[String],
-    requested_model: &str,
-    resolved_model: &str,
-) -> Result<(), AppError> {
-    if allowed_models.is_empty()
-        || allowed_models.iter().any(|rule| {
-            policy_value_matches(rule, requested_model)
-                || policy_value_matches(rule, resolved_model)
-        })
-    {
-        return Ok(());
-    }
-    Err(AppError::Forbidden(format!(
-        "{label} does not allow model {requested_model}"
-    )))
-}
-
-fn enforce_provider_policy(
-    label: &str,
-    allowed_providers: &[String],
-    provider_id: &str,
-) -> Result<(), AppError> {
-    if allowed_providers.is_empty()
-        || allowed_providers
-            .iter()
-            .any(|rule| policy_value_matches(rule, provider_id))
-    {
-        return Ok(());
-    }
-    Err(AppError::Forbidden(format!(
-        "{label} does not allow provider {provider_id}"
-    )))
-}
-
-fn enforce_ip_policy(policy: &ApiKeyPolicy, client_ip: Option<&str>) -> Result<(), AppError> {
-    if !policy.ip_restricted {
-        return Ok(());
-    }
-    if policy.allowed_ips.is_empty() {
-        return Err(AppError::Forbidden(
-            "API key IP restriction has no allowed IPs configured".to_owned(),
-        ));
-    }
-    let Some(client_ip) = client_ip else {
-        return Err(AppError::Forbidden(
-            "client IP is required for this API key".to_owned(),
-        ));
-    };
-    let ip = parse_client_ip(client_ip)
-        .ok_or_else(|| AppError::Forbidden("client IP is invalid for this API key".to_owned()))?;
-    if policy
-        .allowed_ips
-        .iter()
-        .any(|rule| ip_rule_matches(rule, ip))
-    {
-        return Ok(());
-    }
-
-    Err(AppError::Forbidden(format!(
-        "client IP {ip} is not allowed for this API key"
-    )))
-}
-
-fn enforce_spend_limit(label: &str, limit: f64, used: f64, incoming: f64) -> Result<(), AppError> {
-    if limit > 0.0 && used + incoming > limit {
-        return Err(AppError::QuotaExceeded(format!(
-            "API key {label} limit exceeded ({:.4} / {:.4} USD)",
-            used + incoming,
-            limit
-        )));
-    }
-    Ok(())
-}
-
-fn usage_cost_for_api_key(usage: &[UsageRecord], api_key_id: &str, since: Option<u64>) -> f64 {
-    usage
-        .iter()
-        .filter(|record| record.api_key_id.as_deref() == Some(api_key_id))
-        .filter(|record| since.is_none_or(|since| record.timestamp_ms >= since))
-        .map(usage_record_cost)
-        .map(|cost| cost.max(0.0))
-        .sum()
-}
-
-fn usage_cost_for_team(usage: &[UsageRecord], team_id: &str, since: Option<u64>) -> f64 {
-    usage
-        .iter()
-        .filter(|record| record.team_id.as_deref() == Some(team_id))
-        .filter(|record| since.is_none_or(|since| record.timestamp_ms >= since))
-        .map(usage_record_cost)
-        .map(|cost| cost.max(0.0))
-        .sum()
-}
-
-fn usage_record_cost(record: &UsageRecord) -> f64 {
-    let has_token_breakdown = record
-        .input_tokens
-        .saturating_add(record.output_tokens)
-        .saturating_add(record.cache_write_tokens)
-        .saturating_add(record.cache_read_tokens)
-        > 0;
-    if !has_token_breakdown {
-        return record.cost_estimate;
-    }
-
-    pricing::cost_for_model(
-        &record.resolved_model,
-        pricing::TokenUsageBreakdown {
-            input_tokens: record.input_tokens,
-            output_tokens: record.output_tokens,
-            cache_write_tokens: record.cache_write_tokens,
-            cache_read_tokens: record.cache_read_tokens,
-        },
-    )
-}
-
-fn policy_value_matches(rule: &str, value: &str) -> bool {
-    let rule = rule.trim();
-    if rule == "*" {
-        return true;
-    }
-    if let Some(prefix) = rule.strip_suffix('*') {
-        return value.starts_with(prefix);
-    }
-    rule == value
-}
-
-fn cooldown_seconds(consecutive_failures: u32) -> u64 {
-    match consecutive_failures {
-        0 | 1 => 30,
-        2 | 3 => 60,
-        4 | 5 => 180,
-        _ => 300,
-    }
-}
-
-fn default_credential_status() -> String {
-    "active".to_owned()
-}
-
-fn default_credential_pool_mode() -> String {
-    "failover".to_owned()
-}
-
-fn validate_provider_credential_id(value: &str) -> Result<String, AppError> {
-    let normalized = value.trim().to_ascii_lowercase();
-    if normalized.is_empty() || normalized.len() > 80 {
-        return Err(AppError::InvalidRequest(
-            "credential id must be 1-80 characters".to_owned(),
-        ));
-    }
-    if !normalized
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-    {
-        return Err(AppError::InvalidRequest(
-            "credential id can only contain letters, numbers, '_' and '-'".to_owned(),
-        ));
-    }
-    Ok(normalized)
-}
-
-fn validate_env_name(value: &str) -> Result<String, AppError> {
-    let normalized = value.trim();
-    if normalized.is_empty() || normalized.len() > 120 {
-        return Err(AppError::InvalidRequest(
-            "apiKeyEnv must be 1-120 characters".to_owned(),
-        ));
-    }
-    let mut chars = normalized.chars();
-    let Some(first) = chars.next() else {
-        return Err(AppError::InvalidRequest("apiKeyEnv is required".to_owned()));
-    };
-    if !(first.is_ascii_alphabetic() || first == '_') {
-        return Err(AppError::InvalidRequest(
-            "apiKeyEnv must start with a letter or '_'".to_owned(),
-        ));
-    }
-    if !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
-        return Err(AppError::InvalidRequest(
-            "apiKeyEnv can only contain letters, numbers and '_'".to_owned(),
-        ));
-    }
-    Ok(normalized.to_owned())
-}
-
-fn validate_credential_status(value: &str) -> Result<String, AppError> {
-    match value.trim() {
-        "active" | "disabled" => Ok(value.trim().to_owned()),
-        _ => Err(AppError::InvalidRequest(
-            "credential status must be active or disabled".to_owned(),
-        )),
-    }
-}
-
-fn validate_credential_pool_mode(value: &str) -> Result<String, AppError> {
-    match value.trim() {
-        "manual" | "failover" | "round_robin" => Ok(value.trim().to_owned()),
-        _ => Err(AppError::InvalidRequest(
-            "credential pool mode must be manual, failover, or round_robin".to_owned(),
-        )),
-    }
-}
-
-fn parse_client_ip(value: &str) -> Option<IpAddr> {
-    let value = value.trim();
-    if let Ok(ip) = value.parse::<IpAddr>() {
-        return Some(ip);
-    }
-    value
-        .rsplit_once(':')
-        .and_then(|(host, _)| host.parse::<IpAddr>().ok())
-}
-
-fn ip_rule_matches(rule: &str, ip: IpAddr) -> bool {
-    if let Ok(exact) = rule.parse::<IpAddr>() {
-        return exact == ip;
-    }
-    let Some((base, prefix)) = rule.split_once('/') else {
-        return false;
-    };
-    let Ok(base) = base.parse::<IpAddr>() else {
-        return false;
-    };
-    let Ok(prefix) = prefix.parse::<u8>() else {
-        return false;
-    };
-    match (base, ip) {
-        (IpAddr::V4(base), IpAddr::V4(ip)) if prefix <= 32 => {
-            cidr_matches(u32::from(base).into(), u32::from(ip).into(), prefix, 32)
-        }
-        (IpAddr::V6(base), IpAddr::V6(ip)) if prefix <= 128 => {
-            cidr_matches(u128::from(base), u128::from(ip), prefix, 128)
-        }
-        _ => false,
-    }
-}
-
-fn cidr_matches(base: u128, ip: u128, prefix: u8, bits: u8) -> bool {
-    if prefix == 0 {
-        return true;
-    }
-    let shift = u32::from(bits - prefix);
-    (base >> shift) == (ip >> shift)
-}
-
 fn effective_aliases_locked(
     base_aliases: &HashMap<String, String>,
     route_config: &RouteConfigRecord,
@@ -3457,21 +3232,6 @@ fn default_protocol() -> String {
     "openai-compat".to_owned()
 }
 
-fn public_quota(record: &QuotaRecord) -> PublicQuota {
-    PublicQuota {
-        id: record.id.clone(),
-        user_id: record.user_id.clone(),
-        username: record.username.clone(),
-        quota_type: record.quota_type.clone(),
-        limit: record.limit,
-        used: record.used,
-        period: record.period.clone(),
-        period_start: record.period_start_ms.to_string(),
-        period_end: record.period_end_ms.to_string(),
-        reset_at: record.reset_at_ms.to_string(),
-    }
-}
-
 fn reset_expired_quotas_locked(inner: &mut ControlInner, now: u64) {
     for quota in inner.quotas.values_mut() {
         if quota.reset_at_ms > now {
@@ -3483,41 +3243,6 @@ fn reset_expired_quotas_locked(inner: &mut ControlInner, now: u64) {
         quota.period_end_ms = end;
         quota.reset_at_ms = end;
     }
-}
-
-fn quota_increment(quota: &QuotaRecord, estimate: UsageEstimate) -> f64 {
-    match quota.quota_type.as_str() {
-        "requests" => 1.0,
-        "tokens" => estimate
-            .input_tokens
-            .saturating_add(estimate.output_tokens)
-            .saturating_add(estimate.cache_write_tokens)
-            .saturating_add(estimate.cache_read_tokens) as f64,
-        "cost" => estimate.cost_estimate,
-        _ => 0.0,
-    }
-}
-
-fn current_period(period: &str, now: u64) -> (u64, u64) {
-    match period {
-        "daily" => {
-            let start = day_start(now);
-            (start, start.saturating_add(DAY_MS))
-        }
-        "weekly" => {
-            let start = (now / (DAY_MS * 7)) * (DAY_MS * 7);
-            (start, start.saturating_add(DAY_MS * 7))
-        }
-        "monthly" => {
-            let start = (now / (DAY_MS * 30)) * (DAY_MS * 30);
-            (start, start.saturating_add(DAY_MS * 30))
-        }
-        _ => (now, now.saturating_add(DAY_MS)),
-    }
-}
-
-fn day_start(now: u64) -> u64 {
-    (now / DAY_MS) * DAY_MS
 }
 
 fn client_token(headers: &HeaderMap) -> Option<&str> {
@@ -4121,7 +3846,11 @@ mod tests {
             .and_then(|items| items.get("main"))
             .and_then(|record| record.cooldown_until_ms)
             .unwrap();
-        assert!(cooldown_until >= 1_000 + ACCOUNT_ISSUE_CREDENTIAL_COOLDOWN_SECONDS * 1_000);
+        assert!(
+            cooldown_until
+                >= 1_000
+                    + crate::provider_status::ACCOUNT_ISSUE_CREDENTIAL_COOLDOWN_SECONDS * 1_000
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import type { FidelityMode, MaxTokensField, ProviderProtocol } from '@/types'
+import type { FidelityMode, MaxTokensField, ProviderProtocol, ToolUseCapabilities } from '@/types'
 
 export interface ProviderTemplate {
   id: string
@@ -17,6 +17,7 @@ export interface ProviderTemplate {
   deduplicateStreamText?: boolean
   bufferStreamText?: boolean
   fidelityMode?: FidelityMode
+  toolUse?: ToolUseCapabilities
   notes: string
 }
 
@@ -52,6 +53,12 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     modelPrefixes: ['mimo-'],
     passthroughUnknownModels: false,
     maxTokensField: 'max_completion_tokens',
+    toolUse: {
+      supported: true,
+      toolChoice: true,
+      parallelToolCalls: true,
+      streamingArguments: 'delta',
+    },
     notes: '小米 Mimo 官方模型渠道；GPT 系列应配置到 OpenAI 或自定义 OpenAI-compatible 渠道。',
   },
   {
@@ -68,6 +75,12 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     modelPrefixes: ['deepseek-'],
     passthroughUnknownModels: false,
     maxTokensField: 'max_tokens',
+    toolUse: {
+      supported: true,
+      toolChoice: true,
+      parallelToolCalls: true,
+      streamingArguments: 'native',
+    },
     notes: 'DeepSeek 官方 Anthropic 协议渠道，适合 Claude Code 直连语义。',
   },
   {
@@ -84,6 +97,12 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     modelPrefixes: ['deepseek-'],
     passthroughUnknownModels: false,
     maxTokensField: 'max_tokens',
+    toolUse: {
+      supported: true,
+      toolChoice: true,
+      parallelToolCalls: true,
+      streamingArguments: 'delta',
+    },
     notes: '同一 DeepSeek 模型的 OpenAI 兼容渠道，可和 Anthropic 渠道并存。',
   },
   {
@@ -333,6 +352,17 @@ export function providerToml(template: ProviderTemplate): string {
 
   if (template.fidelityMode) {
     lines.push(`fidelity_mode = "${template.fidelityMode}"`)
+  }
+
+  if (template.toolUse) {
+    lines.push(
+      '',
+      `[providers.${template.id}.tool_use]`,
+      `supported = ${template.toolUse.supported}`,
+      `tool_choice = ${template.toolUse.toolChoice}`,
+      `parallel_tool_calls = ${template.toolUse.parallelToolCalls}`,
+      `streaming_arguments = "${template.toolUse.streamingArguments}"`,
+    )
   }
 
   return lines.join('\n')

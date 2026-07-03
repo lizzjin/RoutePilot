@@ -17,7 +17,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
 };
-use serde::Deserialize;
 use serde_json::{Value, json};
 use tower::{ServiceBuilder, limit::ConcurrencyLimitLayer};
 use tower_http::{
@@ -27,24 +26,35 @@ use tower_http::{
 use tracing::warn;
 
 use crate::{
-    auth::{AuthStore, CreateUserInput, LoginInput, PublicUser, UpdateUserInput},
+    auth::{AuthStore, LoginInput, PublicUser},
     config::{
-        AppConfig, ConfigIssueSeverity, FidelityMode, MaxTokensField, ProviderConfig,
-        ProviderProtocol, RuntimeConfig,
+        AppConfig, FidelityMode, MaxTokensField, ProviderConfig, ProviderProtocol, RuntimeConfig,
+        ToolUseConfig,
     },
     control::{
-        ActivityInput, ClientIdentity, ControlStore, CreateApiKeyInput, ProviderCredentialRecord,
-        ProviderModelOverrideRecord, ProviderOverrideRecord, UpdateApiKeyInput, UpsertQuotaInput,
-        UpsertTeamInput, provider_credential_row, provider_credential_rows,
+        ActivityInput, ClientIdentity, ControlStore, ProviderCredentialRecord,
+        ProviderModelOverrideRecord, ProviderOverrideRecord, UpsertQuotaInput, UpsertTeamInput,
     },
+    control_view::provider_credential_row,
     error::AppError,
     http::{Header, HttpTransport},
     metrics::Metrics,
 };
 
+mod admin_api_keys;
 mod admin_providers;
+mod admin_users;
 mod client_api;
+mod dashboard_view;
+mod logs_view;
 mod ops;
+mod provider_view;
+mod settings_view;
+
+use dashboard_view::{DashboardQuery, dashboard_body};
+use logs_view::{latency_body, logs_body};
+use provider_view::{provider_model_row, provider_row_by_id, provider_rows};
+use settings_view::{alias_row, alias_rows, config_issues_json, settings_row};
 
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 const CSRF_HEADER: HeaderName = HeaderName::from_static("x-modelport-csrf");
@@ -52,10 +62,6 @@ const X_CONTENT_TYPE_OPTIONS: HeaderName = HeaderName::from_static("x-content-ty
 const X_FRAME_OPTIONS: HeaderName = HeaderName::from_static("x-frame-options");
 const REFERRER_POLICY: HeaderName = HeaderName::from_static("referrer-policy");
 const PERMISSIONS_POLICY: HeaderName = HeaderName::from_static("permissions-policy");
-const HOUR_MS: u64 = 60 * 60 * 1_000;
-const DAY_MS: u64 = 24 * HOUR_MS;
-const MAX_DASHBOARD_TREND_MS: u64 = 90 * DAY_MS;
-
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<RuntimeConfig>,
@@ -114,22 +120,6 @@ pub struct TrustedProxyConfig {
 enum IpRule {
     Exact(IpAddr),
     Cidr { base: IpAddr, prefix: u8 },
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DashboardQuery {
-    range: Option<String>,
-    from: Option<String>,
-    to: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-struct DashboardTrendWindow {
-    range: String,
-    start_ms: u64,
-    end_ms: u64,
-    bucket_ms: u64,
 }
 
 impl TrustedProxyConfig {
@@ -435,26 +425,29 @@ pub fn router(state: AppState) -> Router {
             "/admin/teams/{team_id}",
             put(admin_update_team).delete(admin_delete_team),
         )
-        .route("/admin/users", get(admin_users).post(admin_create_user))
+        .route(
+            "/admin/users",
+            get(admin_users::admin_users).post(admin_users::admin_create_user),
+        )
         .route(
             "/admin/users/{user_id}",
-            put(admin_update_user).delete(admin_delete_user),
+            put(admin_users::admin_update_user).delete(admin_users::admin_delete_user),
         )
         .route(
             "/admin/api-keys",
-            get(admin_api_keys).post(admin_create_api_key),
+            get(admin_api_keys::admin_api_keys).post(admin_api_keys::admin_create_api_key),
         )
         .route(
             "/admin/api-keys/{key_id}/disable",
-            post(admin_revoke_api_key),
+            post(admin_api_keys::admin_revoke_api_key),
         )
         .route(
             "/admin/users/{user_id}/api-keys",
-            get(admin_user_api_keys).post(admin_create_api_key),
+            get(admin_api_keys::admin_user_api_keys).post(admin_api_keys::admin_create_api_key),
         )
         .route(
             "/admin/api-keys/{key_id}",
-            put(admin_update_api_key).delete(admin_delete_api_key),
+            put(admin_api_keys::admin_update_api_key).delete(admin_api_keys::admin_delete_api_key),
         )
         .route("/admin/quotas", get(admin_quotas).post(admin_create_quota))
         .route(
@@ -771,206 +764,7 @@ async fn admin_dashboard(
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
     require_console_user(&state, &headers)?;
-    let trend_window = dashboard_trend_window(&query)?;
-
-    let snapshot = state.metrics.snapshot();
-    let total_requests = snapshot
-        .messages
-        .iter()
-        .map(|message| message.requests_total)
-        .sum::<u64>();
-    let total_successes = snapshot
-        .messages
-        .iter()
-        .map(|message| message.successes_total)
-        .sum::<u64>();
-    let total_failures = snapshot
-        .messages
-        .iter()
-        .map(|message| message.failures_total)
-        .sum::<u64>();
-    let total_duration = snapshot
-        .messages
-        .iter()
-        .map(|message| message.duration_ms_total)
-        .sum::<u64>();
-    let success_rate = percent(total_successes, total_requests);
-    let avg_latency_ms = average(total_duration, total_requests);
-    let route_requests = snapshot
-        .routes
-        .iter()
-        .map(|route| route.requests_total)
-        .sum::<u64>();
-    let route_successes = snapshot
-        .routes
-        .iter()
-        .map(|route| route.successes_total)
-        .sum::<u64>();
-    let route_failures = snapshot
-        .routes
-        .iter()
-        .map(|route| route.failures_total)
-        .sum::<u64>();
-    let route_duration = snapshot
-        .routes
-        .iter()
-        .map(|route| route.duration_ms_total)
-        .sum::<u64>();
-    let busiest_route = snapshot
-        .routes
-        .iter()
-        .max_by_key(|route| route.requests_total)
-        .map(|route| route.route.as_str())
-        .unwrap_or("none");
-    let providers = provider_rows(&state);
-    let active_providers = providers
-        .iter()
-        .filter(|provider| provider.get("status").and_then(Value::as_str) == Some("active"))
-        .count();
-    let active_users = state.auth.active_user_count();
-    let usage_summary = state.control.usage_summary_today();
-    let (usage_request_series, usage_error_series) = state.control.usage_time_series(
-        trend_window.start_ms,
-        trend_window.end_ms,
-        trend_window.bucket_ms,
-    );
-    let usage_series_has_data = usage_request_series
-        .iter()
-        .any(|point| point.get("value").and_then(Value::as_u64).unwrap_or(0) > 0);
-    let metric_top_models = snapshot
-        .messages
-        .iter()
-        .map(|message| {
-            json!({
-                "model": message.model,
-                "provider": message.provider,
-                "requests": message.requests_total,
-            })
-        })
-        .collect::<Vec<_>>();
-    let usage_top_models = state.control.usage_top_models_today(8);
-    let persisted_provider_usage = state.control.provider_usage_today();
-    let now = now_millis_string();
-    let recent_activity = state.control.activity_rows(8);
-    let config = effective_config(&state);
-    let fallback_activity = vec![
-        json!({
-            "id": "act_health",
-            "timestamp": now.clone(),
-            "type": "request",
-            "message": format!("ModelPort gateway is healthy; busiest route: {busiest_route}"),
-            "severity": "info",
-        }),
-        json!({
-            "id": "act_messages",
-            "timestamp": now_millis_string(),
-            "type": if total_failures > 0 { "error" } else { "request" },
-            "message": format!("{total_requests} model message request(s), {total_failures} failure(s) since startup"),
-            "severity": if total_failures > 0 { "warning" } else { "info" },
-        }),
-        json!({
-            "id": "act_routes",
-            "timestamp": now_millis_string(),
-            "type": if route_failures > 0 { "error" } else { "request" },
-            "message": format!("{route_requests} route request(s), {route_successes} success(es), avg {} ms", average(route_duration, route_requests)),
-            "severity": if route_failures > 0 { "warning" } else { "info" },
-        }),
-    ];
-
-    Ok(Json(json!({
-        "uptimeSeconds": snapshot.uptime_seconds,
-        "totalRequests": total_requests,
-        "successRate": success_rate,
-        "activeProviders": active_providers,
-        "totalProviders": providers.len(),
-        "activeUsers": active_users,
-        "totalModels": config.model_list().len(),
-        "avgLatencyMs": avg_latency_ms,
-        "apiKeysTotal": usage_summary.api_keys_total,
-        "apiKeysActive": usage_summary.api_keys_active,
-        "todayRequests": usage_summary.total_requests,
-        "todayInputTokens": usage_summary.total_input_tokens,
-        "todayOutputTokens": usage_summary.total_output_tokens,
-        "todayCacheWriteTokens": usage_summary.total_cache_write_tokens,
-        "todayCacheReadTokens": usage_summary.total_cache_read_tokens,
-        "todayCostEstimate": usage_summary.total_cost_estimate,
-        "trendRange": {
-            "range": trend_window.range,
-            "from": trend_window.start_ms.to_string(),
-            "to": trend_window.end_ms.to_string(),
-            "bucketMs": trend_window.bucket_ms,
-        },
-        "requestTimeSeries": if usage_series_has_data { usage_request_series } else { time_series(total_requests, &trend_window) },
-        "errorTimeSeries": if usage_series_has_data { usage_error_series } else { time_series(total_failures, &trend_window) },
-        "topModels": if metric_top_models.is_empty() { usage_top_models } else { metric_top_models },
-        "providerHealth": providers.iter().map(|provider| {
-            let id = provider.get("id").and_then(Value::as_str).unwrap_or("");
-            let provider_messages = snapshot.messages.iter().filter(|message| message.provider == id).collect::<Vec<_>>();
-            let metric_requests = provider_messages.iter().map(|message| message.requests_total).sum::<u64>();
-            let metric_successes = provider_messages.iter().map(|message| message.successes_total).sum::<u64>();
-            let metric_duration = provider_messages.iter().map(|message| message.duration_ms_total).sum::<u64>();
-            let persisted = persisted_provider_usage.get(id);
-            let has_persisted_usage = persisted.is_some_and(|stats| stats.requests_total > 0);
-            let requests = if has_persisted_usage { persisted.map(|stats| stats.requests_total).unwrap_or(0) } else { metric_requests };
-            let successes = if has_persisted_usage { persisted.map(|stats| stats.successes_total).unwrap_or(0) } else { metric_successes };
-            let duration = if has_persisted_usage { persisted.map(|stats| stats.duration_ms_total).unwrap_or(0) } else { metric_duration };
-            let input_tokens = if has_persisted_usage {
-                persisted.map(|stats| stats.input_tokens_total).unwrap_or(0)
-            } else {
-                provider_messages.iter().map(|message| message.input_tokens_total).sum::<u64>()
-            };
-            let output_tokens = if has_persisted_usage {
-                persisted.map(|stats| stats.output_tokens_total).unwrap_or(0)
-            } else {
-                provider_messages.iter().map(|message| message.output_tokens_total).sum::<u64>()
-            };
-            let cache_write_tokens = if has_persisted_usage {
-                persisted.map(|stats| stats.cache_write_tokens_total).unwrap_or(0)
-            } else {
-                provider_messages.iter().map(|message| message.cache_write_tokens_total).sum::<u64>()
-            };
-            let cache_read_tokens = if has_persisted_usage {
-                persisted.map(|stats| stats.cache_read_tokens_total).unwrap_or(0)
-            } else {
-                provider_messages.iter().map(|message| message.cache_read_tokens_total).sum::<u64>()
-            };
-            let cost_estimate = if has_persisted_usage {
-                persisted.map(|stats| stats.cost_estimate_usd_total).unwrap_or(0.0)
-            } else {
-                provider_messages.iter().map(|message| message.cost_estimate_usd_total).sum::<f64>()
-            };
-            let success_rate = percent(successes, requests);
-            let provider_status = provider.get("status").and_then(Value::as_str).unwrap_or("inactive");
-            let runtime_status = provider.get("runtimeStatus").and_then(Value::as_str).unwrap_or("healthy");
-            let provider_health = provider.get("health").unwrap_or(&Value::Null);
-            let health_status = if provider_status != "active" {
-                "down"
-            } else if runtime_status == "cooldown" {
-                "cooldown"
-            } else if runtime_status == "degraded" || (requests > 0 && success_rate < 99.0) {
-                "degraded"
-            } else {
-                "healthy"
-            };
-            json!({
-                "providerId": id,
-                "displayName": provider.get("displayName").cloned().unwrap_or_else(|| json!(id)),
-                "status": health_status,
-                "requestsTotal": requests,
-                "successRate": success_rate,
-                "avgLatencyMs": average(duration, requests),
-                "inputTokensTotal": input_tokens,
-                "outputTokensTotal": output_tokens,
-                "cacheWriteTokensTotal": cache_write_tokens,
-                "cacheReadTokensTotal": cache_read_tokens,
-                "costEstimateUsdTotal": cost_estimate,
-                "accountIssue": provider_health.get("accountIssue").cloned().unwrap_or_else(|| json!("none")),
-                "rechargeRequired": provider_health.get("rechargeRequired").and_then(Value::as_bool).unwrap_or(false),
-                "rechargeBadge": provider_health.get("rechargeBadge").cloned().unwrap_or(Value::Null),
-            })
-        }).collect::<Vec<_>>(),
-        "recentActivity": if recent_activity.is_empty() { fallback_activity } else { recent_activity },
-    })))
+    Ok(Json(dashboard_body(&state, &query)?))
 }
 
 async fn admin_aliases(
@@ -1300,14 +1094,7 @@ async fn admin_logs(
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
     require_console_user(&state, &headers)?;
-    let mut logs = state.control.usage_rows();
-    if logs.is_empty() {
-        logs = log_rows(&state);
-    }
-    Ok(Json(json!({
-        "logs": logs,
-        "total": logs.len(),
-    })))
+    Ok(Json(logs_body(&state)))
 }
 
 async fn admin_latency(
@@ -1315,29 +1102,7 @@ async fn admin_latency(
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
     require_console_user(&state, &headers)?;
-    let snapshot = state.metrics.snapshot();
-    let total_requests = snapshot
-        .messages
-        .iter()
-        .map(|message| message.requests_total)
-        .sum::<u64>();
-    let total_duration = snapshot
-        .messages
-        .iter()
-        .map(|message| message.duration_ms_total)
-        .sum::<u64>();
-    let avg = average(total_duration, total_requests);
-
-    Ok(Json(json!({
-        "p50": avg,
-        "p90": avg,
-        "p95": avg,
-        "p99": avg,
-        "avg": avg,
-        "max": avg,
-        "byModel": {},
-        "byProvider": {},
-    })))
+    Ok(Json(latency_body(&state)))
 }
 
 async fn admin_teams(
@@ -1412,207 +1177,6 @@ async fn admin_delete_team(
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn admin_users(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Value>, AppError> {
-    let actor = require_console_user(&state, &headers)?;
-    let requests = state
-        .metrics
-        .snapshot()
-        .messages
-        .iter()
-        .map(|message| message.requests_total)
-        .sum::<u64>();
-    let mut users = state.auth.list_users(requests);
-    if actor.role == "user" {
-        users.retain(|user| user.id == actor.id);
-    }
-    for user in &mut users {
-        user.api_key_count = state.control.active_api_key_count(&user.id);
-    }
-    Ok(Json(json!(users)))
-}
-
-async fn admin_create_user(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<CreateUserInput>,
-) -> Result<Json<Value>, AppError> {
-    let actor = require_admin_user(&state, &headers)?;
-    let user = state.auth.create_user(body)?;
-    record_admin_activity(
-        &state,
-        &actor,
-        "config_change",
-        format!("user:{}", user.id),
-        format!("创建用户 {}", user.username),
-        "info",
-    );
-    Ok(Json(json!(user)))
-}
-
-async fn admin_update_user(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(user_id): Path<String>,
-    Json(body): Json<UpdateUserInput>,
-) -> Result<Json<Value>, AppError> {
-    let current_user = require_admin_write_user(&state, &headers)?;
-    let user = state.auth.update_user(&user_id, &current_user.id, body)?;
-    record_admin_activity(
-        &state,
-        &current_user,
-        "config_change",
-        format!("user:{user_id}"),
-        format!("更新用户 {} ({})", user.username, user.role),
-        "info",
-    );
-    Ok(Json(json!(user)))
-}
-
-async fn admin_delete_user(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(user_id): Path<String>,
-) -> Result<Json<Value>, AppError> {
-    let current_user = require_admin_write_user(&state, &headers)?;
-    state.auth.delete_user(&user_id, &current_user.id)?;
-    state.control.delete_user_resources(&user_id)?;
-    record_admin_activity(
-        &state,
-        &current_user,
-        "config_change",
-        format!("user:{user_id}"),
-        format!("删除用户 {user_id} 并回收相关资源"),
-        "warning",
-    );
-    Ok(Json(json!({ "ok": true })))
-}
-
-async fn admin_api_keys(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Value>, AppError> {
-    let actor = require_console_user(&state, &headers)?;
-    if actor.role == "user" {
-        Ok(Json(json!(state.control.list_user_api_keys(&actor.id))))
-    } else {
-        Ok(Json(json!(state.control.list_api_keys())))
-    }
-}
-
-async fn admin_user_api_keys(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(user_id): Path<String>,
-) -> Result<Json<Value>, AppError> {
-    let actor = require_console_user(&state, &headers)?;
-    if actor.role == "user" && actor.id != user_id {
-        return Err(AppError::Forbidden(
-            "cannot read another user's API keys".to_owned(),
-        ));
-    }
-    Ok(Json(json!(state.control.list_user_api_keys(&user_id))))
-}
-
-async fn admin_create_api_key(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(mut body): Json<CreateApiKeyInput>,
-) -> Result<Json<Value>, AppError> {
-    let actor = require_api_key_write_user(&state, &headers)?;
-    if actor.role != "admin" {
-        if body.user_id != actor.id {
-            return Err(AppError::Forbidden(
-                "cannot create API keys for another user".to_owned(),
-            ));
-        }
-        body.username = Some(actor.username.clone());
-        body.team_id = None;
-    }
-    if body.username.is_none()
-        && let Some(user) = state
-            .auth
-            .list_users(0)
-            .into_iter()
-            .find(|user| user.id == body.user_id)
-    {
-        body.username = Some(user.username);
-    }
-    let created = state.control.create_api_key(body)?;
-    record_admin_activity(
-        &state,
-        &actor,
-        "config_change",
-        format!("api_key:{}", created.public.id),
-        format!(
-            "为用户 {} 创建 API Key {}",
-            created.public.username, created.public.name
-        ),
-        "info",
-    );
-    Ok(Json(json!(created)))
-}
-
-async fn admin_revoke_api_key(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(key_id): Path<String>,
-) -> Result<Json<Value>, AppError> {
-    let actor = require_api_key_write_user(&state, &headers)?;
-    ensure_api_key_access(&state, &actor, &key_id)?;
-    state.control.revoke_api_key(&key_id)?;
-    record_admin_activity(
-        &state,
-        &actor,
-        "config_change",
-        format!("api_key:{key_id}"),
-        format!("吊销 API Key {key_id}"),
-        "warning",
-    );
-    Ok(Json(json!({ "ok": true })))
-}
-
-async fn admin_update_api_key(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(key_id): Path<String>,
-    Json(body): Json<UpdateApiKeyInput>,
-) -> Result<Json<Value>, AppError> {
-    let actor = require_api_key_write_user(&state, &headers)?;
-    ensure_api_key_access(&state, &actor, &key_id)?;
-    let updated = state.control.update_api_key(&key_id, body)?;
-    record_admin_activity(
-        &state,
-        &actor,
-        "config_change",
-        format!("api_key:{key_id}"),
-        format!("更新 API Key {} ({})", updated.name, updated.status),
-        "info",
-    );
-    Ok(Json(json!(updated)))
-}
-
-async fn admin_delete_api_key(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(key_id): Path<String>,
-) -> Result<Json<Value>, AppError> {
-    let actor = require_api_key_write_user(&state, &headers)?;
-    ensure_api_key_access(&state, &actor, &key_id)?;
-    state.control.delete_api_key(&key_id)?;
-    record_admin_activity(
-        &state,
-        &actor,
-        "config_change",
-        format!("api_key:{key_id}"),
-        format!("删除 API Key {key_id}"),
-        "warning",
-    );
-    Ok(Json(json!({ "ok": true })))
-}
-
 async fn admin_quotas(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1681,267 +1245,6 @@ async fn admin_delete_quota(
         "warning",
     );
     Ok(Json(json!({ "ok": true })))
-}
-
-fn provider_rows(state: &AppState) -> Vec<Value> {
-    let config = management_config(state);
-    let controls = state.control.provider_control_snapshot();
-    let provider_tests = state.control.provider_test_rows();
-    let provider_health = state.control.provider_health_rows();
-    let credential_health = state.control.provider_credential_health_rows();
-    config
-        .provider_order
-        .iter()
-        .filter_map(|id| {
-            let provider = config.providers.get(id)?;
-            let has_api_key = provider.api_key().ok().flatten().is_some();
-            let health = provider_health.get(id).cloned();
-            let active_credential_id = controls
-                .active_provider_credentials
-                .get(id)
-                .map(String::as_str);
-            let credential_pool_mode = controls
-                .provider_credential_pool_modes
-                .get(id)
-                .map(String::as_str)
-                .unwrap_or("failover");
-            let credentials = provider_credential_rows(
-                controls.provider_credentials.get(id),
-                active_credential_id,
-                credential_health.get(id),
-            );
-            let runtime_status = health
-                .as_ref()
-                .and_then(|value| value.get("status"))
-                .and_then(Value::as_str)
-                .unwrap_or("healthy");
-            let config_status = if has_api_key || !provider.api_key_required {
-                "active"
-            } else {
-                "inactive"
-            };
-            let status = if controls.disabled_providers.contains(id) {
-                "disabled"
-            } else {
-                config_status
-            };
-            Some(json!({
-                "id": id,
-                "displayName": provider.display_name,
-                "source": if controls.provider_overrides.contains_key(id) { "control" } else { "config" },
-                "protocol": provider_protocol_value(provider.protocol),
-                "baseUrl": provider.base_url,
-                "apiKeyEnv": provider.api_key_env,
-                "apiKeyRequired": provider.api_key_required,
-                "defaultModel": provider.default_model,
-                "models": provider.models,
-                "modelPrefixes": provider.model_prefixes,
-                "passthroughUnknownModels": provider.passthrough_unknown_models,
-                "maxTokensField": max_tokens_field_value(provider.max_tokens_field),
-                "deduplicateStreamText": provider.deduplicate_stream_text,
-                "bufferStreamText": provider.buffer_stream_text,
-                "fidelityMode": fidelity_mode_value(provider.fidelity_mode),
-                "status": status,
-                "runtimeStatus": runtime_status,
-                "hasApiKey": has_api_key,
-                "credentials": credentials,
-                "activeCredentialId": active_credential_id,
-                "credentialPoolMode": credential_pool_mode,
-                "lastTest": provider_tests.get(id).cloned(),
-                "health": health,
-                "modelInventory": provider_inventory_rows(id, provider, &controls),
-            }))
-        })
-        .collect()
-}
-
-fn alias_rows(state: &AppState) -> Vec<Value> {
-    let config = effective_config(state);
-    config
-        .aliases
-        .iter()
-        .map(|(alias, target)| alias_row(&config, alias, target))
-        .collect()
-}
-
-fn alias_row(config: &AppConfig, alias: &str, target: &str) -> Value {
-    let resolved = config.resolve(alias).ok();
-    json!({
-        "alias": alias,
-        "target": target,
-        "resolvedProvider": resolved.as_ref().map(|value| value.provider_id.as_str()).unwrap_or(""),
-        "resolvedModel": resolved.as_ref().map(|value| value.model.as_str()).unwrap_or(""),
-    })
-}
-
-fn settings_row(state: &AppState) -> Value {
-    let config = effective_config(state);
-    json!({
-        "server": {
-            "bindAddress": config.bind_addr.to_string(),
-            "maxRequestBodyBytes": config.max_request_body_bytes,
-            "maxConcurrentRequests": config.max_concurrent_requests,
-        },
-        "auth": {
-            "enabled": config.auth_token.is_some(),
-            "tokenEnvVar": "MODELPORT_AUTH_TOKEN",
-            "allowNoAuth": config.auth_token.is_none(),
-        },
-        "gateway": {
-            "defaultProvider": config.default_provider,
-            "providerOrder": config.provider_order,
-        },
-        "rateLimits": {
-            "maxConcurrentRequests": config.max_concurrent_requests,
-            "maxRequestBodyBytes": config.max_request_body_bytes,
-            "requestTimeoutSecs": env_u64("MODELPORT_HTTP_REQUEST_TIMEOUT_SECS", 600),
-            "streamIdleTimeoutSecs": env_u64("MODELPORT_HTTP_STREAM_IDLE_TIMEOUT_SECS", 300),
-        },
-        "runtime": runtime_row(state, &config),
-        "setup": setup_row(state, &config),
-    })
-}
-
-fn runtime_row(state: &AppState, config: &AppConfig) -> Value {
-    let base_url = local_base_url(config);
-    json!({
-        "apiEndpoint": format!("{base_url}/v1/messages"),
-        "modelsEndpoint": format!("{base_url}/v1/models"),
-        "adminEndpoint": format!("{base_url}/admin"),
-        "controlDataPath": state.control.data_path(),
-        "authDataPath": state.auth.data_path(),
-    })
-}
-
-fn setup_row(state: &AppState, config: &AppConfig) -> Value {
-    let providers = provider_rows(state);
-    let active_provider_count = providers
-        .iter()
-        .filter(|provider| provider.get("status").and_then(Value::as_str) == Some("active"))
-        .count();
-    let default_provider = providers.iter().find(|provider| {
-        provider
-            .get("id")
-            .and_then(Value::as_str)
-            .is_some_and(|id| id == config.default_provider)
-    });
-    let default_provider_active = default_provider
-        .and_then(|provider| provider.get("status").and_then(Value::as_str))
-        == Some("active");
-    let validation_issues = config_issues_json(config);
-    let validation_errors = validation_issues
-        .iter()
-        .filter(|issue| issue.get("severity").and_then(Value::as_str) == Some("error"))
-        .count();
-    let validation_warnings = validation_issues
-        .iter()
-        .filter(|issue| issue.get("severity").and_then(Value::as_str) == Some("warning"))
-        .count();
-    let checks = vec![
-        setup_check(
-            "admin",
-            "管理员账号",
-            state.auth.active_admin_count() > 0,
-            "至少一个活跃管理员",
-            "没有活跃管理员",
-        ),
-        setup_check(
-            "auth",
-            "API 认证",
-            config.auth_token.is_some(),
-            "已启用请求认证",
-            "未配置 MODELPORT_AUTH_TOKEN",
-        ),
-        setup_check(
-            "providers",
-            "供应商凭证",
-            active_provider_count > 0,
-            format!("{active_provider_count} 个供应商可用"),
-            "没有可用供应商",
-        ),
-        setup_check(
-            "defaultProvider",
-            "默认供应商",
-            default_provider_active,
-            format!("{} 可用", config.default_provider),
-            format!("{} 不可用", config.default_provider),
-        ),
-        setup_check(
-            "persistence",
-            "控制面数据",
-            state.control.data_path().is_some() && state.auth.data_path().is_some(),
-            "已启用本地持久化",
-            "当前运行未配置数据文件",
-        ),
-        setup_check(
-            "config",
-            "配置校验",
-            validation_errors == 0,
-            if validation_warnings == 0 {
-                "无配置告警".to_owned()
-            } else {
-                format!("{validation_warnings} 条配置告警")
-            },
-            format!("{validation_errors} 条配置错误"),
-        ),
-    ];
-    let ready = checks
-        .iter()
-        .all(|check| check.get("status").and_then(Value::as_str) != Some("error"));
-
-    json!({
-        "ready": ready,
-        "activeProviderCount": active_provider_count,
-        "defaultProviderReady": default_provider_active,
-        "checks": checks,
-        "issues": validation_issues,
-    })
-}
-
-fn config_issues_json(config: &AppConfig) -> Vec<Value> {
-    config
-        .validation_issues()
-        .into_iter()
-        .map(|issue| {
-            json!({
-                "severity": match issue.severity {
-                    ConfigIssueSeverity::Error => "error",
-                    ConfigIssueSeverity::Warning => "warning",
-                },
-                "message": issue.message,
-            })
-        })
-        .collect()
-}
-
-fn setup_check(
-    id: &str,
-    label: &str,
-    ok: bool,
-    ok_detail: impl Into<String>,
-    error_detail: impl Into<String>,
-) -> Value {
-    json!({
-        "id": id,
-        "label": label,
-        "status": if ok { "ok" } else { "error" },
-        "detail": if ok { ok_detail.into() } else { error_detail.into() },
-    })
-}
-
-fn local_base_url(config: &AppConfig) -> String {
-    let ip = if config.bind_addr.ip().is_unspecified() {
-        match config.bind_addr.ip() {
-            IpAddr::V4(_) => "127.0.0.1".to_owned(),
-            IpAddr::V6(_) => "[::1]".to_owned(),
-        }
-    } else {
-        match config.bind_addr.ip() {
-            IpAddr::V4(ip) => ip.to_string(),
-            IpAddr::V6(ip) => format!("[{ip}]"),
-        }
-    };
-    format!("http://{ip}:{}", config.bind_addr.port())
 }
 
 fn parse_ip_rule(value: &str) -> Result<IpRule, ()> {
@@ -2115,6 +1418,7 @@ fn provider_record_to_config(record: &ProviderOverrideRecord) -> Result<Provider
         deduplicate_stream_text: record.deduplicate_stream_text,
         buffer_stream_text: record.buffer_stream_text,
         fidelity_mode: parse_fidelity_mode(&record.fidelity_mode)?,
+        tool_use: record.tool_use,
     })
 }
 
@@ -2159,56 +1463,6 @@ fn normalize_provider_order(config: &mut AppConfig) {
             seen.insert(provider_id);
         }
     }
-}
-
-fn provider_row_by_id(state: &AppState, provider_id: &str) -> Result<Value, AppError> {
-    provider_rows(state)
-        .into_iter()
-        .find(|row| row.get("id").and_then(Value::as_str) == Some(provider_id))
-        .ok_or_else(|| AppError::ProviderNotFound(provider_id.to_owned()))
-}
-
-fn provider_inventory_rows(
-    provider_id: &str,
-    provider: &ProviderConfig,
-    controls: &crate::control::ProviderControlSnapshot,
-) -> Vec<Value> {
-    let mut seen = BTreeSet::new();
-    let mut rows = Vec::new();
-    let overrides = controls.provider_model_overrides.get(provider_id);
-    for model in &provider.models {
-        seen.insert(model.clone());
-        let override_record = overrides.and_then(|models| models.get(model));
-        rows.push(json!({
-            "model": model,
-            "status": override_record.map(|record| record.status.as_str()).unwrap_or("active"),
-            "displayName": override_record.and_then(|record| record.display_name.as_deref()),
-            "family": override_record.and_then(|record| record.family.as_deref()),
-            "contextWindow": override_record.and_then(|record| record.context_window),
-            "default": model == &provider.default_model,
-        }));
-    }
-    if let Some(overrides) = overrides {
-        for record in overrides.values() {
-            if seen.insert(record.model.clone()) {
-                rows.push(provider_model_row(record));
-            }
-        }
-    }
-    rows
-}
-
-fn provider_model_row(record: &ProviderModelOverrideRecord) -> Value {
-    json!({
-        "providerId": record.provider_id,
-        "model": record.model,
-        "status": record.status,
-        "displayName": record.display_name,
-        "family": record.family,
-        "contextWindow": record.context_window,
-        "createdAt": record.created_at_ms.to_string(),
-        "updatedAt": record.updated_at_ms.to_string(),
-    })
 }
 
 fn provider_delete_dependencies(
@@ -2339,70 +1593,6 @@ fn parse_provider_order(config: &AppConfig, value: &Value) -> Result<Vec<String>
     Ok(order)
 }
 
-fn log_rows(state: &AppState) -> Vec<Value> {
-    let config = effective_config(state);
-    state
-        .metrics
-        .snapshot()
-        .messages
-        .iter()
-        .enumerate()
-        .map(|(index, message)| {
-            let protocol = config
-                .providers
-                .get(&message.provider)
-                .map(|provider| provider_protocol_value(provider.protocol))
-                .unwrap_or("openai-compat");
-            let requests = message.requests_total.max(1);
-            json!({
-                "id": format!("log_{}_{}_{}", message.provider, message.model.replace('/', "_"), if message.stream { "stream" } else { "nonstream" }),
-                "timestamp": now_millis_string(),
-                "userId": "usr_local_admin",
-                "username": "local-admin",
-                "apiKeyId": null,
-                "apiKeyName": "MODELPORT_AUTH_TOKEN",
-                "apiKeyGroup": "legacy",
-                "tokenName": "MODELPORT_AUTH_TOKEN",
-                "group": "legacy",
-                "channelId": message.provider,
-                "channelName": message.provider,
-                "model": message.model,
-                "resolvedModel": message.model,
-                "provider": message.provider,
-                "protocol": protocol,
-                "requestType": if message.failures_total > 0 { "error" } else { "consume" },
-                "stream": if message.stream { "stream" } else { "non-stream" },
-                "status": if message.failures_total > 0 { "error" } else { "success" },
-                "statusCode": if message.failures_total > 0 { 502 } else { 200 },
-                "inputTokens": 0,
-                "outputTokens": 0,
-                "cacheWriteTokens": 0,
-                "cacheReadTokens": 0,
-                "billedInputTokens": 0,
-                "totalTokens": 0,
-                "cacheHitRate": 0.0,
-                "costEstimate": 0.0,
-                "costBreakdown": {
-                    "inputCost": 0.0,
-                    "outputCost": 0.0,
-                    "cacheWriteCost": 0.0,
-                    "cacheReadCost": 0.0,
-                    "totalCost": 0.0,
-                },
-                "latencyMs": average(message.duration_ms_total, requests),
-                "firstByteLatencyMs": average(message.duration_ms_total, requests),
-                "retryCount": 0,
-                "clientIp": null,
-                "requestPath": "/v1/messages",
-                "billingMode": "metrics-fallback",
-                "detail": format!("进程内指标回退日志 · provider={} · model={}", message.provider, message.model),
-                "errorMessage": if message.failures_total > 0 { Some(format!("{} failure(s) recorded", message.failures_total)) } else { None },
-                "sortIndex": index,
-            })
-        })
-        .collect()
-}
-
 fn provider_protocol_value(protocol: ProviderProtocol) -> &'static str {
     match protocol {
         ProviderProtocol::Anthropic => "anthropic",
@@ -2424,103 +1614,6 @@ fn fidelity_mode_value(mode: crate::config::FidelityMode) -> &'static str {
         crate::config::FidelityMode::BestEffort => "best_effort",
         crate::config::FidelityMode::Stability => "stability",
     }
-}
-
-fn dashboard_trend_window(query: &DashboardQuery) -> Result<DashboardTrendWindow, AppError> {
-    let now = now_millis();
-    let range = query.range.as_deref().unwrap_or("1d");
-    let (range, start_ms, end_ms) = match range {
-        "custom" => {
-            let start_ms = query
-                .from
-                .as_deref()
-                .and_then(parse_dashboard_time)
-                .ok_or_else(|| {
-                    AppError::InvalidRequest("custom dashboard range requires from".to_owned())
-                })?;
-            let end_ms = query
-                .to
-                .as_deref()
-                .and_then(parse_dashboard_time)
-                .ok_or_else(|| {
-                    AppError::InvalidRequest("custom dashboard range requires to".to_owned())
-                })?;
-            if start_ms >= end_ms {
-                return Err(AppError::InvalidRequest(
-                    "custom dashboard range requires from before to".to_owned(),
-                ));
-            }
-            ("custom".to_owned(), start_ms, end_ms.min(now))
-        }
-        "3d" => ("3d".to_owned(), now.saturating_sub(3 * DAY_MS), now),
-        "7d" => ("7d".to_owned(), now.saturating_sub(7 * DAY_MS), now),
-        _ => ("1d".to_owned(), now.saturating_sub(DAY_MS), now),
-    };
-    let duration_ms = end_ms.saturating_sub(start_ms).max(HOUR_MS);
-    if duration_ms > MAX_DASHBOARD_TREND_MS {
-        return Err(AppError::InvalidRequest(
-            "dashboard range cannot exceed 90 days".to_owned(),
-        ));
-    }
-
-    Ok(DashboardTrendWindow {
-        range,
-        start_ms,
-        end_ms,
-        bucket_ms: dashboard_bucket_ms(duration_ms),
-    })
-}
-
-fn parse_dashboard_time(value: &str) -> Option<u64> {
-    value.trim().parse::<u64>().ok()
-}
-
-fn dashboard_bucket_ms(duration_ms: u64) -> u64 {
-    if duration_ms <= DAY_MS {
-        HOUR_MS
-    } else if duration_ms <= 3 * DAY_MS {
-        3 * HOUR_MS
-    } else if duration_ms <= 7 * DAY_MS {
-        6 * HOUR_MS
-    } else if duration_ms <= 31 * DAY_MS {
-        DAY_MS
-    } else {
-        7 * DAY_MS
-    }
-}
-
-fn time_series(value: u64, window: &DashboardTrendWindow) -> Vec<Value> {
-    let bucket_count = bucket_count(window.start_ms, window.end_ms, window.bucket_ms);
-    (0..bucket_count)
-        .map(|offset| {
-            let timestamp = window
-                .start_ms
-                .saturating_add(offset.saturating_mul(window.bucket_ms));
-            json!({
-                "timestamp": timestamp.to_string(),
-                "value": if offset + 1 == bucket_count { value } else { 0 },
-            })
-        })
-        .collect()
-}
-
-fn bucket_count(start_ms: u64, end_ms: u64, bucket_ms: u64) -> u64 {
-    if bucket_ms == 0 || end_ms <= start_ms {
-        return 1;
-    }
-    end_ms.saturating_sub(start_ms) / bucket_ms + 1
-}
-
-fn percent(successes: u64, total: u64) -> f64 {
-    if total == 0 {
-        100.0
-    } else {
-        (successes as f64 / total as f64) * 100.0
-    }
-}
-
-fn average(total: u64, count: u64) -> u64 {
-    total.checked_div(count).unwrap_or(0)
 }
 
 fn now_millis() -> u64 {
@@ -2581,6 +1674,7 @@ mod tests {
     use crate::{
         auth::{AuthStore, CreateUserInput},
         config::{FidelityMode, MaxTokensField, ProviderConfig},
+        control::CreateApiKeyInput,
         metrics::Metrics,
     };
 
@@ -2630,6 +1724,11 @@ mod tests {
             deduplicate_stream_text: true,
             buffer_stream_text: true,
             fidelity_mode: FidelityMode::Stability,
+            tool_use: ToolUseConfig::default_for_provider(
+                "mimo",
+                ProviderProtocol::OpenaiCompat,
+                true,
+            ),
         };
         let inactive = ProviderConfig {
             display_name: "DeepSeek".to_owned(),
@@ -2646,6 +1745,11 @@ mod tests {
             deduplicate_stream_text: false,
             buffer_stream_text: false,
             fidelity_mode: FidelityMode::BestEffort,
+            tool_use: ToolUseConfig::default_for_provider(
+                "deepseek",
+                ProviderProtocol::Anthropic,
+                false,
+            ),
         };
         let config = AppConfig {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
@@ -2696,6 +1800,11 @@ mod tests {
             deduplicate_stream_text: true,
             buffer_stream_text: true,
             fidelity_mode: FidelityMode::Stability,
+            tool_use: ToolUseConfig::default_for_provider(
+                "mimo",
+                ProviderProtocol::OpenaiCompat,
+                true,
+            ),
         };
         let config = AppConfig {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
@@ -2718,6 +1827,35 @@ mod tests {
 
         assert_eq!(display_name("gpt-5.2"), "第三方 · OpenAI");
         assert_eq!(display_name("mimo-v2.5-pro"), "第三方 · 小米 MiMo");
+    }
+
+    #[test]
+    fn provider_rows_expose_tool_use_capabilities() {
+        let state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
+
+        let rows = provider_rows(&state);
+        let provider = rows
+            .iter()
+            .find(|row| row.get("id").and_then(Value::as_str) == Some("mimo"))
+            .expect("mimo provider row");
+
+        assert_eq!(provider["toolUse"]["supported"], true);
+        assert_eq!(provider["toolUse"]["toolChoice"], true);
+        assert_eq!(provider["toolUse"]["streamingArguments"], "cumulative");
+    }
+
+    #[test]
+    fn provider_row_by_id_keeps_provider_not_found_boundary() {
+        let state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
+
+        let provider = provider_row_by_id(&state, "mimo").expect("mimo provider row");
+        let missing = provider_row_by_id(&state, "missing-provider").unwrap_err();
+
+        assert_eq!(provider["id"], "mimo");
+        assert!(matches!(
+            missing,
+            AppError::ProviderNotFound(provider) if provider == "missing-provider"
+        ));
     }
 
     #[tokio::test]
@@ -2852,6 +1990,31 @@ data: [DONE]
     }
 
     #[tokio::test]
+    async fn streams_legacy_openai_function_call_as_tool_use() {
+        let upstream = spawn_openai_upstream(
+            StatusCode::OK,
+            r#"data: {"choices":[{"delta":{"function_call":{"name":"read_file","arguments":""}},"finish_reason":null}]}
+data: {"choices":[{"delta":{"function_call":{"arguments":"{\"path\":\"Cargo.toml\"}"}},"finish_reason":null}]}
+data: {"choices":[{"delta":{},"finish_reason":"function_call"}]}
+data: [DONE]
+
+"#,
+            "text/event-stream",
+        )
+        .await;
+        let app = router(test_state(upstream, 1024 * 1024));
+
+        let (status, body) = post_message(app, message_body(true)).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains(r#""type":"tool_use""#));
+        assert!(body.contains(r#""name":"read_file""#));
+        assert!(body.contains(r#""partial_json":"{\"path\":\"Cargo.toml\"}""#));
+        assert!(body.contains(r#""stop_reason":"tool_use""#));
+        assert!(!body.contains("event: error"));
+    }
+
+    #[tokio::test]
     async fn buffers_stream_text_from_non_stream_openai_response() {
         let upstream = spawn_openai_upstream(
             StatusCode::OK,
@@ -2960,6 +2123,112 @@ data: [DONE]
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(body.contains("tools must be an array"));
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_tool_name_before_routing() {
+        let upstream = spawn_openai_upstream(StatusCode::OK, "{}", "application/json").await;
+        let app = router(test_state(upstream, 1024 * 1024));
+        let mut body = message_body(false);
+        body["tools"] = json!([
+            {
+                "name": "read file",
+                "description": "Read a file",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" }
+                    }
+                }
+            }
+        ]);
+
+        let (status, body) = post_message(app, body).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains("tools[0].name may only contain"));
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_tool_choice_before_routing() {
+        let upstream = spawn_openai_upstream(StatusCode::OK, "{}", "application/json").await;
+        let app = router(test_state(upstream, 1024 * 1024));
+        let mut body = message_body(false);
+        body["tool_choice"] = json!({
+            "type": "tool"
+        });
+
+        let (status, body) = post_message(app, body).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains("tool_choice.name is required"));
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_tool_result_before_routing() {
+        let upstream = spawn_openai_upstream(StatusCode::OK, "{}", "application/json").await;
+        let app = router(test_state(upstream, 1024 * 1024));
+        let mut body = message_body(false);
+        body["messages"] = json!([
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "content": "missing tool id"
+                    }
+                ]
+            }
+        ]);
+
+        let (status, body) = post_message(app, body).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains("messages[0].content[0].tool_use_id is required"));
+    }
+
+    #[tokio::test]
+    async fn rejects_tools_when_provider_capability_disables_tool_use() {
+        let upstream = spawn_openai_upstream(StatusCode::OK, "{}", "application/json").await;
+        let mut state = test_state(upstream, 1024 * 1024);
+        let mut config = state.config.snapshot();
+        config
+            .providers
+            .get_mut("mimo")
+            .expect("mimo provider")
+            .tool_use
+            .supported = false;
+        config
+            .providers
+            .get_mut("mimo")
+            .expect("mimo provider")
+            .tool_use
+            .tool_choice = false;
+        config
+            .providers
+            .get_mut("mimo")
+            .expect("mimo provider")
+            .tool_use
+            .parallel_tool_calls = false;
+        state.config = Arc::new(RuntimeConfig::new(config));
+        let app = router(state);
+        let mut body = message_body(false);
+        body["tools"] = json!([
+            {
+                "name": "read_file",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" }
+                    }
+                }
+            }
+        ]);
+
+        let (status, body) = post_message(app, body).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains("provider `mimo` does not support tool use"));
     }
 
     #[tokio::test]
@@ -3980,6 +3249,11 @@ data: [DONE]
                 deduplicate_stream_text: false,
                 buffer_stream_text: false,
                 fidelity_mode: "strict".to_owned(),
+                tool_use: ToolUseConfig::default_for_provider(
+                    "local_custom",
+                    ProviderProtocol::OpenaiCompat,
+                    false,
+                ),
                 created_at_ms: 0,
                 updated_at_ms: 0,
             })
@@ -4139,6 +3413,11 @@ data: [DONE]
             deduplicate_stream_text: false,
             buffer_stream_text: false,
             fidelity_mode: FidelityMode::Strict,
+            tool_use: ToolUseConfig::default_for_provider(
+                "anthropic",
+                ProviderProtocol::Anthropic,
+                false,
+            ),
         };
 
         let err = discover_provider_models(&state, &provider)
@@ -4260,6 +3539,11 @@ data: [DONE]
             } else {
                 FidelityMode::BestEffort
             },
+            tool_use: ToolUseConfig::default_for_provider(
+                "mimo",
+                ProviderProtocol::OpenaiCompat,
+                deduplicate_stream_text,
+            ),
         };
 
         AppState {

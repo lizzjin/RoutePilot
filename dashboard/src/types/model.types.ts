@@ -1,9 +1,17 @@
 export type ProviderProtocol = 'anthropic' | 'openai-compat'
 export type MaxTokensField = 'max_completion_tokens' | 'max_tokens' | 'both'
 export type FidelityMode = 'strict' | 'best_effort' | 'stability'
+export type ToolStreamingArguments = 'native' | 'delta' | 'cumulative' | 'best_effort'
 export type ProviderStatus = 'active' | 'inactive' | 'disabled' | 'error'
 export type ProviderModelStatus = 'active' | 'disabled'
 export type ProviderCredentialPoolMode = 'manual' | 'failover' | 'round_robin'
+
+export interface ToolUseCapabilities {
+  supported: boolean
+  toolChoice: boolean
+  parallelToolCalls: boolean
+  streamingArguments: ToolStreamingArguments
+}
 
 export interface ProviderHealth {
   providerId: string
@@ -69,6 +77,7 @@ export interface Provider {
   deduplicateStreamText: boolean
   bufferStreamText: boolean
   fidelityMode?: FidelityMode
+  toolUse?: ToolUseCapabilities
   status: ProviderStatus
   credentials?: ProviderCredential[]
   activeCredentialId?: string | null
@@ -101,6 +110,7 @@ export interface ProviderWritePayload {
   deduplicateStreamText?: boolean
   bufferStreamText?: boolean
   fidelityMode?: FidelityMode
+  toolUse?: ToolUseCapabilities
   disabled?: boolean
 }
 

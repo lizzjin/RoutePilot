@@ -1,14 +1,21 @@
 mod auth;
 mod config;
 mod control;
+mod control_view;
 mod error;
+mod fidelity;
 mod http;
 mod metrics;
+mod policy;
 mod pricing;
+mod provider_credentials;
+mod provider_status;
 mod providers;
 mod routes;
 mod storage;
+mod tool_use;
 mod types;
+mod usage;
 
 use std::{fs, path::Path, sync::Arc};
 

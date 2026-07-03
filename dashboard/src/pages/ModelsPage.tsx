@@ -81,6 +81,7 @@ import type {
   ProviderModelInventory,
   ProviderProtocol,
   ProviderWritePayload,
+  ToolStreamingArguments,
 } from '@/types'
 
 interface ModelChannel {
@@ -112,6 +113,10 @@ interface ProviderFormState {
   deduplicateStreamText: boolean
   bufferStreamText: boolean
   fidelityMode: FidelityMode
+  toolUseSupported: boolean
+  toolChoice: boolean
+  parallelToolCalls: boolean
+  toolStreamingArguments: ToolStreamingArguments
   disabled: boolean
 }
 
@@ -154,6 +159,10 @@ const DEFAULT_PROVIDER_FORM: ProviderFormState = {
   deduplicateStreamText: false,
   bufferStreamText: false,
   fidelityMode: 'best_effort',
+  toolUseSupported: true,
+  toolChoice: true,
+  parallelToolCalls: true,
+  toolStreamingArguments: 'delta',
   disabled: false,
 }
 
@@ -277,6 +286,15 @@ export function ModelsPage() {
     return true
   }), [providers, providerFilter])
   const totalConfiguredModels = providers.reduce((sum, provider) => sum + provider.models.length, 0)
+  const capabilityRows = useMemo(() => providers.map((provider) => ({
+    provider,
+    toolUse: provider.toolUse ?? defaultToolUseForProviderForm(
+      provider.id,
+      provider.protocol,
+      provider.deduplicateStreamText,
+    ),
+  })), [providers])
+  const toolUseProviderCount = capabilityRows.filter((row) => row.toolUse.supported).length
 
   const modelRows = useMemo<ModelRow[]>(() => {
     const rows = new Map<string, ModelChannel[]>()
@@ -594,6 +612,7 @@ export function ModelsPage() {
           <TabsTrigger value="library">模型库</TabsTrigger>
           <TabsTrigger value="templates">一键配置</TabsTrigger>
           <TabsTrigger value="providers">供应商</TabsTrigger>
+          <TabsTrigger value="capabilities">能力矩阵</TabsTrigger>
           <TabsTrigger value="aliases">别名</TabsTrigger>
           <TabsTrigger value="routing">路由优先级</TabsTrigger>
         </TabsList>
@@ -849,6 +868,109 @@ export function ModelsPage() {
           </div>
         </TabsContent>
 
+        <TabsContent value="capabilities" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Card>
+              <CardContent className="flex items-center gap-3 p-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-md bg-blue-500/10 text-blue-600">
+                  <ListChecks className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Tool Use Provider</p>
+                  <p className="text-2xl font-semibold">{toolUseProviderCount} / {providers.length}</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="flex items-center gap-3 p-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-md bg-green-500/10 text-green-600">
+                  <CheckCircle2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Anthropic-compatible</p>
+                  <p className="text-2xl font-semibold">{providers.filter((provider) => provider.protocol === 'anthropic').length}</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="flex items-center gap-3 p-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-md bg-amber-500/10 text-amber-600">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">需要关注</p>
+                  <p className="text-2xl font-semibold">{degradedProviders.length}</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Provider</TableHead>
+                    <TableHead>协议</TableHead>
+                    <TableHead>Tool Use</TableHead>
+                    <TableHead>tool_choice</TableHead>
+                    <TableHead>并行工具</TableHead>
+                    <TableHead>Arguments</TableHead>
+                    <TableHead>保真模式</TableHead>
+                    <TableHead>状态</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {capabilityRows.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">暂无 Provider</TableCell>
+                    </TableRow>
+                  ) : capabilityRows.map(({ provider, toolUse }) => (
+                    <TableRow key={provider.id}>
+                      <TableCell>
+                        <div className="min-w-0 space-y-1">
+                          <p className="truncate font-medium">{providerDisplayTitle(provider)}</p>
+                          <p className="truncate font-mono text-xs text-muted-foreground">{provider.id}</p>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{PROVIDER_PROTOCOL_LABELS[provider.protocol]}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={toolUse.supported ? 'success' : 'secondary'}>
+                          {toolUse.supported ? '支持' : '关闭'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={toolUse.toolChoice ? 'outline' : 'secondary'}>
+                          {toolUse.toolChoice ? '支持' : '不支持'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={toolUse.parallelToolCalls ? 'outline' : 'secondary'}>
+                          {toolUse.parallelToolCalls ? '允许' : '单工具'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{toolStreamingArgumentsLabel(toolUse.streamingArguments)}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        {provider.fidelityMode ? <Badge variant="outline">{fidelityModeLabel(provider.fidelityMode)}</Badge> : <span className="text-sm text-muted-foreground">默认</span>}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <StatusBadge status={providerRuntimeState(provider)} />
+                          {providerNeedsRecharge(provider) && <Badge variant="warning">代充值</Badge>}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="aliases" className="space-y-4">
           <TableToolbar
             actions={(
@@ -1013,7 +1135,21 @@ export function ModelsPage() {
                 />
               </Field>
               <Field label="协议">
-                <Select value={providerForm.protocol} onValueChange={(value) => setProviderForm({ ...providerForm, protocol: value as ProviderProtocol })}>
+                <Select
+                  value={providerForm.protocol}
+                  onValueChange={(value) => {
+                    const protocol = value as ProviderProtocol
+                    setProviderForm({
+                      ...providerForm,
+                      protocol,
+                      toolStreamingArguments: defaultToolStreamingArguments(
+                        protocol,
+                        providerForm.deduplicateStreamText,
+                        providerForm.id,
+                      ),
+                    })
+                  }}
+                >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="openai-compat">OpenAI 兼容</SelectItem>
@@ -1077,6 +1213,20 @@ export function ModelsPage() {
                   </SelectContent>
                 </Select>
               </Field>
+              <Field label="Tool Use 参数流">
+                <Select
+                  value={providerForm.toolStreamingArguments}
+                  onValueChange={(value) => setProviderForm({ ...providerForm, toolStreamingArguments: value as ToolStreamingArguments })}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="native">native</SelectItem>
+                    <SelectItem value="delta">delta</SelectItem>
+                    <SelectItem value="cumulative">cumulative</SelectItem>
+                    <SelectItem value="best_effort">best_effort</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
               <div className="space-y-3 rounded-md border bg-muted/20 p-3 md:col-span-2">
                 <SwitchRow
                   label="需要 API Key"
@@ -1091,12 +1241,42 @@ export function ModelsPage() {
                 <SwitchRow
                   label="流式文本去重"
                   checked={providerForm.deduplicateStreamText}
-                  onCheckedChange={(deduplicateStreamText) => setProviderForm({ ...providerForm, deduplicateStreamText })}
+                  onCheckedChange={(deduplicateStreamText) => setProviderForm({
+                    ...providerForm,
+                    deduplicateStreamText,
+                    toolStreamingArguments: defaultToolStreamingArguments(
+                      providerForm.protocol,
+                      deduplicateStreamText,
+                      providerForm.id,
+                    ),
+                  })}
                 />
                 <SwitchRow
                   label="缓冲非流式文本"
                   checked={providerForm.bufferStreamText}
                   onCheckedChange={(bufferStreamText) => setProviderForm({ ...providerForm, bufferStreamText })}
+                />
+                <SwitchRow
+                  label="支持 Tool Use"
+                  checked={providerForm.toolUseSupported}
+                  onCheckedChange={(toolUseSupported) => setProviderForm({
+                    ...providerForm,
+                    toolUseSupported,
+                    toolChoice: toolUseSupported ? providerForm.toolChoice : false,
+                    parallelToolCalls: toolUseSupported ? providerForm.parallelToolCalls : false,
+                  })}
+                />
+                <SwitchRow
+                  label="支持 tool_choice"
+                  checked={providerForm.toolChoice}
+                  disabled={!providerForm.toolUseSupported}
+                  onCheckedChange={(toolChoice) => setProviderForm({ ...providerForm, toolChoice })}
+                />
+                <SwitchRow
+                  label="允许并行工具调用"
+                  checked={providerForm.parallelToolCalls}
+                  disabled={!providerForm.toolUseSupported}
+                  onCheckedChange={(parallelToolCalls) => setProviderForm({ ...providerForm, parallelToolCalls })}
                 />
                 <SwitchRow
                   label="保存后禁用"
@@ -1396,6 +1576,12 @@ function compactProviderName(value: string) {
 }
 
 function providerToForm(provider: Provider): ProviderFormState {
+  const toolUse = provider.toolUse ?? defaultToolUseForProviderForm(
+    provider.id,
+    provider.protocol,
+    provider.deduplicateStreamText,
+  )
+
   return {
     id: provider.id,
     displayName: provider.displayName,
@@ -1411,6 +1597,10 @@ function providerToForm(provider: Provider): ProviderFormState {
     deduplicateStreamText: provider.deduplicateStreamText,
     bufferStreamText: provider.bufferStreamText,
     fidelityMode: provider.fidelityMode || 'best_effort',
+    toolUseSupported: toolUse.supported,
+    toolChoice: toolUse.toolChoice,
+    parallelToolCalls: toolUse.parallelToolCalls,
+    toolStreamingArguments: toolUse.streamingArguments,
     disabled: provider.status === 'disabled',
   }
 }
@@ -1447,6 +1637,12 @@ function providerPayloadFromForm(form: ProviderFormState, includeId: boolean): P
     deduplicateStreamText: form.deduplicateStreamText,
     bufferStreamText: form.bufferStreamText,
     fidelityMode: form.fidelityMode,
+    toolUse: {
+      supported: form.toolUseSupported,
+      toolChoice: form.toolChoice,
+      parallelToolCalls: form.parallelToolCalls,
+      streamingArguments: form.toolStreamingArguments,
+    },
     disabled: form.disabled,
   }
 }
@@ -1471,6 +1667,30 @@ function parseList(value: string): string[] {
       .map((item) => item.trim())
       .filter(Boolean),
   ))
+}
+
+function defaultToolUseForProviderForm(
+  providerId: string,
+  protocol: ProviderProtocol,
+  deduplicateStreamText: boolean,
+): NonNullable<Provider['toolUse']> {
+  return {
+    supported: true,
+    toolChoice: true,
+    parallelToolCalls: !LOCAL_PROVIDER_IDS.has(providerId),
+    streamingArguments: defaultToolStreamingArguments(protocol, deduplicateStreamText, providerId),
+  }
+}
+
+function defaultToolStreamingArguments(
+  protocol: ProviderProtocol,
+  deduplicateStreamText: boolean,
+  providerId: string,
+): ToolStreamingArguments {
+  if (protocol === 'anthropic') return 'native'
+  if (deduplicateStreamText) return 'cumulative'
+  if (LOCAL_PROVIDER_IDS.has(providerId) || providerId === 'custom') return 'best_effort'
+  return 'delta'
 }
 
 function providerNeedsRecharge(provider: Provider): boolean {
@@ -1636,6 +1856,11 @@ function ProviderCard({
             {routeReady ? '可路由' : credentialReady ? '未激活' : '缺少密钥'}
           </Badge>
           {provider.fidelityMode && <Badge variant="outline">{fidelityModeLabel(provider.fidelityMode)}</Badge>}
+          {provider.toolUse?.supported && <Badge variant="outline">Tool Use</Badge>}
+          {provider.toolUse?.supported && (
+            <Badge variant="outline">工具流 {toolStreamingArgumentsLabel(provider.toolUse.streamingArguments)}</Badge>
+          )}
+          {provider.toolUse && !provider.toolUse.parallelToolCalls && <Badge variant="secondary">单工具调用</Badge>}
           {provider.passthroughUnknownModels && <Badge variant="warning">透传未知模型</Badge>}
         </div>
 
@@ -2029,16 +2254,18 @@ function Field({ label, className, children }: { label: string; className?: stri
 function SwitchRow({
   label,
   checked,
+  disabled,
   onCheckedChange,
 }: {
   label: string
   checked: boolean
+  disabled?: boolean
   onCheckedChange: (checked: boolean) => void
 }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <Label className="text-sm font-normal">{label}</Label>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} aria-label={label} />
+      <Label className={cn('text-sm font-normal', disabled && 'text-muted-foreground')}>{label}</Label>
+      <Switch checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} aria-label={label} />
     </div>
   )
 }
@@ -2047,4 +2274,11 @@ function fidelityModeLabel(value: NonNullable<Provider['fidelityMode']>) {
   if (value === 'strict') return '严格无损'
   if (value === 'stability') return '稳定优先'
   return '尽量无损'
+}
+
+function toolStreamingArgumentsLabel(value: NonNullable<Provider['toolUse']>['streamingArguments']) {
+  if (value === 'native') return 'Native'
+  if (value === 'cumulative') return '累计恢复'
+  if (value === 'best_effort') return 'Best effort'
+  return 'Delta'
 }

@@ -17,7 +17,7 @@ use crate::{
     error::AppError,
     http::{Header, SseFrame, SseFrameStream},
     pricing::{self, USAGE_HEADER},
-    providers::openai_compat::text_delta,
+    providers::openai_stream::text_delta,
     routes::AppState,
     types::{AnthropicRequest, anthropic_error_event, anthropic_request_value},
 };

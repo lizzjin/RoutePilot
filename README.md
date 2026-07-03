@@ -10,6 +10,56 @@ The goal is practical: keep your editor workflow unchanged while switching model
 
 ![ModelPort architecture overview](docs/assets/modelport-overview.svg)
 
+## Project Introduction
+
+ModelPort is a local model routing gateway, not a chat application and not a heavy enterprise model platform. Its job is to keep Claude Code and VS Code Claude speaking the Anthropic Messages API they already expect, while ModelPort handles the operational work around that API boundary: authentication, routing, protocol translation, provider health, request logs, quotas, and account governance.
+
+The project is designed for personal users, independent developers, and small teams that want one stable local endpoint for day-to-day coding work. In practice, ModelPort becomes the local "model port" for the machine or trusted LAN: editors call `http://127.0.0.1:17878/v1/messages`, and ModelPort resolves that request to DeepSeek's official Anthropic-compatible API, an OpenAI-compatible provider, Anthropic, OpenRouter, Mimo, Ollama, or a custom local runtime.
+
+The current standard sample is intentionally conservative: DeepSeek's official Anthropic-compatible API with `deepseek-v4-flash`. This keeps the main path close to Claude Code's protocol shape, reduces avoidable conversion risk, and provides a clear reference provider for future adapters.
+
+ModelPort is made of three practical layers:
+
+- **Protocol gateway:** accepts Anthropic-compatible client traffic, validates request shape, applies lightweight limits, and forwards either Anthropic-compatible requests or transformed OpenAI-compatible requests.
+- **Routing and policy plane:** resolves `provider:model`, aliases, default providers, model prefixes, provider order, API key policy, team policy, quotas, IP allowlists, and provider account pools.
+- **Operations dashboard:** exposes API keys, users, teams/projects, provider lifecycle, model inventory, logs, metrics, health status, backup, diagnostics, and config reload for small-team operations.
+
+## GPT Image 2 Positioning
+
+`gpt-image-2` is a useful reference point for ModelPort's future multimodal direction, but it should not be mixed into the current Claude Code text gateway path. The implemented mainline today is Anthropic-compatible text messages and SSE streaming for coding workflows. Image generation and editing have different operational constraints: larger request and response bodies, base64 or file payloads, multipart edits, no text-token streaming semantics, higher cost sensitivity, and stricter log redaction requirements.
+
+For that reason, ModelPort treats GPT Image 2 as a separate extension track:
+
+- README diagrams can use `gpt-image-2` as a design aid, then be committed as editable SVG assets in `docs/assets`.
+- Future image support should use a separate provider protocol such as `openai-images`.
+- Future routes should be explicit image routes such as `POST /v1/images/generations` and `POST /v1/images/edits`.
+- The existing control-plane primitives should be reused: API keys, provider routing, quotas, request-size limits, secret redaction, provider health, and dashboard diagnostics.
+
+See [docs/GPT_IMAGE_2_GUIDE.md](docs/GPT_IMAGE_2_GUIDE.md) for the detailed extension notes. The current README does not claim GPT Image 2 serving is implemented.
+
+## Key Engineering Challenges
+
+| Area | Why It Is Hard | Current Approach |
+| --- | --- | --- |
+| Protocol compatibility | Claude Code expects Anthropic Messages semantics, while many upstreams expose OpenAI-compatible chat APIs with different request fields, stream chunks, tool-call shapes, and error bodies. | Keep Anthropic as the client-facing contract, use focused provider adapters, support provider-level `max_tokens` behavior, preserve DeepSeek Anthropic-compatible pass-through where possible, and cover streaming/tool/error behavior with tests. |
+| Streaming correctness | SSE streams can replay partial text, split JSON frames, emit tool-call arguments incrementally, or fail after headers are already sent. | Normalize SSE frames, map upstream stream errors to Anthropic-style error events, deduplicate replayed stream text where a provider needs it, and keep provider-specific quirks behind adapter settings. |
+| Routing policy | A small gateway still needs predictable resolution across model IDs, aliases, `provider:model`, prefixes, default providers, disabled providers, discovered models, and account pools. | Maintain a runtime config snapshot plus control-plane overrides, expose model inventory in the dashboard, and validate that public model lists only include usable configured providers. |
+| Authentication and permissions | Personal setups want a simple token, while small teams need per-key restrictions without adopting OIDC or a full enterprise identity stack. | Support legacy router tokens for simple local use, dashboard-issued API keys for team mode, per-key model/provider policy, IP restrictions, quotas, spend limits, and optional `MODELPORT_REQUIRE_CONTROL_API_KEYS=1`. |
+| Security boundaries | Provider URLs, dashboard writes, public health endpoints, logs, and upstream error bodies can become SSRF or secret-leak paths. | Validate provider base URLs, block private/metadata addresses by default, redact secrets from errors, enforce CSRF/origin checks for dashboard writes, keep detailed readiness authenticated, and bound request size before routing. |
+| Reliability and account governance | Upstream providers fail in different ways: rate limits, 5xx, invalid keys, insufficient balance, slow streams, and partial responses. | Track provider and credential health, apply cooldowns, support manual/failover/round-robin account pools, mark insufficient-balance channels with a `代充值` badge, and expose `livez`, `readyz`, smoke, acceptance, and doctor scripts. |
+| Observability without over-ops | A personal or small-team gateway needs enough diagnostics without running Redis, Kubernetes, service meshes, or external tracing stacks. | Use in-process metrics, authenticated Prometheus output, request logs, trace/request IDs, provider health summaries, dashboard diagnostics, PostgreSQL or JSON storage, and simple shell verification scripts. |
+| Future image support | GPT Image 2 style workloads need different body limits, cost controls, privacy rules, response handling, and UI affordances than text completions. | Keep image APIs out of `/v1/messages`, document a separate `openai-images` extension path, and require explicit request/response limits plus base64 redaction before shipping image routes. |
+
+## Tool Use Compatibility
+
+ModelPort treats tool use as part of the protocol contract, not as opaque text. The DeepSeek Anthropic-compatible path preserves Anthropic `tools`, `tool_choice`, `tool_use`, and `tool_result` payloads. The OpenAI-compatible adapter converts Anthropic tool definitions into OpenAI function tools, maps `tool_choice`, converts assistant `tool_use` blocks into `tool_calls`, and converts user `tool_result` blocks into `role=tool` messages.
+
+For responses, OpenAI `tool_calls` are converted back into Anthropic `tool_use` content blocks. Streaming tool calls are tracked by upstream tool-call index, with `content_block_start`, `input_json_delta`, and `content_block_stop` emitted in Anthropic style. For providers that replay cumulative tool arguments, ModelPort deduplicates argument fragments and falls back to the best complete JSON object it can recover.
+
+The gateway now validates tool names, `tool_choice`, assistant `tool_use` blocks, user `tool_result` blocks, and tool payload size before routing. Providers also expose a lightweight `tool_use` capability matrix covering tool-use support, `tool_choice`, parallel tool calls, and streaming argument mode (`native`, `delta`, `cumulative`, or `best_effort`). Strict fidelity mode still refuses Anthropic features that cannot be preserved safely by an OpenAI-compatible provider. A future internal Tool IR can build on this matrix, but the current implementation already covers Claude Code's common tool-use path without adding a heavy abstraction layer too early.
+
+See [docs/TOOL_USE_COMPATIBILITY.md](docs/TOOL_USE_COMPATIBILITY.md) for the detailed Tool Use contract, validation rules, provider capability matrix, and streaming behavior.
+
 ## Current Working Profile
 
 This workspace is currently configured and verified with:
@@ -212,9 +262,10 @@ Full local checks:
 scripts/config-validate.sh
 scripts/status.sh
 scripts/acceptance.sh
+scripts/tool-use-acceptance.sh
 ```
 
-`scripts/acceptance.sh --upstream` and `scripts/provider-matrix.sh --all` make real provider calls and may incur upstream cost.
+`scripts/acceptance.sh --upstream`, `scripts/tool-use-acceptance.sh --upstream`, and `scripts/provider-matrix.sh --all` make real provider calls and may incur upstream cost.
 
 ## API Surface
 
@@ -414,6 +465,7 @@ Useful scripts:
 | `scripts/doctor.sh` | Check env, service, auth, VS Code settings, and key endpoints. |
 | `scripts/provider-matrix.sh` | Verify non-streaming and streaming compatibility for selected models. |
 | `scripts/acceptance.sh` | Run personal/small-team production acceptance checks. |
+| `scripts/tool-use-acceptance.sh` | Verify Tool Use conversion and validation with a local mock provider. |
 | `scripts/bench.sh` | Measure local and optional upstream latency. |
 | `scripts/build-release.sh` | Build `target/release/model-port`. |
 | `scripts/check.sh` | Run fmt, tests, and clippy. |

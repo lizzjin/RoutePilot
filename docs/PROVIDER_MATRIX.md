@@ -23,6 +23,14 @@ The script checks:
 - Local ModelPort auth and routing.
 - Upstream HTTP/error behavior as seen through ModelPort.
 
+Tool Use compatibility has a separate focused check:
+
+```bash
+scripts/tool-use-acceptance.sh --upstream
+```
+
+Default `scripts/tool-use-acceptance.sh` uses a local mock provider and proves the gateway adapter. `--upstream` is required before marking a real provider as Tool Use verified.
+
 It reads secrets from `.env` but does not print them.
 
 ## Standard Sample Baseline
@@ -41,27 +49,27 @@ ModelPort uses provider pricing only for operational cost estimates; upstream pr
 
 These providers are built into the router. A "Pending real-key verification" status means the adapter is configured, but the repository should not claim end-to-end production verification until a real key has been tested with `scripts/provider-matrix.sh`.
 
-| Provider | Protocol | Default Model | Status | Key Variables |
-| --- | --- | --- | --- | --- |
-| `deepseek` | Anthropic-compatible | `deepseek-v4-flash` | Standard sample | `DEEPSEEK_ANTHROPIC_AUTH_TOKEN`, `DEEPSEEK_MODEL` |
-| `deepseek_openai` | OpenAI-compatible | `deepseek-chat` | Pending real-key verification | `DEEPSEEK_OPENAI_API_KEY`, `DEEPSEEK_OPENAI_MODEL`, `DEEPSEEK_API_KEY` |
-| `mimo` | OpenAI-compatible | `mimo-v2.5-pro` | Generic OpenAI-compatible provider | `BASE_URL`, `MIMO_OPENAI_BASE_URL`, `MIMO_OPENAI_API_KEY`, `MIMO_MODEL` |
-| `anthropic` | Anthropic-compatible | `claude-sonnet-4-20250514` | Pending real-key verification | `ANTHROPIC_API_KEY`, `ANTHROPIC_UPSTREAM_MODEL` |
-| `openai` | OpenAI-compatible | `gpt-4o` | Pending real-key verification | `OPENAI_API_KEY`, `OPENAI_MODEL` |
-| `openrouter` | OpenAI-compatible | `openrouter/auto` | Pending real-key verification | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` |
-| `gemini` | OpenAI-compatible | `gemini-2.5-flash` | Pending real-key verification | `GEMINI_API_KEY`, `GEMINI_MODEL` |
-| `xai` | OpenAI-compatible | `grok-3` | Pending real-key verification | `XAI_API_KEY`, `XAI_MODEL` |
-| `groq` | OpenAI-compatible | `llama-3.3-70b-versatile` | Pending real-key verification | `GROQ_API_KEY`, `GROQ_MODEL` |
-| `dashscope` | OpenAI-compatible | `qwen-plus` | Pending real-key verification | `DASHSCOPE_API_KEY`, `DASHSCOPE_MODEL` |
-| `kimi` | OpenAI-compatible | `kimi-k2.6` | Pending real-key verification | `MOONSHOT_API_KEY`, `KIMI_MODEL` |
-| `zhipu` | OpenAI-compatible | `glm-4.7` | Pending real-key verification | `ZHIPU_API_KEY`, `ZHIPU_MODEL` |
-| `mistral` | OpenAI-compatible | `mistral-large-latest` | Pending real-key verification | `MISTRAL_API_KEY`, `MISTRAL_MODEL` |
-| `ark` | OpenAI-compatible | `doubao-seed-1-6-250615` | Pending real-key verification | `ARK_API_KEY`, `ARK_MODEL` |
-| `ollama` | OpenAI-compatible | `llama3.1` | Pending local runtime verification | `MODELPORT_ENABLE_OLLAMA`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL` |
-| `custom` | OpenAI-compatible | `default` | Depends on upstream | `CUSTOM_OPENAI_BASE_URL`, `CUSTOM_OPENAI_API_KEY`, `CUSTOM_OPENAI_MODEL` |
-| `local_sglang` | OpenAI-compatible | runtime served model | Pending local runtime verification | `MODELPORT_ENABLE_LOCAL_SGLANG`, `SGLANG_BASE_URL`, `SGLANG_MODEL` |
-| `local_vllm` | OpenAI-compatible | runtime served model | Pending local runtime verification | `MODELPORT_ENABLE_LOCAL_VLLM`, `VLLM_BASE_URL`, `VLLM_MODEL` |
-| `local_llamacpp` | OpenAI-compatible | runtime served model | Pending local runtime verification | `MODELPORT_ENABLE_LOCAL_LLAMACPP`, `LLAMACPP_BASE_URL`, `LLAMACPP_MODEL` |
+| Provider | Protocol | Default Model | Tool Use Default | Status | Key Variables |
+| --- | --- | --- | --- | --- | --- |
+| `deepseek` | Anthropic-compatible | `deepseek-v4-flash` | native | Standard sample | `DEEPSEEK_ANTHROPIC_AUTH_TOKEN`, `DEEPSEEK_MODEL` |
+| `deepseek_openai` | OpenAI-compatible | `deepseek-chat` | delta | Pending real-key verification | `DEEPSEEK_OPENAI_API_KEY`, `DEEPSEEK_OPENAI_MODEL`, `DEEPSEEK_API_KEY` |
+| `mimo` | OpenAI-compatible | `mimo-v2.5-pro` | delta | Generic OpenAI-compatible provider | `BASE_URL`, `MIMO_OPENAI_BASE_URL`, `MIMO_OPENAI_API_KEY`, `MIMO_MODEL` |
+| `anthropic` | Anthropic-compatible | `claude-sonnet-4-20250514` | native | Pending real-key verification | `ANTHROPIC_API_KEY`, `ANTHROPIC_UPSTREAM_MODEL` |
+| `openai` | OpenAI-compatible | `gpt-4o` | delta | Pending real-key verification | `OPENAI_API_KEY`, `OPENAI_MODEL` |
+| `openrouter` | OpenAI-compatible | `openrouter/auto` | delta | Pending real-key verification | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` |
+| `gemini` | OpenAI-compatible | `gemini-2.5-flash` | delta | Pending real-key verification | `GEMINI_API_KEY`, `GEMINI_MODEL` |
+| `xai` | OpenAI-compatible | `grok-3` | delta | Pending real-key verification | `XAI_API_KEY`, `XAI_MODEL` |
+| `groq` | OpenAI-compatible | `llama-3.3-70b-versatile` | delta | Pending real-key verification | `GROQ_API_KEY`, `GROQ_MODEL` |
+| `dashscope` | OpenAI-compatible | `qwen-plus` | delta | Pending real-key verification | `DASHSCOPE_API_KEY`, `DASHSCOPE_MODEL` |
+| `kimi` | OpenAI-compatible | `kimi-k2.6` | delta | Pending real-key verification | `MOONSHOT_API_KEY`, `KIMI_MODEL` |
+| `zhipu` | OpenAI-compatible | `glm-4.7` | delta | Pending real-key verification | `ZHIPU_API_KEY`, `ZHIPU_MODEL` |
+| `mistral` | OpenAI-compatible | `mistral-large-latest` | delta | Pending real-key verification | `MISTRAL_API_KEY`, `MISTRAL_MODEL` |
+| `ark` | OpenAI-compatible | `doubao-seed-1-6-250615` | delta | Pending real-key verification | `ARK_API_KEY`, `ARK_MODEL` |
+| `ollama` | OpenAI-compatible | `llama3.1` | best_effort, single-tool | Pending local runtime verification | `MODELPORT_ENABLE_OLLAMA`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL` |
+| `custom` | OpenAI-compatible | `default` | best_effort | Depends on upstream | `CUSTOM_OPENAI_BASE_URL`, `CUSTOM_OPENAI_API_KEY`, `CUSTOM_OPENAI_MODEL` |
+| `local_sglang` | OpenAI-compatible | runtime served model | best_effort, single-tool | Pending local runtime verification | `MODELPORT_ENABLE_LOCAL_SGLANG`, `SGLANG_BASE_URL`, `SGLANG_MODEL` |
+| `local_vllm` | OpenAI-compatible | runtime served model | best_effort, single-tool | Pending local runtime verification | `MODELPORT_ENABLE_LOCAL_VLLM`, `VLLM_BASE_URL`, `VLLM_MODEL` |
+| `local_llamacpp` | OpenAI-compatible | runtime served model | best_effort, single-tool | Pending local runtime verification | `MODELPORT_ENABLE_LOCAL_LLAMACPP`, `LLAMACPP_BASE_URL`, `LLAMACPP_MODEL` |
 
 ## Acceptance Checklist
 
@@ -71,6 +79,7 @@ Before marking a provider as verified:
 - Start or restart ModelPort.
 - Run `scripts/doctor.sh`.
 - Run `scripts/provider-matrix.sh --model <provider:model-or-model-id>`.
+- Run `scripts/tool-use-acceptance.sh --upstream` when the provider is expected to support Claude Code Tool Use.
 - For providers with multiple important models, run `scripts/provider-matrix.sh --models model-a,model-b`.
 - Record the date, provider, model, protocol, and any caveats in this document.
 - If the provider has special pricing, update the pricing table and add a regression test in `src/pricing.rs`.

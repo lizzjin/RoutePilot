@@ -12,10 +12,24 @@ scripts/acceptance.sh
 
 Default mode verifies the control plane and safety policies without making a real upstream model call.
 
+Tool Use has a dedicated acceptance script:
+
+```bash
+scripts/tool-use-acceptance.sh
+```
+
+Default Tool Use acceptance starts a temporary local OpenAI-compatible mock upstream, creates a temporary local provider through the dashboard API, validates non-streaming Tool Use, streaming `input_json_delta`, `tool_result` continuation, and malformed Tool Use rejection, then cleans the provider up. It does not consume upstream quota.
+
 To include one real `/v1/messages` call through the created API key:
 
 ```bash
 scripts/acceptance.sh --upstream
+```
+
+To certify the configured real upstream provider's Tool Use behavior:
+
+```bash
+scripts/tool-use-acceptance.sh --upstream
 ```
 
 Before a release or push that touches the dashboard, pricing, routing, auth, quotas, or request logs, also run the code checks:
@@ -48,10 +62,12 @@ The script verifies:
 - Audit events are recorded.
 - Full local backup export and validation work.
 - Temporary user, team/project, and key are cleaned up.
+- Dedicated Tool Use acceptance can validate the protocol adapter with a local mock provider.
 
 `--upstream` additionally verifies:
 
 - The same temporary API key can make a successful real model request when IP policy allows it.
+- `scripts/tool-use-acceptance.sh --upstream` verifies that the configured provider can return a real Tool Use response.
 
 ## Environment
 
@@ -68,9 +84,12 @@ Optional:
 
 ```env
 MODELPORT_DASHBOARD_URL=http://127.0.0.1:5173
+MODELPORT_TOOL_USE_MOCK_HOST=host.docker.internal
 ```
 
 The script requires `curl` and `node`. `node` is already part of the dashboard toolchain.
+
+`MODELPORT_TOOL_USE_MOCK_HOST` is optional. The Tool Use script automatically uses `host.docker.internal` when Docker Compose is running and `127.0.0.1` otherwise.
 
 ## Docker Compose
 

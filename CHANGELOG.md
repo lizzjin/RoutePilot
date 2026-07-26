@@ -13,6 +13,9 @@ All notable ModelPort changes are recorded here. The project follows
   retry/fallback, latency, and TTFT dimensions.
 - Authenticated operational views, build identity, Provider evidence output,
   and rejection metrics.
+- Opt-in smart-routing groups with policy/capability gates, quality/balanced/
+  economy/latency profiles, shadow decisions, stable canary activation,
+  session affinity, metrics, and relational decision evidence.
 - Commercial open-source governance, support, privacy, release, and supply
   chain policies.
 
@@ -45,12 +48,11 @@ All notable ModelPort changes are recorded here. The project follows
 
 ### Upgrade notice
 
-This is a deliberate clean storage baseline. Migration
-`0005_current_operational_schema.sql` rejects databases containing old
-request/attempt rows. Keep the old database as a backup and deploy this version
-against a new PostgreSQL database. Compose deliberately creates
-`modelport_modelport-postgres-18` and leaves the old
-`modelport_modelport-postgres` volume untouched; export the old database before
-removing any volume.
+Migration `0005_current_operational_schema.sql` now preserves existing
+normalized request/attempt rows, backfills conservative operational defaults,
+and derives request-level Provider/retry snapshots from historical attempts.
+Back up PostgreSQL and run a restore drill before upgrading. Compose still uses
+the PostgreSQL 18 volume `modelport_modelport-postgres-18`; export any older
+volume before removing it.
 
 [Unreleased]: https://github.com/tiammomo/ModelPort/commits/main

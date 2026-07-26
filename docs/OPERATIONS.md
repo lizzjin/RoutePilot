@@ -52,6 +52,45 @@ cover reachability after the local preflight succeeds.
 - Dashboard setup checks provide configuration diagnostics, not a guarantee
   that every upstream generation will succeed.
 
+## Smart-Router Rollout
+
+Treat a routing-policy change like a production release:
+
+1. Configure groups with `mode = "off"`, validate the configuration, and call
+   each candidate explicitly to verify protocol, Tool Use, streaming, limits,
+   credentials, and billing metadata.
+2. Set `mode = "shadow"` and keep `activation_percent = 0`. Compare the stored
+   recommendation with the selected baseline, error rate, latency, cost, and
+   downstream application evaluations.
+3. Set `mode = "active"` with a small explicit percentage such as 5. Increase
+   only after the canary and baseline are comparable over the intended traffic
+   classes. Bucketing is deterministic per hashed session ID when supplied,
+   otherwise per principal-scoped request fingerprint.
+4. Roll back immediately by setting `MODELPORT_SMART_ROUTING_MODE=shadow` or
+   `off` and restarting/reloading the base configuration. Do not edit historical
+   decision rows.
+
+Authenticated `GET /admin/router/status` reports the loaded policy, groups,
+decision counts, shadow disagreements, selected candidates, and process-local
+outcome/latency observations. Prometheus exposes
+`modelport_routing_decisions_total` and
+`modelport_routing_shadow_disagreements_total`. Durable evidence is stored in
+`modelport_routing_decisions` and is also included as `routingDecision` in
+request/log API rows. Decision evidence contains IDs, models, scores, bounded
+reason codes, and whether session affinity was used; it does not contain the
+prompt or raw session header.
+
+Investigate these conditions before increasing activation:
+
+- no eligible candidate: capability, API-key policy/quota, or configuration
+  removed every route;
+- `all_candidates_cooling`: all otherwise eligible Providers were cooling, so
+  the router retained a last-resort candidate instead of failing immediately;
+- high shadow disagreement: the configured baseline and policy priors disagree
+  frequently and need workload evaluation;
+- one candidate dominating every profile: verify per-model pricing and
+  quality/latency priors rather than assuming the score is correct.
+
 ## Request Logs
 
 The relational request log records:
@@ -64,6 +103,8 @@ The relational request log records:
 - bounded traffic class (`business`, `synthetic`, or `diagnostic`);
 - stream flag, status/status code, lifecycle latency, stream-only first
   semantic latency, retry/fallback;
+- routing mode/profile/policy, selected and recommended candidate, bounded
+  reason codes, both route scores, shadow disagreement, and decision ID;
 - input/output/cache tokens and estimated cost;
 - client IP, request path, and a category-only error message whose diagnostic
   detail is explicitly redacted before persistence.

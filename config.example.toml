@@ -44,3 +44,27 @@ repair_invalid_arguments = false
 [aliases]
 deepseek-v4-pro = "deepseek:deepseek-v4-pro"
 deepseek-v4-flash = "deepseek:deepseek-v4-flash"
+
+# Smart aliases are opt-in and independent from deterministic aliases above.
+# Roll out with off -> shadow -> active and an explicit activation percentage.
+[routing]
+mode = "off"
+default_profile = "balanced"
+policy_version = "builtin-v1"
+activation_percent = 0
+
+[routing.groups.general]
+aliases = ["modelport-auto"]
+default_profile = "balanced"
+
+[[routing.groups.general.candidates]]
+provider = "deepseek"
+model = "deepseek-v4-pro"
+quality = 0.95
+latency_hint_ms = 1800
+
+[[routing.groups.general.candidates]]
+provider = "deepseek"
+model = "deepseek-v4-flash"
+quality = 0.82
+latency_hint_ms = 700

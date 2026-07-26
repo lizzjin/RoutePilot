@@ -33,6 +33,24 @@ team, model/provider, IP, spend, quota, and per-key policy on every data-plane
 request. It also rejects the legacy token for authenticated diagnostics and
 metrics. The legacy token represents one unrestricted local identity.
 
+Smart aliases accept two optional request headers:
+
+```http
+x-modelport-routing-profile: balanced
+x-modelport-session-id: stable-application-session
+```
+
+The profile must be `quality`, `balanced`, `economy`, or `latency`. The session
+value is bounded to 128 non-control bytes and is used only for an in-process
+affinity calculation; it is not copied into logs or the routing-decision table.
+These headers do not make deterministic aliases or `provider:model` requests
+smart.
+
+Successful inference responses include
+`x-modelport-routing-decision-id` and `x-modelport-routing-mode`. Use the
+decision ID to correlate client observations with the authenticated request log
+without exposing prompts or session identifiers.
+
 ## Messages
 
 ```bash
@@ -307,6 +325,8 @@ Route groups include:
   inventory, routes, and the administrator-only live DeepSeek balance check.
 - `/admin/settings`, `/admin/settings/reload-config`: runtime view, default
   provider/order updates, and base-config reload.
+- `GET /admin/router/status`: loaded smart-routing policy, rollout counters,
+  shadow disagreement, selection, and process-local candidate outcomes.
 - `GET /admin/audit`, `POST /admin/backup`: audit events and a redacted,
   non-restorable diagnostic snapshot.
 
@@ -534,6 +554,13 @@ and buffered-stream paths can also be `upstream-returned` when the Provider
 supplies usage. `clientProtocol` records `anthropic-messages` or
 `openai-chat-completions` independently from the selected Provider `protocol`,
 and `requestPath` records the public edge used.
+
+`routingDecision` is either the durable routing evidence object or `null` for
+historical rows created before smart-routing evidence was introduced. It
+contains `decisionId`, optional `groupId`, `profile`, `policyVersion`, `mode`,
+candidate count, selected/recommended Provider and model, both route scores,
+bounded reason codes, session-affinity use, and `shadowDisagreement`. It never
+contains prompts, request bodies, or the raw session header.
 
 Authenticated inference clients may set `x-modelport-traffic-class` to one of
 `business`, `synthetic`, or `diagnostic`; omission defaults to `business` and

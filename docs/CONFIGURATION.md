@@ -89,6 +89,70 @@ Provider topology is defined by TOML records plus the environment values those
 records reference. Keep runtime endpoints and secrets in `.env`/the process;
 keep provider names, protocol, model inventory, aliases, and order in TOML.
 
+### Smart routing groups
+
+Smart routing is opt-in and applies only to aliases declared under
+`[routing.groups.*]`. Existing aliases and explicit `provider:model` requests
+remain deterministic. A route first removes disabled, capability-incompatible,
+policy/quota-ineligible, and cooling candidates. It then ranks the remaining
+candidates with bounded operator quality/latency priors, current Provider
+reliability, recent process-local latency, estimated price, and an optional
+stable session affinity signal. Prompt or message content is not inspected.
+
+```toml
+[routing]
+mode = "shadow"               # off, shadow, or active
+default_profile = "balanced"  # quality, balanced, economy, or latency
+policy_version = "builtin-v1"
+activation_percent = 0        # 0-100; used only by active mode
+
+[routing.groups.general]
+aliases = ["modelport-auto"]
+default_profile = "balanced"
+
+[[routing.groups.general.candidates]]
+provider = "deepseek"
+model = "deepseek-v4-pro"
+quality = 0.95
+latency_hint_ms = 1800
+
+[[routing.groups.general.candidates]]
+provider = "openai"
+model = "gpt-5.5"
+quality = 0.98
+latency_hint_ms = 2200
+```
+
+`off` keeps a configured smart alias on its declared baseline order when it is
+called directly, but does not advertise that alias from `/v1/models`. `shadow`
+advertises it and computes/stores a recommendation without changing the
+baseline first candidate. `active` applies the scored order only to the stable
+session bucket (when the session header exists) or principal-scoped
+request-ID bucket selected by `activation_percent`; without a reused request ID,
+assignment is per request. The other requests remain the canary control group.
+An active configuration with zero percent is valid but emits a warning.
+
+Clients may override the group/default profile with
+`x-modelport-routing-profile`. `x-modelport-session-id` adds a small,
+deterministic affinity tie-breaker; its raw value is neither logged nor
+persisted. Both headers are optional. Invalid profiles fail before Provider
+egress.
+
+The following environment variables are emergency/runtime overrides for the
+corresponding TOML values:
+
+```env
+MODELPORT_SMART_ROUTING_MODE=shadow
+MODELPORT_SMART_ROUTING_PROFILE=balanced
+MODELPORT_SMART_ROUTING_ACTIVATION_PERCENT=0
+```
+
+Candidate quality is currently a versioned operator prior, not a self-modifying
+online-learning weight. Change it through reviewed configuration, increment
+`policy_version`, and compare shadow evidence before increasing active traffic.
+Configuration is bounded to 128 groups, 64 aliases per group, 256 candidates
+per group, and 1,024 aliases and candidates in total.
+
 ### Local Qwen only
 
 Environment:
@@ -285,11 +349,13 @@ management statistics. Auth and low-frequency control definitions may still
 use files, but a running server has no memory fallback for the operational
 ledger and requires `MODELPORT_DATABASE_URL`. `/readyz` verifies all stores.
 
-The current operational schema is a deliberate breaking boundary:
-`0005_current_operational_schema.sql` fails when older request or attempt rows
-exist. Provision a new database and keep the old database as a backup; the
-release does not infer missing identity, traffic, Tool Use, pricing, or routing
-snapshots.
+`0005_current_operational_schema.sql` preserves existing normalized request and
+attempt rows. It backfills conservative values for dimensions absent from the
+older schema and derives final Provider, model, protocol, retry count, and
+fallback snapshots from existing attempts before adding current constraints.
+Historical rows without Provider attempts retain a null Provider snapshot.
+Always back up PostgreSQL and exercise the migration against a restored copy
+before upgrading production.
 
 Each PostgreSQL request and Provider-attempt row carries an instance lease.
 ModelPort renews it throughout non-stream and streaming lifecycles. Startup and

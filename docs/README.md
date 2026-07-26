@@ -12,6 +12,8 @@ the source of truth for behavior and operations.
 - [Configuration](CONFIGURATION.md): environment variables, TOML, precedence,
   provider activation, Qwen-only/DeepSeek/combined recipes, QuantPilot client
   secret boundaries, validation, and reload scope.
+- [Smart routing](SMART_ROUTING.md): opt-in aliases, eligibility, scoring,
+  shadow/canary rollout, decision evidence, and current learning boundaries.
 - [API](API.md): public endpoints, authentication, model resolution, errors,
   streaming, and control-plane route groups.
 - [OIDC console sign-in](OIDC.md): optional single-host SSO preview,

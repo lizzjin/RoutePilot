@@ -19,7 +19,7 @@ Provider call was made for this review.
 | Provider mix | About 95.8% of completed traffic selected `local_qwen`. | Optimize the maintained local Qwen path before broad Provider catalog work. |
 | Workload shape | About 92.9% of retained requests declared or continued Tool Use. | Treat Tool Use workflow success, repair rate, TTFT, and full latency as primary service indicators rather than niche compatibility checks. |
 | Local stream latency | The sampled local-Qwen/OpenAI stream path had approximately 4.1 s TTFT P95 and 10 s full-lifecycle P95. | Segment performance by traffic class, Tool Use, alias, and context size. Improve the same workload mix before increasing concurrency. |
-| Billing provenance | 1,645 normalized request/attempt lifecycle rows were inspected; 729 unambiguous one-attempt rows had request-level Provider usage but an attempt still labelled `local-estimate`. | Start the current schema on a new database and persist Provider usage provenance atomically at request/attempt finalization. Do not import ambiguous historical rows. |
+| Billing provenance | 1,645 normalized request/attempt lifecycle rows were inspected; 729 unambiguous one-attempt rows had request-level Provider usage but an attempt still labelled `local-estimate`. | Preserve those rows, backfill only dimensions derivable from the normalized ledger, and persist complete Provider usage provenance atomically for new request/attempt finalization. |
 | Previous persistence state | The former control document contained 2,809 retained usage rows and 500 activities and was about 412 KiB. Each write replaced the logical document. | Remove usage, spend, and activity arrays from the control document. PostgreSQL terminal request rows and append-only audit events become the only operational source. |
 | Provider claims | No dated real-Provider result was committed in the compatibility matrix. | Generate secret-free, commit-bound evidence artifacts for explicit paid verification. Configuration alone is not verification. |
 
@@ -31,9 +31,9 @@ benchmark or SLO.
 - Non-stream Provider attempts now retain `upstream-returned` evidence when the
   adapter parsed Provider usage, including strict Tool Use validation failures
   that carry reported usage.
-- The current operational migration intentionally rejects databases containing
-  old request/attempt rows. Operators must provision a new database rather than
-  receive guessed dimensions or silent historical rewrites.
+- The current operational migration preserves normalized request/attempt rows,
+  backfills conservative defaults, and derives final Provider/retry snapshots
+  only where historical attempts provide evidence.
 - Pre-ledger inference failures increment
   `modelport_inference_rejections_total` with bounded `route`, `phase`, and
   `reason` labels. Error bodies, validation paths, credentials, and request
@@ -63,8 +63,9 @@ benchmark or SLO.
 
 ### P0 — Prove correctness after rollout
 
-1. Back up the existing deployment, provision a new PostgreSQL database, apply
-   all migrations, and verify the old-row guard fails closed against a fixture.
+1. Back up the existing deployment, restore it into an isolated PostgreSQL
+   target, apply all migrations, and verify request/attempt counts plus derived
+   Provider, retry, fallback, and latency fields against a populated fixture.
 2. Alert on rejection rate by phase. A rise in `validation` is a client
    contract issue; `rate_limit` or `concurrency` is capacity policy;
    `ledger` is a storage/readiness incident.

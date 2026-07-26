@@ -11,11 +11,11 @@ hashed idempotency claims, renewable instance leases, expired-row
 reconciliation, transactional budgets, complete operational request snapshots,
 relational usage/quota/spend queries, and append-only audit events. Runtime
 requires PostgreSQL; the memory ledger is test-only. Migration
-`0005_current_operational_schema.sql` rejects a database containing older
-request/attempt rows because this release does not fabricate missing
-operational dimensions or provide a compatibility import. Current estimated
-cost remains rounded USD micro-units; response replay and invoice-grade
-settlement are still out of scope.
+`0005_current_operational_schema.sql` preserves normalized request/attempt
+history, uses conservative defaults for dimensions absent from the older
+schema, and derives final Provider/retry snapshots only from existing attempts.
+Current estimated cost remains rounded USD micro-units; response replay and
+invoice-grade settlement are still out of scope.
 
 ## Context
 
@@ -59,13 +59,15 @@ settlements are corrected with append-only adjustments, not destructive edits.
 Redis may provide distributed rate limits, short leases, cache invalidation, and
 ephemeral coordination. Redis is not the authoritative budget or usage ledger.
 
-The current operational migration is a deliberate contract boundary:
+The current operational migration is an evidence-preserving contract:
 
-1. Apply all migrations to a new database.
-2. Verify the clean schema and application checks.
-3. Point the new release at that database during the planned cutover.
-4. Keep any old database as an operator-managed backup; ModelPort neither
-   imports nor silently rewrites its request/attempt history.
+1. Back up the database and restore it into an isolated drill environment.
+2. Apply all migrations and verify request/attempt counts and representative
+   final Provider/retry snapshots.
+3. Apply the same migration during the planned production cutover.
+4. Retain the pre-upgrade backup according to the operator's recovery policy;
+   ModelPort never fabricates prompt content, usage, pricing, or identity facts
+   that were absent from the older schema.
 
 ## Consequences
 

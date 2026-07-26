@@ -11,6 +11,7 @@ source of truth.
 | Organizations, projects, environments, providers, routes, users and API-key metadata | Configuration authority; back up and retain while referenced |
 | Provider secrets | Keep only in the configured secret store; never export into logs or repository files |
 | Gateway requests and provider attempts | Operational evidence; retain according to an explicit environment policy |
+| Routing decisions and feedback | Operational/evaluation evidence; retain or archive with the referenced gateway request |
 | Budget accounts, reservations and events | Financial/audit ledger; events are append-only and are not ordinary cleanup targets |
 | Sessions and transient login/rate-limit state | Expire through the built-in lifecycle, not manual table deletion |
 | Acceptance providers/users/teams | Scripts remove control objects on exit; request ledger evidence can remain |
@@ -21,11 +22,18 @@ is rejected. Do not disable those controls to make a dashboard look clean. If a 
 physical retention, implement an reviewed archive/partition policy that preserves account
 reconciliation and evidence export before dropping a partition.
 
-Migration `0005_reconcile_billing_provenance.sql` is an evidence-preserving
-correction: it appends a zero-value `migration-reconciliation` adjustment
-before changing an unambiguous attempt/reservation provenance summary from
-`local-estimate` to `upstream-returned`. It does not change token or monetary
-values and does not mutate the original reservation/settlement events.
+Migration `0005_current_operational_schema.sql` preserves existing normalized
+gateway requests and Provider attempts. It backfills conservative identity,
+path, traffic, Tool Use, and latency values and derives request/attempt
+Provider, retry, and fallback snapshots from existing attempt order before
+enforcing the current constraints. It does not delete history or invent token
+and monetary values.
+
+Migration `0007_smart_routing_decisions.sql` adds at most one decision row per
+gateway request plus optional feedback rows. It stores no prompt, response, or
+raw session identifier. Composite foreign keys cascade request retention to its
+decision and feedback, so archive and remove them as one retention unit rather
+than leaving orphaned evidence.
 
 ## Testing without contaminating a shared ledger
 

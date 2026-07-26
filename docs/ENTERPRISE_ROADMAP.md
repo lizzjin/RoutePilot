@@ -575,9 +575,10 @@ new enterprise-facing protocol instead of adding a second handler coupled to
 
 ## Migration And Compatibility Policy
 
-- The current operational schema is a deliberate clean baseline. Migration
-  `0005` rejects databases containing old request/attempt rows; deploy with a
-  new database and retain the old database only as a backup.
+- Migration `0005` preserves normalized request/attempt history, backfills
+  conservative operational defaults, and derives Provider/retry snapshots only
+  from existing attempt evidence. Production upgrades still require a backup
+  and restore-drill migration.
 - Old JSON state is neither imported nor used as a runtime fallback.
 - Provider quirks stay in adapters, not global protocol behavior.
 - Breaking public protocol changes require an explicit product decision; this

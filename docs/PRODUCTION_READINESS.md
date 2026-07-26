@@ -19,7 +19,9 @@ part of the current support claim.
 ## Go-Live Gate
 
 - [ ] Pin a released image digest or verified binary attestation.
-- [ ] Use a new PostgreSQL database for the current operational baseline.
+- [ ] Back up PostgreSQL and prove the embedded migration on a restored copy;
+      the current migration preserves and backfills normalized request/attempt
+      history.
 - [ ] Configure PostgreSQL TLS `verify-full` for remote/production databases.
 - [ ] Set strong unique admin, router, database, and Provider credentials.
 - [ ] Set `MODELPORT_ENTERPRISE_MODE=1`; startup then enforces database

@@ -36,7 +36,8 @@ ModelPort 面向单台可信主机或小型可信网络，不是公网多租户�
   响应校验和 Tool 语义终态观测。
 - 可选的单次非流式严格 Schema 参数修复；提示脱敏、每次尝试独立入账，并合并请求级
   Token/费用证据。
-- 模型别名、`provider:model`、精确模型和前缀路由。
+- 确定性别名与 `provider:model` 路由，以及可选的可解释智能别名：支持
+  capability/策略硬过滤、影子评估、稳定灰度、会话亲和与持久化决策证据。
 - 本地 legacy token，以及带模型/Provider/IP、滚动费用窗口和用户配额策略的
   控制台 API Key。
 - Provider 凭证池、冷却状态、有边界的 fallback、诊断、请求日志和
@@ -57,9 +58,10 @@ ModelPort 面向单台可信主机或小型可信网络，不是公网多租户�
   都先解析为强类型、协议中立的 Exchange IR，再进入共享治理链路；edge adapter
   会保留已支持的文本、角色、function tools、Tool Use ID、结束原因、usage 与有边界
   的 SSE，对未支持字段显式拒绝，不做静默丢弃。
-- **确定性路由：** 按明确顺序解析 `provider:model`、alias、精确模型、模型前缀和
-  默认 Provider；存在可用替代项时跳过冷却中的 Provider，并且只在模型可接收且
-  出现 transport、protocol、429 或 5xx 等可重试失败时执行有边界的 fallback。
+- **受治理路由：** `provider:model`、普通 alias、精确模型、模型前缀和默认
+  Provider 仍按确定顺序解析。可选智能别名先执行 capability、策略、配额和冷却
+  硬过滤，再按质量、可靠性、延迟、预估费用和会话亲和评分；影子和稳定灰度模式会
+  同时保留实际选择与推荐证据。fallback 仍只覆盖符合条件的模型和可重试失败。
 - **按上游尝试治理：** 鉴权及全局/身份/IP 限流先于路由执行；随后在每次上游
   尝试前检查 API Key 策略、用户配额、API Key/团队费用窗口、Provider 凭证、
   capability gate 以及 Provider/模型限流。preflight 拒绝不会扣量，只有确实发出
@@ -92,6 +94,10 @@ Provider 配置不等于真实上游验证；live stream 也可能在 HTTP 200 �
 ## 使用 Docker Compose 快速启动
 
 前置条件：Docker Compose v2，以及至少一个 Provider 的有效凭证。
+
+内嵌迁移会保留已有的关系型请求/尝试记录；`0005` 会先回填旧 Schema 缺少的
+保守维度，并从已有尝试推导最终 Provider、重试和 fallback 快照，再启用新约束。
+升级生产库前仍应先备份并用恢复副本完成迁移演练。
 
 复制模板前先选择上游拓扑：
 

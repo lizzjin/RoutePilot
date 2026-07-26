@@ -42,7 +42,9 @@ binding and cannot select another tenant. See
   per-tool JSON Schema response validation, and semantic Tool outcome telemetry.
 - Opt-in one-attempt, non-stream repair for strict tool-argument Schema failures,
   with redacted prompts, attempt-level ledger evidence, and aggregate accounting.
-- Model aliases, `provider:model`, exact-model and prefix routing.
+- Deterministic aliases and `provider:model` routing plus opt-in, explainable
+  smart aliases with capability/policy gates, shadow evaluation, stable canary
+  rollout, session affinity, and durable decision evidence.
 - Legacy local token and dashboard-issued API keys with model/provider/IP,
   rolling spend-window, and user-quota policy.
 - Provider credential pools, cooldown state, bounded fallback, diagnostics,
@@ -67,11 +69,12 @@ compatibility. Dated verification belongs in the
   the shared governance pipeline. Edge adapters preserve supported text,
   roles, function tools, Tool Use IDs, finish reasons, usage, and bounded SSE;
   unsupported fields are rejected instead of silently dropped.
-- **Deterministic routing:** explicit `provider:model`, aliases, exact model
-  matches, prefixes, and the default Provider resolve in a documented order.
-  Cooling Providers are skipped while an eligible alternative exists, and
-  fallback is limited to eligible models and retryable transport/protocol, 429,
-  or 5xx failures.
+- **Governed routing:** explicit `provider:model`, aliases, exact model matches,
+  prefixes, and the default Provider remain deterministic. Opt-in smart aliases
+  hard-filter candidates by capability, policy, quota, and cooldown before
+  scoring quality, reliability, latency, estimated cost, and session affinity.
+  Shadow and stable canary modes retain selected/recommended evidence, while
+  fallback remains limited to eligible models and retryable failures.
 - **Attempt-scoped governance:** authentication and global/identity/IP limits
   run before routing. API-key policy, user quota, API-key/team spend, Provider
   credentials, capability gates, and Provider/model limits are then checked for
@@ -115,11 +118,12 @@ boundaries](docs/ARCHITECTURE.md#technical-core).
 
 Requirements: Docker with Compose v2 and credentials for at least one provider.
 
-This release requires a new PostgreSQL database. Migration
-`0005_current_operational_schema.sql` deliberately rejects databases that
-already contain request/attempt rows; old operational history is not imported
-or assigned guessed dimensions. Keep the old database as a backup and cut over
-to a clean database.
+Embedded migrations preserve existing normalized request/attempt rows.
+`0005_current_operational_schema.sql` backfills the new operational dimensions
+and derives request-level Provider/retry snapshots from existing attempts
+before enforcing the current constraints. Back up PostgreSQL before every
+upgrade and validate the migration on a restore drill; no migration deletes
+request history.
 
 Choose the upstream topology before copying a template:
 

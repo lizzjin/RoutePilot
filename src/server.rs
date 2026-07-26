@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use tokio::net::TcpListener;
 use tracing::{info, warn};
@@ -10,6 +10,7 @@ use crate::{
     control::ControlStore,
     deployment,
     enterprise_ledger::EnterpriseLedger,
+    finalization::FinalizationTracker,
     http::HttpTransport,
     metrics::Metrics,
     oidc::OidcService,
@@ -41,6 +42,7 @@ pub(crate) async fn serve() -> Result<(), AppError> {
 
     let bind_addr = config.bind_addr;
     let ledger = Arc::new(EnterpriseLedger::connect_from_env().await?);
+    let finalizers = Arc::new(FinalizationTracker::default());
     let reconciled = ledger.reconcile_expired().await?;
     if reconciled.requests > 0 || reconciled.attempts > 0 {
         warn!(
@@ -64,6 +66,7 @@ pub(crate) async fn serve() -> Result<(), AppError> {
         transport: HttpTransport::new()?,
         metrics: Arc::new(Metrics::new()),
         ledger,
+        finalizers: finalizers.clone(),
     };
 
     let listener = TcpListener::bind(bind_addr).await?;
@@ -82,6 +85,15 @@ pub(crate) async fn serve() -> Result<(), AppError> {
     .with_graceful_shutdown(shutdown_signal())
     .await?;
 
+    let drain_timeout = finalization_drain_timeout();
+    if !finalizers.drain(drain_timeout).await {
+        warn!(
+            pending = finalizers.active(),
+            timeout_seconds = drain_timeout.as_secs(),
+            "timed out draining inference ledger finalizers during shutdown"
+        );
+    }
+
     Ok(())
 }
 
@@ -91,6 +103,16 @@ fn stream_concurrency_limit(default: usize) -> usize {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(default)
         .max(1)
+}
+
+fn finalization_drain_timeout() -> Duration {
+    Duration::from_secs(
+        std::env::var("MODELPORT_FINALIZATION_DRAIN_TIMEOUT_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(30)
+            .max(1),
+    )
 }
 
 async fn shutdown_signal() {

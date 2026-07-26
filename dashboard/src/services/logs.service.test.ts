@@ -85,6 +85,29 @@ describe('logs service', () => {
     expect(url.searchParams.get('pageSize')).toBe('500')
   })
 
+  it('includes the complete selected end minute in log ranges', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
+      logs: [],
+      total: 0,
+      summary: emptySummary,
+    })))
+
+    await logsService.getLogs({
+      dateFrom: '2026-07-26T13:06',
+      dateTo: '2026-07-26T13:06',
+    })
+
+    const fetchMock = vi.mocked(fetch)
+    const [rawUrl] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const url = new URL(rawUrl, 'http://modelport.local')
+    expect(url.searchParams.get('dateFrom')).toBe(
+      String(new Date('2026-07-26T13:06').getTime()),
+    )
+    expect(url.searchParams.get('dateTo')).toBe(
+      String(new Date('2026-07-26T13:06').getTime() + 60_000 - 1),
+    )
+  })
+
   it('loads a single log from the detail endpoint with an encoded id', async () => {
     const log = { id: 'log/one two' } as RequestLog
     const fetchMock = vi.fn().mockResolvedValue(Response.json(log))

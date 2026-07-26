@@ -8,7 +8,7 @@ test.describe('dashboard', () => {
 
   test('shows trend filters and fetches each supported range', async ({ page }) => {
     await expect(page.getByText('请求量趋势')).toBeVisible()
-    await expect(page.getByText('成功率')).toBeVisible()
+    await expect(page.getByText('24小时成功率', { exact: true })).toBeVisible()
     await expect(page.getByText('Invalid Date')).toHaveCount(0)
 
     await Promise.all([

@@ -40,6 +40,20 @@ export async function login(page: Page, env = requireE2EEnv()) {
   await expect(page.getByRole('heading', { name: '仪表盘' })).toBeVisible()
 }
 
+export async function seedFailedGatewayRequest(page: Page, env = requireE2EEnv()) {
+  const response = await page.request.post('/v1/chat/completions', {
+    headers: {
+      Authorization: `Bearer ${env.authToken}`,
+    },
+    data: {
+      model: 'custom:ci-model',
+      messages: [{ role: 'user', content: 'ModelPort isolated E2E ledger seed' }],
+    },
+  })
+  expect(response.status()).toBeGreaterThanOrEqual(500)
+  expect(response.status()).toBeLessThan(600)
+}
+
 export function csrfHeaders() {
   return { 'X-ModelPort-CSRF': '1' }
 }

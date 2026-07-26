@@ -706,11 +706,9 @@ export function DashboardPage() {
   const updatedAt = dataUpdatedAt
     ? new Date(dataUpdatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
     : '—'
-  const dataSourceLabel = stats.rangeDataSource === 'persisted-usage'
-    ? '持久化用量'
-    : stats.rangeDataSource === 'process-metrics-estimate'
-      ? '进程指标估算'
-      : '暂无数据'
+  const dataSourceLabel = stats.rangeDataSource === 'relational-ledger'
+    ? '关系账本'
+    : '暂无数据'
   const hasRequestTrend = chartData.some((point) => point.requests > 0 || point.errors > 0)
 
   // ---- Render ----

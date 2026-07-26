@@ -31,6 +31,7 @@ import {
   protocolLabel,
   providerTone,
   shortId,
+  trafficClassLabel,
 } from './log-utils'
 
 // ── Copy-to-clipboard helper ─────────────────────────────────────
@@ -285,7 +286,7 @@ function OverviewTab({
       <div className="flex flex-wrap gap-2">
         <Badge variant="outline" className={cn('gap-1.5', providerTone(log.provider))}>
           <Server className="h-3 w-3" />
-          {log.channelName || log.provider}
+          {log.provider}
         </Badge>
         <Badge variant="outline" className={statusBadgeClass(log.status)}>
           {log.status}
@@ -296,6 +297,7 @@ function OverviewTab({
         <Badge variant="outline">
           {log.stream === 'stream' ? '流式' : '非流式'}
         </Badge>
+        <Badge variant="outline">{trafficClassLabel(log.trafficClass)}</Badge>
         <Badge variant="outline">Client: {clientProtocolLabel(log.clientProtocol)}</Badge>
         <Badge variant="outline">Provider: {protocolLabel(log.protocol)}</Badge>
       </div>
@@ -313,7 +315,7 @@ function OverviewTab({
           copyValue={log.requestId || undefined}
           mono
         />
-        <DetailLine label="渠道信息" value={`${log.channelId || log.provider} - ${log.channelName || log.provider}`} />
+        <DetailLine label="Provider" value={log.provider} />
         <DetailLine
           label="请求路径"
           value={log.requestPath || '未记录'}
@@ -322,14 +324,15 @@ function OverviewTab({
         />
         <DetailLine label="客户端协议" value={clientProtocolLabel(log.clientProtocol)} />
         <DetailLine label="Provider 协议" value={protocolLabel(log.protocol)} />
+        <DetailLine label="流量类型" value={trafficClassLabel(log.trafficClass)} />
         <DetailLine label="流式模式" value={log.stream === 'stream' ? '流式' : '非流式'} />
         <DetailLine label="日志详情" value={compactDetail(log)} />
       </DetailSection>
 
       <DetailSection title="身份" icon={Server}>
         <DetailLine label="用户名" value={log.username} />
-        <DetailLine label="Token 名" value={log.tokenName || log.apiKeyName || 'legacy'} />
-        <DetailLine label="分组" value={log.group || log.apiKeyGroup || 'default'} />
+        <DetailLine label="API Key" value={log.apiKeyName || '未绑定 API Key'} />
+        <DetailLine label="分组" value={log.apiKeyGroup || '默认'} />
         <DetailLine label="用户 ID" value={log.userId} copyValue={log.userId} mono />
         <DetailLine label="客户端 IP" value={log.clientIp || '-'} copyValue={log.clientIp || undefined} mono />
       </DetailSection>
@@ -371,7 +374,7 @@ function ProtocolTraceTab({ log }: { log: RequestLog }) {
   const inboundProtocol = clientProtocolLabel(log.clientProtocol)
   const providerProtocol = protocolLabel(log.protocol)
   const resolvedModel = log.resolvedModel || log.model
-  const routeName = log.channelId ? `${log.channelId}:${resolvedModel}` : resolvedModel
+  const routeName = `${log.provider}:${resolvedModel}`
 
   return (
     <div className="space-y-5">
@@ -389,7 +392,7 @@ function ProtocolTraceTab({ log }: { log: RequestLog }) {
           tone={statusTone(log.status)}
         />
         <SignalTile label="Retry" value={String(log.retryCount || 0)} icon={Route} tone={(log.retryCount || 0) > 0 ? 'amber' : 'slate'} />
-        <SignalTile label="Provider" value={log.channelName || log.provider} icon={Server} tone="violet" />
+        <SignalTile label="Provider" value={log.provider} icon={Server} tone="violet" />
       </div>
 
       <div className="rounded-lg border p-4">
@@ -408,7 +411,7 @@ function ProtocolTraceTab({ log }: { log: RequestLog }) {
         />
         <TraceStep
           title="身份上下文"
-          detail={`${log.tokenName || log.apiKeyName || 'Token 未记录'} · ${log.group || log.apiKeyGroup || '标签未记录'} · IP ${log.clientIp || '未记录'}。这些字段不能证明具体认证阶段的结果。`}
+          detail={`${log.apiKeyName || '未绑定 API Key'} · ${log.apiKeyGroup || '默认分组'} · IP ${log.clientIp || '未记录'}。`}
           meta={log.userId ? '有记录' : '未记录'}
           tone="slate"
         />
@@ -420,7 +423,7 @@ function ProtocolTraceTab({ log }: { log: RequestLog }) {
         />
         <TraceStep
           title="请求结果"
-          detail={`状态 ${log.status} · Provider 归因 ${log.channelId || log.provider} · 重试记录 ${log.retryCount || 0} 次 · 总耗时 ${formatLatency(log.latencyMs)}。`}
+          detail={`状态 ${log.status} · Provider 归因 ${log.provider} · 重试记录 ${log.retryCount || 0} 次 · 总耗时 ${formatLatency(log.latencyMs)}。`}
           meta={String(log.statusCode)}
           tone={statusTone(log.status)}
           last
@@ -436,7 +439,7 @@ function ProtocolTraceTab({ log }: { log: RequestLog }) {
             model: log.model,
             stream: log.stream === 'stream',
             user: log.username,
-            api_key_label: log.tokenName || log.apiKeyName || null,
+            api_key_label: log.apiKeyName || null,
           }}
         />
         <JsonPanel
@@ -444,7 +447,7 @@ function ProtocolTraceTab({ log }: { log: RequestLog }) {
           value={{
             request_id: log.requestId || null,
             resolved_model: resolvedModel,
-            provider: log.channelId || log.provider,
+            provider: log.provider,
             cache: {
               creation: log.cacheWriteTokens || 0,
               read: log.cacheReadTokens || 0,
@@ -680,7 +683,7 @@ export function LogsDrawer({
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="outline" className={cn('gap-1.5', providerTone(log.provider))}>
                   <Server className="h-3 w-3" />
-                  {log.channelName || log.provider}
+                  {log.provider}
                 </Badge>
                 <Badge variant="outline" className={statusBadgeClass(log.status)}>
                   {log.status}

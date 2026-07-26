@@ -47,7 +47,7 @@ export interface DashboardStats {
   modelUsage: DashboardModelUsage[]
   tokenTimeSeries: DashboardTokenTimePoint[]
   rangeSummary: LogSummary
-  rangeDataSource: 'persisted-usage' | 'process-metrics-estimate' | 'empty'
+  rangeDataSource: 'relational-ledger' | 'empty'
   rangeDataEstimated: boolean
   rangeDataAtRetentionLimit: boolean
   providerHealth: Array<{

@@ -2,13 +2,14 @@ name: modelport
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18.4-alpine
     environment:
       POSTGRES_DB: ${MODELPORT_POSTGRES_DB:-modelport}
       POSTGRES_USER: ${MODELPORT_POSTGRES_USER:-modelport}
       POSTGRES_PASSWORD: ${MODELPORT_POSTGRES_PASSWORD:?set MODELPORT_POSTGRES_PASSWORD in .env}
+      PGDATA: /var/lib/postgresql/18/docker
     volumes:
-      - modelport-postgres:/var/lib/postgresql/data
+      - modelport-postgres-18:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 10s
@@ -26,8 +27,10 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
+        MODELPORT_VERSION: ${MODELPORT_VERSION:-0.1.0}
         MODELPORT_SOURCE_REVISION: ${MODELPORT_SOURCE_REVISION:-unknown}
         MODELPORT_SOURCE_STATE: ${MODELPORT_SOURCE_STATE:-unknown}
+        MODELPORT_BUILD_DATE: ${MODELPORT_BUILD_DATE:-unknown}
     image: modelport:local
     init: true
     read_only: true
@@ -43,7 +46,6 @@ services:
       MODELPORT_BIND: 0.0.0.0:38082
       MODELPORT_ENV_FILE: /config/.env
       MODELPORT_STATE_DIR: /data
-      MODELPORT_CONTROL_STORE: /data/control-plane.json
       MODELPORT_CONFIG: /config/config.toml
       MODELPORT_DATABASE_URL: ${MODELPORT_DATABASE_URL:-postgres://${MODELPORT_POSTGRES_USER:-modelport}:${MODELPORT_POSTGRES_PASSWORD:?set MODELPORT_POSTGRES_PASSWORD in .env}@postgres:5432/${MODELPORT_POSTGRES_DB:-modelport}}
       MODELPORT_TRUSTED_PROXIES: ${MODELPORT_TRUSTED_PROXIES:-127.0.0.1,::1,172.16.0.0/12}
@@ -75,6 +77,11 @@ services:
     build:
       context: .
       dockerfile: dashboard/Dockerfile
+      args:
+        MODELPORT_VERSION: ${MODELPORT_VERSION:-0.1.0}
+        MODELPORT_SOURCE_REVISION: ${MODELPORT_SOURCE_REVISION:-unknown}
+        MODELPORT_SOURCE_STATE: ${MODELPORT_SOURCE_STATE:-unknown}
+        MODELPORT_BUILD_DATE: ${MODELPORT_BUILD_DATE:-unknown}
     image: modelport-dashboard:local
     init: true
     read_only: true
@@ -98,7 +105,7 @@ services:
 
 volumes:
   modelport-data:
-  modelport-postgres:
+  modelport-postgres-18:
 
 networks:
   default:

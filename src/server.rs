@@ -14,6 +14,7 @@ use crate::{
     metrics::Metrics,
     oidc::OidcService,
     routes::{self, AppState, GatewaySecurityPolicy, RateLimiter, TrustedProxyConfig},
+    version,
 };
 
 pub(crate) async fn serve() -> Result<(), AppError> {
@@ -66,7 +67,13 @@ pub(crate) async fn serve() -> Result<(), AppError> {
     };
 
     let listener = TcpListener::bind(bind_addr).await?;
-    info!(%bind_addr, "ModelPort listening");
+    info!(
+        %bind_addr,
+        version = version::VERSION,
+        revision = version::REVISION,
+        source_state = version::SOURCE_STATE,
+        "ModelPort listening"
+    );
 
     axum::serve(
         listener,

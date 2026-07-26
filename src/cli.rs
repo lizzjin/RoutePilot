@@ -5,9 +5,7 @@ use serde_json::{Value, json};
 
 use crate::{
     AppError,
-    auth::AuthStore,
     config::{AppConfig, ConfigIssueSeverity},
-    control::ControlStore,
     deployment,
     storage::{JsonStore, write_json_file_atomic},
 };
@@ -16,6 +14,7 @@ use crate::{
 enum Command {
     Serve,
     Help,
+    Version,
     ValidateConfig,
     ExportBackup(String),
     ValidateBackup(String),
@@ -27,6 +26,10 @@ pub(crate) fn handle(args: Vec<String>) -> Result<bool, AppError> {
         Command::Serve => Ok(false),
         Command::Help => {
             print_usage();
+            Ok(true)
+        }
+        Command::Version => {
+            println!("{}", crate::version::display());
             Ok(true)
         }
         Command::ValidateConfig => {
@@ -52,6 +55,7 @@ fn parse_command(args: &[String]) -> Result<Command, AppError> {
     match args {
         [] => Ok(Command::Serve),
         [flag] if flag == "-h" || flag == "--help" => Ok(Command::Help),
+        [flag] if flag == "-V" || flag == "--version" || flag == "version" => Ok(Command::Version),
         [command, subcommand] if command == "config" && subcommand == "validate" => {
             Ok(Command::ValidateConfig)
         }
@@ -131,8 +135,8 @@ struct LocalBackupFile {
 }
 
 fn export_backup(path: &str) -> Result<(), AppError> {
-    let auth_store = JsonStore::open("auth", AuthStore::default_data_path())?;
-    let control_store = JsonStore::open("control", ControlStore::default_data_path())?;
+    let auth_store = JsonStore::open("auth")?;
+    let control_store = JsonStore::open("control")?;
     let backup = LocalBackupFile {
         schema_version: 1,
         service: "model-port".to_owned(),
@@ -175,8 +179,8 @@ fn validate_backup(path: &str) -> Result<(), AppError> {
 
 fn restore_backup(path: &str) -> Result<(), AppError> {
     let backup = load_backup(path)?;
-    let auth_store = JsonStore::open("auth", AuthStore::default_data_path())?;
-    let control_store = JsonStore::open("control", ControlStore::default_data_path())?;
+    let auth_store = JsonStore::open("auth")?;
+    let control_store = JsonStore::open("control")?;
     backup_existing_state(path, "auth", auth_store.read_value()?)?;
     backup_existing_state(path, "control", control_store.read_value()?)?;
     auth_store.write_value(&backup.auth)?;
@@ -229,10 +233,7 @@ fn default_control_json() -> Value {
         "teams": [],
         "apiKeys": [],
         "quotas": [],
-        "usage": [],
-        "spendLedger": {},
         "routeConfig": {},
-        "activities": [],
         "providerTests": [],
         "providerHealth": [],
     })
@@ -247,7 +248,7 @@ fn now_millis() -> u64 {
 
 fn print_usage() {
     println!(
-        "Usage:\n  model-port\n  model-port config validate\n  model-port backup export <path>\n  model-port backup validate <path>\n  model-port backup restore <path> --yes\n\nCommands:\n  config validate          Load and validate configuration without starting the server\n  backup export <path>     Export a complete local backup with hashed auth material\n  backup validate <path>   Validate a local backup file\n  backup restore <path> --yes\n                           Restore local state after backing up current files"
+        "Usage:\n  model-port\n  model-port --version\n  model-port config validate\n  model-port backup export <path>\n  model-port backup validate <path>\n  model-port backup restore <path> --yes\n\nCommands:\n  --version                Print release and source-build identity\n  config validate          Load and validate configuration without starting the server\n  backup export <path>     Export auth/control definitions with hashed auth material\n  backup validate <path>   Validate a logical auth/control backup file\n  backup restore <path> --yes\n                           Restore auth/control definitions after saving current values"
     );
 }
 
@@ -263,6 +264,10 @@ mod tests {
     fn parses_server_and_read_only_commands() {
         assert_eq!(parse_command(&[]).unwrap(), Command::Serve);
         assert_eq!(parse_command(&args(&["--help"])).unwrap(), Command::Help);
+        assert_eq!(
+            parse_command(&args(&["--version"])).unwrap(),
+            Command::Version
+        );
         assert_eq!(
             parse_command(&args(&["config", "validate"])).unwrap(),
             Command::ValidateConfig

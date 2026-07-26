@@ -3,6 +3,7 @@ import type { ProviderProtocol } from './model.types'
 export type RequestStatus = 'success' | 'error' | 'timeout'
 export type StreamMode = 'stream' | 'non-stream'
 export type ToolUseMode = 'requested' | 'not-requested'
+export type TrafficClass = 'business' | 'synthetic' | 'diagnostic'
 
 export interface RequestLog {
   id: string
@@ -14,18 +15,16 @@ export interface RequestLog {
   apiKeyId?: string | null
   apiKeyName?: string | null
   apiKeyGroup?: string | null
-  tokenName?: string | null
-  group?: string | null
-  channelId?: string
-  channelName?: string
+  teamId?: string | null
+  teamName?: string | null
   model: string
   resolvedModel: string
   provider: string
   protocol: ProviderProtocol
   clientProtocol?: 'anthropic-messages' | 'openai-chat-completions'
   toolUseRequested?: boolean
-  toolOutcome?: 'unknown_legacy' | 'not_requested' | 'completed' | 'client_cancelled' | 'timeout' | 'protocol_error' | 'upstream_or_delivery_error'
-  requestType?: 'consume' | 'error'
+  trafficClass?: TrafficClass
+  toolOutcome?: 'not_requested' | 'continuation_tool_called' | 'tool_called' | 'final_answer' | 'answered_without_tool' | 'completed_unobserved' | 'client_cancelled' | 'timeout' | 'protocol_error' | 'upstream_or_delivery_error'
   stream: StreamMode
   status: RequestStatus
   statusCode: number
@@ -57,7 +56,6 @@ export interface RequestLog {
   clientIp?: string | null
   requestPath?: string
   billingMode?: string
-  detail?: string
   errorMessage: string | null
 }
 
@@ -71,6 +69,7 @@ export interface LogFilters {
   status?: RequestStatus
   stream?: StreamMode
   toolUse?: ToolUseMode
+  trafficClass?: TrafficClass
   dateFrom?: string
   dateTo?: string
   search?: string
@@ -87,6 +86,10 @@ export interface LogSummary {
   totalCacheReadTokens: number
   totalTokens: number
   totalCostEstimate: number
+  latencyP95Ms?: number
+  latencySampleCount?: number
+  firstByteLatencyP95Ms?: number
+  firstByteLatencySampleCount?: number
   rpm: number
   tpm: number
 }

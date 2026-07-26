@@ -124,13 +124,14 @@ An entry in `/v1/models` means it is configured and passes the local credential
 visibility check. Keyless local/custom providers can appear even when their
 runtime is offline; use provider testing or a real request for health evidence.
 
-Configured provider models are advertised in both forms, with the stable
-provider-qualified ID first (for example
-`local_qwen:qwen3.5-9b-q5km`) and the legacy unqualified model ID second (for
-example `qwen3.5-9b-q5km`). Long-lived clients should persist the qualified ID
-because it remains unambiguous when two providers expose the same upstream
-model name. Aliases remain separate catalog entries and resolve through the
-same deterministic routing rules.
+Configured provider models are advertised only with provider-qualified IDs
+(for example `local_qwen:qwen3.5-9b-q5km`). This is the stable, unambiguous
+catalog contract when multiple Providers expose the same upstream model name.
+Explicit aliases remain separate catalog entries and resolve through the same
+deterministic routing rules.
+Each catalog row also exposes the stable Provider ID in the standard
+`owned_by` field; `display_name` remains a human-readable origin/model-owner
+label and must not be parsed as an identifier.
 
 ## Streaming
 
@@ -328,17 +329,20 @@ cost microunits, and organization/project/environment cardinality.
 
 `GET /admin/enterprise/requests` accepts `page` (default 1), `pageSize`
 (default 25, maximum 100), and optional exact `state`, `protocol`,
-`organizationId`, `projectId`, and `environmentId` filters. `search` performs a
-bounded correlation search over ledger/request IDs, principal, model, tenant,
-terminal reason, and error. The response contains `requests`, `total`, `page`,
+`trafficClass`, `organizationId`, `projectId`, and `environmentId` filters.
+`trafficClass` accepts `business`, `synthetic`, or `diagnostic`. `search`
+performs a bounded correlation search over ledger/request IDs, principal,
+model, tenant, terminal reason, and error. Request facts include the public
+path, Tool Use intent/outcome and repair state, lifecycle latency/TTFT,
+retry/fallback, and billing provenance. Ordered attempts include their own
+latency and usage provenance. The response contains `requests`, `total`, `page`,
 and `pageSize`. `GET /admin/enterprise/requests/{ledger_id}` returns one request
 plus its ordered Provider attempts or a standard 404.
 
 These endpoints require an administrator dashboard session. They expose only
 whether a request claimed an idempotency key; the raw key, stored hash, request
 fingerprint, prompts, and Provider bodies are never returned. Memory mode uses
-the same response contract for local development, but its rows are neither
-durable nor multi-instance safe.
+the same response contract in tests only. A running server requires PostgreSQL.
 
 ### Enterprise Transactional Budget
 
@@ -415,14 +419,12 @@ again derives the canonical username.
 API-key and team spend limits are a different contract. The fields
 `fiveHourLimitUsd`, `dailyLimitUsd`, `weeklyLimitUsd`, and `monthlyLimitUsd`
 mean rolling 5-hour, 24-hour, 7-day, and 30-day windows. They are enforced for
-an API key only when the persisted compatibility field `rateLimited` is true;
+an API key only when `rateLimited` is true;
 the dashboard labels this switch “periodic spend limits”, not request-rate
-limiting. Spend uses hourly buckets, so the oldest bucket overlapping a rolling
-window is included in full. The boundary can therefore conservatively
-over-count by up to almost one hour.
+limiting. Consumption is summed from terminal relational request rows.
 
 Only a request that actually starts an upstream attempt increments a user quota
-or the API-key/team spend ledger. Attempt-level credential, policy, quota,
+or the API-key/team spend totals. Attempt-level credential, policy, quota,
 capability, URL, or Provider-rate rejection before `send()` can produce a
 post-routing log row with zero usage and no charge. Earlier ingress failures
 such as authentication, request-shape validation, model resolution, global
@@ -478,12 +480,10 @@ selected window before returning request/error series, token series, model
 usage, and `rangeSummary`. These values are not derived from the current logs
 page.
 
-`rangeDataSource` reports `persisted-usage`, `process-metrics-estimate`, or
-`empty`; `rangeDataEstimated` explicitly marks the process-metrics fallback.
-`rangeDataAtRetentionLimit=true` means the retained log has reached
-`MODELPORT_USAGE_LOG_LIMIT`, so the requested window may be incomplete even
-though aggregation covers the full retained set. The default retention is
-5,000 rows.
+`rangeDataSource` reports `relational-ledger` or `empty`.
+`rangeDataEstimated` and `rangeDataAtRetentionLimit` are always false: charts
+never substitute process metrics and request history is not stored in a
+bounded in-document ring buffer.
 
 ### Request Logs And Latency
 
@@ -498,10 +498,11 @@ are camelCase:
 | `provider`, `userId`, `apiKeyId` | Exact match. |
 | `model` | Case-insensitive substring across requested and resolved model. |
 | `dateFrom`, `dateTo` | Inclusive Unix epoch milliseconds. |
-| `search` | Case-insensitive substring across log/request/attempt IDs, provider/channel, model, user/key/group/team labels, terminal reason, error/detail, and request path. |
-| `username`, `group` | Case-insensitive substring; `group` checks both group fields. |
+| `search` | Case-insensitive substring across log/request/attempt IDs, Provider, model, user/API-key/group/team labels, terminal reason, error, request path, and protocol fields. |
+| `username`, `group` | Case-insensitive substring; `group` checks `apiKeyGroup`. |
 | `stream` | Exact `stream` or `non-stream`. |
 | `toolUse` | Exact `requested` or `not-requested`; classifies the workflow without retaining tool arguments. |
+| `trafficClass` | Exact `business`, `synthetic`, or `diagnostic`. |
 
 Each textual filter other than `search` is limited to 256 characters;
 `search` is limited to 512. Oversized values return `invalid_request`.
@@ -510,17 +511,21 @@ Results are ordered by timestamp descending. The response is
 `{ logs, total, summary }`: `total` is the filtered count before pagination,
 and `summary` is calculated over that complete filtered set rather than the
 current page. Summary fields are `totalRequests`, `successRequests`, the four
-token classes, `totalTokens`, `totalCostEstimate`, `rpm`, and `tpm`.
+token classes, `totalTokens`, `totalCostEstimate`, `rpm`, `tpm`,
+`latencyP95Ms`, `latencySampleCount`, `firstByteLatencyP95Ms`, and
+`firstByteLatencySampleCount`. Latency statistics cover the complete filtered
+set, not only the current page; first-byte samples exist only for streams with
+a recorded first semantic event.
 `toolUseRequests` and `toolUseSuccessRequests` provide the corresponding
-workflow counts. Rows recorded before this field was introduced deserialize as
-`toolUseRequested=false`; use a deployment timestamp when calculating coverage.
+workflow counts.
 
 Each row's `billingMode` records usage provenance. `upstream-returned` means a
 completed adapter path exposed Provider-reported token usage; `local-estimate`
 means ModelPort used its request-based estimate. Both remain operational cost
 estimates because ModelPort applies its local pricing table. When an
 attempt-level preflight rejection produces a row, it has `local-estimate`
-provenance but zero tokens/cost and is not charged to quota or the spend ledger.
+provenance but zero tokens/cost and is not charged to relational quota/spend
+totals.
 Live streams become `upstream-returned` when their Anthropic/OpenAI events
 contain recognized usage; otherwise they remain `local-estimate`. Non-stream
 and buffered-stream paths can also be `upstream-returned` when the Provider
@@ -553,11 +558,11 @@ model emitted a new call, and ModelPort still does not retain tool names,
 arguments, results, messages, or Provider bodies in the usage log.
 
 `toolOutcome` is an aggregate-only workflow classification:
-`unknown_legacy`, `not_requested`, `completed`, `client_cancelled`, `timeout`,
-`protocol_error`, or `upstream_or_delivery_error`. It is derived from the protocol terminal state
-and sanitized error category; it never contains tool names, arguments, results,
-or raw Provider content. Older rows deserialize as `unknown_legacy` so they do
-not falsely imply that the historical request omitted tools.
+`not_requested`, `continuation_tool_called`, `tool_called`, `final_answer`,
+`answered_without_tool`, `completed_unobserved`, `client_cancelled`, `timeout`,
+`protocol_error`, or `upstream_or_delivery_error`. It is derived from the
+protocol terminal state and sanitized error category; it never contains tool
+names, arguments, results, or raw Provider content.
 
 Persisted `status` is `success` only after a non-stream response succeeds or a
 stream reaches its protocol terminal signal and downstream body EOF. `timeout`

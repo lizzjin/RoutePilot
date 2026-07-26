@@ -1,7 +1,7 @@
 import type { ElementType } from 'react'
 import type { LogSummary } from '@/types'
-import { cn } from '@/lib/utils'
-import { Activity, BadgeDollarSign, DatabaseZap, Gauge, Wrench } from 'lucide-react'
+import { cn, formatLatency } from '@/lib/utils'
+import { Activity, BadgeDollarSign, Clock3, DatabaseZap, Gauge, Wrench } from 'lucide-react'
 import { formatInteger, formatMoney, formatPercent } from './log-utils'
 
 // ── Summary metric card ──────────────────────────────────────────
@@ -56,9 +56,11 @@ export function LogsSummaryGrid({
   const toolUseRequests = summary?.toolUseRequests || 0
   const toolUseSuccessRequests = summary?.toolUseSuccessRequests || 0
   const toolUseSuccessRate = toolUseRequests > 0 ? (toolUseSuccessRequests / toolUseRequests) * 100 : 0
+  const latencySampleCount = summary?.latencySampleCount || 0
+  const firstByteLatencySampleCount = summary?.firstByteLatencySampleCount || 0
 
   return (
-    <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 xl:grid-cols-6">
       <SummaryMetric
         label="消耗费用"
         value={formatMoney(summary?.totalCostEstimate || 0, 4)}
@@ -86,6 +88,15 @@ export function LogsSummaryGrid({
         helper={`${formatInteger(toolUseSuccessRequests)} 成功 / ${formatInteger(toolUseRequests)} 工作流`}
         icon={Wrench}
         tone="sky"
+      />
+      <SummaryMetric
+        label="P95 延迟"
+        value={latencySampleCount > 0 ? formatLatency(summary?.latencyP95Ms || 0) : '—'}
+        helper={firstByteLatencySampleCount > 0
+          ? `TTFT P95 ${formatLatency(summary?.firstByteLatencyP95Ms || 0)} · ${formatInteger(firstByteLatencySampleCount)} 个流`
+          : `${formatInteger(latencySampleCount)} 个完整请求 · 暂无 TTFT`}
+        icon={Clock3}
+        tone="amber"
       />
       <SummaryMetric
         label="缓存 Token"

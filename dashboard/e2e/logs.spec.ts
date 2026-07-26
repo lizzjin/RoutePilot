@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { login, requireE2EEnv } from './helpers'
+import { login, requireE2EEnv, seedFailedGatewayRequest } from './helpers'
 
 test.describe('request logs', () => {
   test.beforeEach(async ({ page }) => {
@@ -58,6 +58,7 @@ test.describe('request logs', () => {
   })
 
   test('uses mobile cards and exposes truthful accessible request detail', async ({ page }) => {
+    await seedFailedGatewayRequest(page)
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/logs')
     await expect(page.getByRole('heading', { name: '请求日志' })).toBeVisible()
@@ -81,6 +82,7 @@ test.describe('request logs', () => {
   })
 
   test('uses the available desktop width without empty side gutters', async ({ page }) => {
+    await seedFailedGatewayRequest(page)
     await page.setViewportSize({ width: 2048, height: 960 })
     await page.goto('/logs')
     await expect(page.getByRole('heading', { name: '请求日志' })).toBeVisible()

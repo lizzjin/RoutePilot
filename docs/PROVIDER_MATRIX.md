@@ -91,6 +91,24 @@ For multiple models:
 scripts/provider-matrix.sh --models provider:model-a,provider:model-b
 ```
 
+`--all` selects provider-qualified catalog entries and skips logical aliases so
+a paid matrix does not call the same configured Provider model repeatedly.
+
+Write a secret-free machine-readable evidence record for review or CI artifact
+retention:
+
+```bash
+scripts/provider-matrix.sh \
+  --models local_qwen:qwen3.5-9b-q5km,deepseek:deepseek-v4-flash \
+  --evidence artifacts/provider-matrix.json
+```
+
+The evidence includes the commit, dirty/clean source state, timestamp, traffic
+class, stable Provider ID, display label, and each non-stream/stream outcome. It
+does not include credentials, request/response bodies, or the gateway URL. Tool
+Use remains a separate acceptance result and must not be inferred from this
+artifact.
+
 For real Tool Use certification:
 
 ```bash

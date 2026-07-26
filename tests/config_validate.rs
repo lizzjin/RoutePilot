@@ -16,6 +16,7 @@ fn run_config_validate(extra_env: &[(&str, &str)]) -> Output {
             "MODELPORT_ENV_FILE",
             concat!(env!("CARGO_MANIFEST_DIR"), "/target/no-test-env-file"),
         )
+        .env("MODELPORT_DATABASE_URL", DATABASE_URL)
         .env("MODELPORT_AUTH_TOKEN", "ci-router-token-for-validation")
         .env(
             "DEEPSEEK_ANTHROPIC_AUTH_TOKEN",
@@ -43,6 +44,7 @@ fn run_env_default_config_validate(extra_env: &[(&str, &str)]) -> Output {
             "MODELPORT_ENV_FILE",
             concat!(env!("CARGO_MANIFEST_DIR"), "/target/no-test-env-file"),
         )
+        .env("MODELPORT_DATABASE_URL", DATABASE_URL)
         .env("MODELPORT_AUTH_TOKEN", "ci-router-token-for-validation")
         .env(
             "DEEPSEEK_ANTHROPIC_AUTH_TOKEN",
@@ -65,8 +67,8 @@ fn output_text(output: &Output) -> String {
 }
 
 #[test]
-fn cli_deployment_preflight_rejects_unsafe_enterprise_environments() {
-    let missing_database = run_config_validate(&[("MODELPORT_ENTERPRISE_MODE", "1")]);
+fn cli_deployment_preflight_requires_postgres_and_rejects_unsafe_enterprise_tls() {
+    let missing_database = run_config_validate(&[("MODELPORT_DATABASE_URL", "")]);
     let missing_database_text = output_text(&missing_database);
     assert!(
         !missing_database.status.success(),

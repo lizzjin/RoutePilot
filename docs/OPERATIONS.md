@@ -54,13 +54,14 @@ cover reachability after the local preflight succeeds.
 
 ## Request Logs
 
-The persisted usage log records:
+The relational request log records:
 
 - request ID, time, identity, API-key/team labels;
 - requested and resolved model, provider, and protocol;
 - whether the request declares/selects tools or continues a Tool Use exchange;
 - aggregate Tool Use outcome (`tool_called`, `continuation_tool_called`,
   `final_answer`, `answered_without_tool`, unobserved completion, or failure);
+- bounded traffic class (`business`, `synthetic`, or `diagnostic`);
 - stream flag, status/status code, lifecycle latency, stream-only first
   semantic latency, retry/fallback;
 - input/output/cache tokens and estimated cost;
@@ -72,12 +73,10 @@ raw provider bodies, tool names/arguments/results, or plaintext keys. The
 dashboard's protocol JSON panels are reconstructed summaries unless explicitly
 labelled otherwise.
 
-The same category-only policy applies to request/attempt ledger rows and
-Provider/credential health. On startup, control-state records written by an
-older version are rewritten without their historical error detail; the
-relational ledger migration performs the equivalent one-time rewrite. The
-authenticated HTTP caller may still receive a bounded actionable error for the
-current request, but that detail is not copied into durable telemetry.
+The same category-only policy applies to request/attempt rows and
+Provider/credential health. The authenticated HTTP caller may still receive a
+bounded actionable error for the current request, but that detail is not copied
+into durable telemetry.
 
 An HTTP-successful request is not automatically counted as a model tool call.
 `tool_called` means a validated response contained at least one tool call;
@@ -87,17 +86,19 @@ that returned text instead. These are request-level observations; ModelPort
 does not execute business tools and therefore cannot by itself certify the
 application's end-to-end task result.
 
-`MODELPORT_USAGE_LOG_LIMIT` defaults to 5,000 records. Records contain personal
-and network metadata, so protect database dumps, CLI backups, and diagnostic
-exports according to your retention policy.
+Rows contain personal and network metadata, so protect database dumps, CLI
+backups, and diagnostic exports and configure an explicit PostgreSQL retention
+policy when required.
 
 `GET /admin/logs` supports server-side filters and pages of 1–500 rows; its
-`total` and token/cost/rate `summary` cover the full filtered set before
-pagination. `GET /admin/logs/{id}` retrieves one row and returns a standard 404
-when it has expired or does not exist. See [API](API.md#request-logs-and-latency)
-for the query contract. Filtering and pagination reduce response/browser work,
-but the backend still materializes and scans the retained control document in
-memory; they are not indexed PostgreSQL row queries.
+`total` and token/cost/rate/latency `summary` cover the full filtered set before
+pagination. The summary exposes lifecycle P95 and, for streams with a semantic
+first event, TTFT P95. `GET /admin/logs/{id}` retrieves one row and returns a
+standard 404 when it does not exist. See
+[API](API.md#request-logs-and-latency) for the query contract. Filtering and
+pagination reduce response/browser work; the lower time bound is applied in
+PostgreSQL before rows are materialized, and detail retrieval uses the request
+primary key.
 
 The administrator-only Enterprise Operations page is a separate evidence
 surface backed by `GET /admin/enterprise/overview` and
@@ -105,9 +106,10 @@ surface backed by `GET /admin/enterprise/overview` and
 `GET/PUT /admin/enterprise/budget` and the append-only adjustment endpoint. In PostgreSQL mode it performs indexed,
 paginated request queries and loads Provider attempts only when an operator
 opens a request. Use it for tenant, idempotency, lease, crash-reconciliation,
+traffic class, request path, Tool Use lifecycle, latency/TTFT, retry/fallback,
 and attempt-level investigation. It intentionally exposes only the presence of
-an idempotency claim, never the key/hash or request fingerprint. In memory mode
-the page remains useful for local inspection but all rows disappear on restart.
+an idempotency claim, never the key/hash or request fingerprint. The in-memory
+ledger exists only in tests.
 
 Treat `reservedMicrounits` as in-flight exposure and `settledMicrounits` as
 terminal spend. A negative `availableMicrounits` means authoritative settlement
@@ -155,28 +157,33 @@ attempt. Attempt-level credential, policy/quota/capability, URL, or
 Provider-rate rejection before `send()` can create a zero-usage log row without
 incrementing user quota or API-key/team spend. Earlier authentication,
 request-shape, model-resolution, global-rate, and stream-permit failures may
-return before a persisted usage row exists. Neither class consumes budget.
+return before a persisted usage row exists. They increment the bounded
+`modelport_inference_rejections_total` metric by pre-ledger phase and safe error
+category. Neither class consumes budget.
 
 ## Dashboard Ranges And Retention
 
 Dashboard range cards and charts come from `GET /admin/dashboard`. The backend
 aggregates the complete retained usage set within the selected 1-, 3-, 7-day or
 custom window before returning request/error buckets, token buckets, model
-usage, and range totals. This aggregation is independent of the logs table's
-current page. Custom windows are limited to 90 days.
+usage, and range totals. These deployment-health views use `business` traffic
+only, so explicit acceptance and diagnosis calls do not distort cost, success,
+or trend totals. A real synthetic upstream failure can still update
+Provider/credential health and cooldown because the diagnostic observed an
+actual dependency failure. The logs page can still select every traffic class.
+This aggregation is independent of the logs table's current page. Custom windows
+are limited to 90 days.
 
 Use the response metadata when interpreting a chart:
 
-- `rangeDataSource=persisted-usage` uses retained request rows;
-- `process-metrics-estimate` is a process-lifetime fallback and is explicitly
-  marked by `rangeDataEstimated=true`;
-- `empty` means neither source covers the window;
-- `rangeDataAtRetentionLimit=true` means the store has reached
-  `MODELPORT_USAGE_LOG_LIMIT`, so older data may already have been evicted.
+- `rangeDataSource=relational-ledger` uses terminal PostgreSQL request rows;
+- `empty` means no relational request covers the window;
+- `rangeDataEstimated=false` confirms no process-metric estimate was used;
+- `rangeDataAtRetentionLimit=false` confirms there is no document-ring limit.
 
-Server-side full-window aggregation does not override retention. The default
-5,000-row cap can make a long or busy range incomplete; increase retention only
-after considering complete-document persistence cost and personal-data policy.
+The query reads only the selected window and current UTC day. Apply an explicit
+database retention policy if required by cost or personal-data policy; ModelPort
+does not silently evict rows from an in-document ring.
 
 ## Quotas And Spend Windows
 
@@ -186,12 +193,11 @@ month. Quota create/update must target a real auth user; the server stores that
 user's canonical username. Disabling or suspending the user revokes their keys
 and removes their quota rows.
 
-API-key/team spend fields use rolling windows instead: 5 hours, 24 hours, 7
-days, and 30 days. For API keys, the legacy JSON/API field `rateLimited` enables
-these periodic spend checks; it is not a requests-per-minute switch. The
-dashboard deliberately calls it “periodic spend limits”. The spend ledger uses
-hour buckets and includes the oldest overlapping hour in full, so boundary
-checks are conservative and may include almost one extra hour.
+API-key/team spend fields use relational terminal request rows over rolling
+5-hour, 24-hour, 7-day, and 30-day windows. The `rateLimited` API field enables
+these periodic spend checks; it is not a requests-per-minute switch. Dashboard
+API-key “today” counters and team daily/monthly display values use UTC calendar
+boundaries.
 
 ## Prometheus Metrics
 
@@ -205,14 +211,18 @@ Metrics are process-local and reset on restart:
 
 - `modelport_uptime_seconds`
 - `modelport_route_{requests,successes,failures,duration_ms}_total`
+- `modelport_inference_rejections_total`
 - `modelport_message_{requests,successes,failures,duration_ms}_total`
 - `modelport_message_{input,output,cache_write,cache_read}_tokens_total`
 - `modelport_message_cost_estimate_usd_total`
 
-Message series have `provider`, `model`, and `stream` labels. Model names are
-operator-controlled and can create high cardinality when arbitrary passthrough
-is enabled. Stream duration currently measures request setup/acceptance rather
-than complete generation time.
+Message series have `provider`, `model`, `traffic_class`, and `stream` labels.
+Model names are operator-controlled and can create high cardinality when
+arbitrary passthrough is enabled; overflow series remain separated by bounded
+traffic class. Rejection series use fixed route, phase, and category labels and
+never retain the client/provider error body. Stream duration covers the
+complete response-body lifecycle, while `firstByteLatencyMs` measures the first
+semantic text or Tool Call event.
 
 ## Streaming Concurrency
 
@@ -287,9 +297,9 @@ Stop writers before restore. The command saves the previous logical auth and
 control values next to the supplied backup path before replacing them. Auth and
 control are then replaced sequentially, not in one cross-document transaction;
 a second-write failure can require recovery from those saved values. For
-PostgreSQL deployments must keep the database-native dump produced by
-`backup-compose.sh`; the CLI export alone operates on file-backend documents.
-For JSON storage, back up the state directory with restrictive permissions.
+Keep the database-native dump produced by `backup-compose.sh`; the CLI export
+contains only the two logical auth/control documents and not the operational
+ledger. Store both backup forms with restrictive permissions.
 
 ## Provider Diagnosis
 
@@ -298,7 +308,7 @@ Use this order:
 1. `scripts/config-validate.sh`
 2. Dashboard provider test/model discovery through
    `POST /admin/providers/{provider_id}/models` (a CSRF-protected mutating action)
-3. `scripts/provider-matrix.sh --model provider:model`
+3. `scripts/provider-matrix.sh --model provider:model --evidence artifacts/provider-matrix.json`
 4. `scripts/tool-use-acceptance.sh --upstream` only when Tool Use should work
 5. backend request log and SSE event body
 6. upstream account status, permission, and balance; for the official
@@ -306,7 +316,9 @@ Use this order:
    `POST /admin/providers/deepseek/balance`
 
 Provider testing and matrix scripts can make paid calls. A configured model or
-HTTP 200 at stream start is not evidence of a completed generation.
+HTTP 200 at stream start is not evidence of a completed generation. The
+optional matrix artifact contains no gateway URL, credential, or body; it
+records the commit, source state, traffic class, and completed check outcomes.
 
 Non-local/non-custom Providers must use HTTPS. If a trusted internal upstream
 is available only over HTTP, `MODELPORT_ALLOW_INSECURE_PROVIDER_HTTP=1` is the
@@ -360,7 +372,7 @@ pause and the reconciliation interval below the TTL.
 | Provider pool has no usable credential | `failover`/`round_robin` fail closed when every credential is disabled, cooling down, or missing its environment value; repair the pool or verify the next Provider candidate. |
 | Dashboard cross-origin failure | Use a same-origin reverse proxy; `MODELPORT_ALLOWED_ORIGINS` is not a CORS switch. |
 | `config validate` rejects enterprise mode | Set a valid `MODELPORT_DATABASE_URL`, use `MODELPORT_DATABASE_TLS_MODE=verify-full`, and fix any reported pool, lease, proxy, or origin syntax before restarting. Validation errors intentionally prevent the server from binding. |
-| Auth/control state write latency grows | Lower usage retention while the compatibility documents remain; the normalized request/attempt ledger is already row-oriented, but identity/policy/usage-log migration is not complete. |
+| Auth/control state write latency grows | Inspect PostgreSQL latency and the one-connection document workers. Operational usage and audit rows are independent; low-frequency identity/policy definitions still replace their complete PostgreSQL documents. |
 | `/readyz` reports enterprise ledger failure | Check PostgreSQL reachability, migration permissions, pool exhaustion, TLS mode, root certificate, and hostname verification. |
 | `lease_expired_unreconciled` rows appear | Check process restarts, runtime stalls, PostgreSQL availability, and heartbeat warnings. Do not bill these rows without Provider evidence. |
 
@@ -372,10 +384,10 @@ pause and the reconciliation interval below the TTL.
   response body completion/drop.
 - Quota checks and usage updates are not transactional reservations. Parallel
   requests can overshoot a tight limit.
-- API-key/team rolling spend uses hourly buckets; the oldest overlapping hour
-  is conservatively counted in full.
+- API-key/team rolling spend is summed from terminal relational request rows.
 - Provider URL checks do not revalidate DNS answers against private ranges.
-- Auth/control persistence synchronously replaces complete JSON documents.
+- Low-frequency auth/control persistence replaces complete JSON documents;
+  inference usage and audit history do not.
 - Request and Provider-attempt rows are normalized, tenant-scoped, leased, and
   expired rows are terminalized automatically. Crash recovery cannot infer
   whether a Provider accepted the request or reconstruct missing token usage,

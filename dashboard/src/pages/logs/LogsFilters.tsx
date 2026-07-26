@@ -18,7 +18,7 @@ import {
   Wrench,
   Zap,
 } from 'lucide-react'
-import type { LogFilters, RequestStatus, StreamMode, ToolUseMode } from '@/types'
+import type { LogFilters, RequestStatus, StreamMode, ToolUseMode, TrafficClass } from '@/types'
 import { timeRangeToDates, type TimeRange } from './log-utils'
 
 const ALL = '__all__'
@@ -128,7 +128,7 @@ export function LogsFilters({
       .length + (filters.dateFrom || filters.dateTo ? 1 : 0),
     [filters],
   )
-  const advancedFilterCount = [filters.username, filters.group, filters.stream, filters.toolUse]
+  const advancedFilterCount = [filters.username, filters.group, filters.stream, filters.toolUse, filters.trafficClass]
     .filter(Boolean).length + (filters.dateFrom || filters.dateTo ? 1 : 0)
 
   const update = (patch: Partial<LogFilters>) => {
@@ -340,6 +340,25 @@ export function LogsFilters({
                   <SelectItem value={ALL}>全部工作流</SelectItem>
                   <SelectItem value="requested">Tool Use</SelectItem>
                   <SelectItem value="not-requested">非 Tool Use</SelectItem>
+                </SelectContent>
+              </Select>
+            </FilterField>
+
+            <FilterField label="流量类型" icon={Activity} className="xl:col-span-2">
+              <Select
+                value={filters.trafficClass || ALL}
+                onValueChange={(v) =>
+                  update({ trafficClass: v === ALL ? undefined : (v as TrafficClass) })
+                }
+              >
+                <SelectTrigger className="h-10">
+                  <SelectValue placeholder="全部流量" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>全部流量</SelectItem>
+                  <SelectItem value="business">业务</SelectItem>
+                  <SelectItem value="synthetic">合成测试</SelectItem>
+                  <SelectItem value="diagnostic">诊断</SelectItem>
                 </SelectContent>
               </Select>
             </FilterField>

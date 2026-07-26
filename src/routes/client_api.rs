@@ -18,8 +18,11 @@ use crate::{
     config::{AppConfig, ProviderConfig, ProviderProtocol, ResolvedProvider, TokenCountingMode},
     control::{UsageEstimate, UsageEventInput},
     domain::{AttemptId, RequestContext, RequestId},
-    enterprise_ledger::{LedgerAttempt, LedgerLease, LedgerOutcome, LedgerRequest},
+    enterprise_ledger::{
+        LedgerAttempt, LedgerLease, LedgerOutcome, LedgerRequest, LedgerRequestMetadata,
+    },
     exchange::{ClientRequest, ExchangeRequest, OpenAiChatRequest},
+    metrics::MessageMetricLabels,
     pricing::{self, ModelPricing, TokenUsageBreakdown},
     providers,
     stream_lifecycle::{
@@ -68,16 +71,12 @@ pub(super) fn public_model_rows(config: &AppConfig) -> Vec<Value> {
         }
 
         for model in &provider.models {
-            // Both forms are routable. Publish the provider-qualified ID first
-            // so clients can discover the stable, unambiguous contract they
-            // should persist, while retaining the legacy unqualified ID.
-            for public_id in [format!("{id}:{model}"), model.clone()] {
-                if !seen.insert(public_id.clone()) {
-                    continue;
-                }
+            let public_id = format!("{id}:{model}");
+            if seen.insert(public_id.clone()) {
                 models.push(json!({
                     "id": public_id,
                     "type": "model",
+                    "owned_by": id,
                     "display_name": public_model_display_name(id, provider, model),
                 }));
             }
@@ -98,6 +97,7 @@ pub(super) fn public_model_rows(config: &AppConfig) -> Vec<Value> {
             models.push(json!({
                 "id": alias,
                 "type": "model",
+                "owned_by": resolved.provider_id,
                 "display_name": public_model_display_name(&resolved.provider_id, &resolved.provider, &resolved.model),
             }));
         }
@@ -121,6 +121,7 @@ struct SentAttempt {
     pricing: Option<ModelPricing>,
     stream_lifecycle: StreamLifecycle,
     ledger_attempt: LedgerAttempt,
+    started: Instant,
 }
 
 fn public_model_display_name(provider_id: &str, provider: &ProviderConfig, model: &str) -> String {
@@ -281,20 +282,17 @@ async fn count_tokens_inner(
         provider_id: None,
         model: None,
     })?;
-    state.control.check_quotas(
+    let usage_policy = state.control.check_quotas(
         &identity,
-        UsageEstimate {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_write_tokens: 0,
-            cache_read_tokens: 0,
-            cost_estimate: 0.0,
-        },
         request_client_ip.as_deref(),
         &requested_model,
         &resolved.model,
         &resolved.provider_id,
     )?;
+    state
+        .ledger
+        .check_usage_policy(&usage_policy, UsageEstimate::default())
+        .await?;
     state
         .control
         .apply_selected_provider_credential_for_request(
@@ -342,10 +340,13 @@ async fn handle_inference(
     let identity = match authenticate_client(&state, &headers) {
         Ok(identity) => identity,
         Err(err) => {
-            state
-                .metrics
-                .record_route(route_name, false, started.elapsed());
-            return Err(err);
+            return Err(record_inference_rejection(
+                &state,
+                route_name,
+                "authentication",
+                err,
+                started,
+            ));
         }
     };
     let validation = match &request {
@@ -353,64 +354,77 @@ async fn handle_inference(
         ClientRequest::OpenAiChat(request) => validate_openai_chat_request(request),
     };
     if let Err(err) = validation {
-        state
-            .metrics
-            .record_route(route_name, false, started.elapsed());
-        return Err(err);
+        return Err(record_inference_rejection(
+            &state,
+            route_name,
+            "validation",
+            err,
+            started,
+        ));
     }
     let exchange = match ExchangeRequest::from_client(request) {
         Ok(exchange) => exchange,
         Err(err) => {
-            state
-                .metrics
-                .record_route(route_name, false, started.elapsed());
-            return Err(err);
+            return Err(record_inference_rejection(
+                &state,
+                route_name,
+                "validation",
+                err,
+                started,
+            ));
         }
     };
     let idempotency_key = match request_idempotency_key(&headers) {
         Ok(key) => key,
         Err(err) => {
-            state
-                .metrics
-                .record_route(route_name, false, started.elapsed());
-            return Err(err);
+            return Err(record_inference_rejection(
+                &state,
+                route_name,
+                "validation",
+                err,
+                started,
+            ));
         }
     };
     let request_fingerprint = match exchange.request_fingerprint() {
         Ok(fingerprint) => fingerprint,
         Err(err) => {
-            state
-                .metrics
-                .record_route(route_name, false, started.elapsed());
-            return Err(err);
+            return Err(record_inference_rejection(
+                &state,
+                route_name,
+                "validation",
+                err,
+                started,
+            ));
         }
     };
     let request_client_ip = client_ip(&headers, Some(peer_addr), &state.trusted_proxies);
     let traffic_class = match request_traffic_class(&headers) {
         Ok(traffic_class) => traffic_class,
         Err(err) => {
-            state
-                .metrics
-                .record_route(route_name, false, started.elapsed());
-            return Err(err);
+            return Err(record_inference_rejection(
+                &state,
+                route_name,
+                "validation",
+                err,
+                started,
+            ));
         }
     };
     let bound_tenant = match state.control.tenant_scope(&identity) {
         Ok(tenant) => tenant,
         Err(err) => {
-            state
-                .metrics
-                .record_route(route_name, false, started.elapsed());
-            return Err(err);
+            return Err(record_inference_rejection(
+                &state, route_name, "identity", err, started,
+            ));
         }
     };
     let tenant = match request_tenant_scope(&headers, &bound_tenant) {
         Ok(tenant) => tenant,
         Err(err) => {
-            state
-                .metrics
-                .record_route(route_name, false, started.elapsed());
-            return Err(err);
+            return Err(record_inference_rejection(
+                &state, route_name, "identity", err, started,
+            ));
         }
     };
     let request_context = RequestContext::scoped(
@@ -428,10 +442,9 @@ async fn handle_inference(
     let resolved = match config.resolve(&requested_model) {
         Ok(resolved) => resolved,
         Err(err) => {
-            state
-                .metrics
-                .record_route(route_name, false, started.elapsed());
-            return Err(err);
+            return Err(record_inference_rejection(
+                &state, route_name, "routing", err, started,
+            ));
         }
     };
     if let Err(err) = state.rate_limiter.check(RateLimitScope {
@@ -440,29 +453,39 @@ async fn handle_inference(
         provider_id: None,
         model: None,
     }) {
-        state
-            .metrics
-            .record_route(route_name, false, started.elapsed());
-        return Err(err);
+        return Err(record_inference_rejection(
+            &state,
+            route_name,
+            "rate_limit",
+            err,
+            started,
+        ));
     }
     if let Err(err) = enforce_context_admission(&state, &headers, &exchange, &resolved).await {
-        state
-            .metrics
-            .record_route(route_name, false, started.elapsed());
-        return Err(err);
+        return Err(record_inference_rejection(
+            &state,
+            route_name,
+            "admission",
+            err,
+            started,
+        ));
     }
     let stream = exchange.stream;
     let stream_permit = if stream {
         match state.stream_permits.clone().try_acquire_owned() {
             Ok(permit) => Some(permit),
             Err(_) => {
-                state
-                    .metrics
-                    .record_route(route_name, false, started.elapsed());
-                return Err(AppError::RateLimited {
+                let err = AppError::RateLimited {
                     message: "concurrent stream limit exceeded".to_owned(),
                     retry_after_secs: 1,
-                });
+                };
+                return Err(record_inference_rejection(
+                    &state,
+                    route_name,
+                    "concurrency",
+                    err,
+                    started,
+                ));
             }
         }
     } else {
@@ -470,21 +493,32 @@ async fn handle_inference(
     };
     let ledger_request = match state
         .ledger
-        .begin_request(
+        .begin_request_with_metadata(
             &request_context,
             &requested_model,
             stream,
             idempotency_key.as_deref(),
             &request_fingerprint,
+            &LedgerRequestMetadata {
+                request_path: exchange.request_path().to_owned(),
+                traffic_class: traffic_class.clone(),
+                tool_use_requested: exchange.uses_tools(),
+                username: identity.username.clone(),
+                api_key_id: identity.api_key_id.clone(),
+                api_key_name: identity.api_key_name.clone(),
+                api_key_group: identity.api_key_group.clone(),
+                team_id: identity.team_id.clone(),
+                team_name: identity.team_name.clone(),
+                client_ip: request_client_ip.clone(),
+            },
         )
         .await
     {
         Ok(request) => request,
         Err(err) => {
-            state
-                .metrics
-                .record_route(route_name, false, started.elapsed());
-            return Err(err);
+            return Err(record_inference_rejection(
+                &state, route_name, "ledger", err, started,
+            ));
         }
     };
     let ledger_lease = state.ledger.maintain_lease(&ledger_request);
@@ -540,14 +574,24 @@ async fn handle_inference(
             }
         };
         let estimate = estimate_usage(&exchange, &upstream_model, attempt.provider.pricing);
-        if let Err(err) = state.control.check_quotas(
+        let usage_policy = match state.control.check_quotas(
             &identity,
-            estimate,
             request_client_ip.as_deref(),
             &requested_model,
             &upstream_model,
             &provider_id,
         ) {
+            Ok(policy) => policy,
+            Err(err) => {
+                result = Err(err);
+                continue;
+            }
+        };
+        if let Err(err) = state
+            .ledger
+            .check_usage_policy(&usage_policy, estimate)
+            .await
+        {
             result = Err(err);
             continue;
         }
@@ -597,6 +641,7 @@ async fn handle_inference(
             "starting provider attempt"
         );
         let stream_lifecycle = StreamLifecycle::new();
+        let attempt_started = Instant::now();
         last_sent = Some(SentAttempt {
             attempt_id: attempt_id.clone(),
             provider_id: provider_id.clone(),
@@ -607,6 +652,7 @@ async fn handle_inference(
             pricing: attempt.provider.pricing,
             stream_lifecycle: stream_lifecycle.clone(),
             ledger_attempt: ledger_attempt.clone(),
+            started: attempt_started,
         });
         let attempt_result = send_inference_attempt(
             state.clone(),
@@ -639,30 +685,35 @@ async fn handle_inference(
                     "failed to persist provider attempt outcome"
                 );
             }
-            let attempt_estimate = attempt_result
+            let provider_usage = attempt_result
                 .as_ref()
                 .ok()
                 .and_then(|response| pricing::usage_from_headers(response.headers()))
-                .map(usage_estimate_from_charge)
-                .or_else(|| {
-                    attempt_result
-                        .as_ref()
-                        .err()
-                        .and_then(AppError::tool_argument_usage)
-                        .map(|usage| {
-                            usage_estimate_from_charge(pricing::charge_for_model_with_pricing(
-                                &upstream_model,
-                                usage,
-                                repair_template.provider.pricing,
-                            ))
-                        })
-                })
-                .unwrap_or(estimate);
+                .map(usage_estimate_from_charge);
+            let rejected_tool_usage = attempt_result
+                .as_ref()
+                .err()
+                .and_then(AppError::tool_argument_usage)
+                .map(|usage| {
+                    usage_estimate_from_charge(pricing::charge_for_model_with_pricing(
+                        &upstream_model,
+                        usage,
+                        repair_template.provider.pricing,
+                    ))
+                });
+            let billing_mode = if provider_usage.is_some() || rejected_tool_usage.is_some() {
+                "upstream-returned"
+            } else {
+                "local-estimate"
+            };
+            let attempt_estimate = provider_usage.or(rejected_tool_usage).unwrap_or(estimate);
             let ledger_outcome = LedgerOutcome::provider_attempt(
                 attempt_success,
                 attempt_status,
                 attempt_error.clone(),
                 attempt_estimate,
+                billing_mode,
+                attempt_started.elapsed(),
             );
             if let Err(err) = state
                 .ledger
@@ -781,20 +832,16 @@ async fn handle_inference(
     );
 
     let usage = UsageEventInput {
-        identity,
         request_id: Some(request_context.request_id.to_string()),
         attempt_id: last_sent.as_ref().map(|sent| sent.attempt_id.to_string()),
-        model: requested_model,
         resolved_model: upstream_model,
         provider: provider_id,
         protocol,
-        client_protocol: request_context.protocol.as_str().to_owned(),
         tool_use_requested,
         tool_outcome,
         traffic_class,
         tool_repair_attempted,
         tool_repair_recovered,
-        stream,
         success,
         timed_out,
         status_code,
@@ -813,8 +860,6 @@ async fn handle_inference(
             .flatten(),
         retry_count,
         fallback_from_provider,
-        client_ip: request_client_ip,
-        request_path: exchange.request_path().to_owned(),
         error_message,
     };
 
@@ -834,6 +879,7 @@ async fn handle_inference(
                 lifecycle: sent.stream_lifecycle,
                 ledger_request,
                 ledger_attempt: sent.ledger_attempt,
+                attempt_started: sent.started,
                 _ledger_lease: ledger_lease,
                 started,
                 route_name,
@@ -843,25 +889,19 @@ async fn handle_inference(
 
     state.metrics.record_route(route_name, success, duration);
     state.metrics.record_message(
-        &usage.provider,
-        &usage.resolved_model,
-        stream,
+        MessageMetricLabels {
+            provider: &usage.provider,
+            model: &usage.resolved_model,
+            traffic_class: &usage.traffic_class,
+            stream,
+        },
         success,
         duration,
         actual_estimate,
     );
-    let usage_for_ledger = usage.clone();
-    if let Err(err) = state.control.record_usage(usage) {
-        error!(
-            error = %err,
-            request_id = request_context.request_id.as_str(),
-            "failed to persist usage after handling upstream response"
-        );
-    }
-    let ledger_outcome = LedgerOutcome::from_usage(&usage_for_ledger);
     if let Err(err) = state
         .ledger
-        .finalize_request(&ledger_request, &ledger_outcome)
+        .finalize_request_usage(&ledger_request, &usage)
         .await
     {
         error!(
@@ -871,6 +911,22 @@ async fn handle_inference(
         );
     }
     result
+}
+
+fn record_inference_rejection(
+    state: &AppState,
+    route_name: &str,
+    phase: &'static str,
+    error: AppError,
+    started: Instant,
+) -> AppError {
+    state
+        .metrics
+        .record_route(route_name, false, started.elapsed());
+    state
+        .metrics
+        .record_rejection(route_name, phase, error.telemetry_code());
+    error
 }
 
 fn request_tenant_scope(
@@ -1147,6 +1203,7 @@ struct StreamFinalizationContext {
     lifecycle: StreamLifecycle,
     ledger_request: LedgerRequest,
     ledger_attempt: LedgerAttempt,
+    attempt_started: Instant,
     _ledger_lease: LedgerLease,
     started: Instant,
     route_name: &'static str,
@@ -1191,9 +1248,12 @@ impl StreamFinalizationContext {
             .metrics
             .record_route(self.route_name, self.usage.success, duration);
         self.state.metrics.record_message(
-            &self.usage.provider,
-            &self.usage.resolved_model,
-            true,
+            MessageMetricLabels {
+                provider: &self.usage.provider,
+                model: &self.usage.resolved_model,
+                traffic_class: &self.usage.traffic_class,
+                stream: true,
+            },
             self.usage.success,
             duration,
             self.usage.estimate,
@@ -1227,21 +1287,17 @@ impl StreamFinalizationContext {
             duration_ms = duration.as_millis(),
             "finalized message stream"
         );
-        let ledger_outcome = LedgerOutcome::from_usage(&self.usage);
+        let attempt_ledger_outcome =
+            LedgerOutcome::from_usage_with_latency(&self.usage, self.attempt_started.elapsed());
         let ledger = self.state.ledger.clone();
         let ledger_request = self.ledger_request;
         let ledger_attempt = self.ledger_attempt;
         let request_id = self.usage.request_id.clone();
-        if let Err(err) = self.state.control.record_usage(self.usage) {
-            error!(
-                error = %err,
-                "failed to persist usage after finalizing message stream"
-            );
-        }
+        let request_usage = self.usage;
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
                 if let Err(err) = ledger
-                    .finalize_attempt(&ledger_attempt, &ledger_outcome)
+                    .finalize_attempt(&ledger_attempt, &attempt_ledger_outcome)
                     .await
                 {
                     error!(
@@ -1251,7 +1307,7 @@ impl StreamFinalizationContext {
                     );
                 }
                 if let Err(err) = ledger
-                    .finalize_request(&ledger_request, &ledger_outcome)
+                    .finalize_request_usage(&ledger_request, &request_usage)
                     .await
                 {
                     error!(

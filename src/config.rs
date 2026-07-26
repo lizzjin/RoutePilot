@@ -1697,10 +1697,6 @@ fn validate_runtime_guardrail_env(issues: &mut Vec<ConfigIssue>) {
             NumericEnvRequirement::NonZeroUsize,
         ),
         (
-            "MODELPORT_USAGE_LOG_LIMIT",
-            NumericEnvRequirement::NonZeroUsize,
-        ),
-        (
             "MODELPORT_RATE_LIMIT_WINDOW_SECONDS",
             NumericEnvRequirement::NonZeroU64,
         ),

@@ -13,7 +13,9 @@ test.describe('models', () => {
     const providers = await providersResponse.json() as Array<{ id: string; status: string; models: string[] }>
     const activeProviders = providers.filter((provider) => provider.status === 'active')
     const activeProviderIds = new Set(activeProviders.map((provider) => provider.id))
-    const publicModelIds = new Set(activeProviders.flatMap((provider) => provider.models))
+    const publicModelIds = new Set(activeProviders.flatMap((provider) => (
+      provider.models.map((model) => `${provider.id}:${model}`)
+    )))
 
     const aliasesResponse = await page.request.get('/admin/aliases')
     expect(aliasesResponse.ok()).toBeTruthy()

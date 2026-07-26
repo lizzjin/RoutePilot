@@ -3,12 +3,9 @@ use std::{cmp::Reverse, collections::BTreeMap};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use crate::{
-    error::AppError,
-    metrics::{MessageMetricsSnapshot, MetricsSnapshot},
-};
+use crate::error::AppError;
 
-use super::{AppState, effective_config, now_millis_string, provider_protocol_value};
+use super::{AppState, now_millis};
 
 const DEFAULT_LOG_PAGE_SIZE: usize = 20;
 const MAX_LOG_PAGE_SIZE: usize = 500;
@@ -31,6 +28,7 @@ pub(super) struct LogsQuery {
     group: Option<String>,
     stream: Option<String>,
     tool_use: Option<String>,
+    traffic_class: Option<String>,
 }
 
 impl LogsQuery {
@@ -45,6 +43,7 @@ impl LogsQuery {
             ("group", self.group.as_deref()),
             ("stream", self.stream.as_deref()),
             ("toolUse", self.tool_use.as_deref()),
+            ("trafficClass", self.traffic_class.as_deref()),
         ] {
             if value.is_some_and(|value| value.chars().count() > 256) {
                 return Err(AppError::InvalidRequest(format!(
@@ -88,6 +87,13 @@ impl LogsQuery {
                 "toolUse must be requested or not-requested".to_owned(),
             ));
         }
+        if self.traffic_class.as_deref().is_some_and(|traffic_class| {
+            !matches!(traffic_class, "business" | "synthetic" | "diagnostic")
+        }) {
+            return Err(AppError::InvalidRequest(
+                "trafficClass must be business, synthetic, or diagnostic".to_owned(),
+            ));
+        }
         if self
             .date_from
             .zip(self.date_to)
@@ -101,22 +107,15 @@ impl LogsQuery {
     }
 }
 
-pub(super) fn logs_body(state: &AppState, query: &LogsQuery) -> Value {
-    logs_body_from_rows(log_rows(state), query)
+pub(super) async fn logs_body(state: &AppState, query: &LogsQuery) -> Result<Value, AppError> {
+    Ok(logs_body_from_rows(
+        state.ledger.usage_rows_since(query.date_from).await?,
+        query,
+    ))
 }
 
-pub(super) fn log_body(state: &AppState, id: &str) -> Option<Value> {
-    log_rows(state)
-        .into_iter()
-        .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
-}
-
-fn log_rows(state: &AppState) -> Vec<Value> {
-    let mut logs = state.control.usage_rows();
-    if logs.is_empty() {
-        logs = fallback_log_rows(state);
-    }
-    logs
+pub(super) async fn log_body(state: &AppState, id: &str) -> Result<Option<Value>, AppError> {
+    state.ledger.usage_row(id).await
 }
 
 fn logs_body_from_rows(mut logs: Vec<Value>, query: &LogsQuery) -> Value {
@@ -167,6 +166,12 @@ fn log_matches(row: &Value, query: &LogsQuery) -> bool {
         || query.tool_use.as_deref().is_some_and(|expected| {
             row.get("toolUseRequested").and_then(Value::as_bool) != Some(expected == "requested")
         })
+        || query.traffic_class.as_deref().is_some_and(|expected| {
+            row.get("trafficClass")
+                .and_then(Value::as_str)
+                .unwrap_or("business")
+                != expected
+        })
     {
         return false;
     }
@@ -182,7 +187,7 @@ fn log_matches(row: &Value, query: &LogsQuery) -> bool {
         || query
             .group
             .as_deref()
-            .is_some_and(|expected| !any_field_contains(row, &["group", "apiKeyGroup"], expected))
+            .is_some_and(|expected| !field_contains(row, "apiKeyGroup", expected))
     {
         return false;
     }
@@ -206,25 +211,21 @@ fn log_matches(row: &Value, query: &LogsQuery) -> bool {
                 "requestId",
                 "attemptId",
                 "provider",
-                "channelId",
-                "channelName",
                 "model",
                 "resolvedModel",
                 "userId",
                 "username",
                 "apiKeyId",
                 "apiKeyName",
-                "tokenName",
-                "group",
                 "apiKeyGroup",
                 "teamId",
                 "teamName",
                 "errorMessage",
                 "terminalReason",
-                "detail",
                 "requestPath",
                 "clientProtocol",
                 "protocol",
+                "trafficClass",
             ],
             search,
         )
@@ -271,6 +272,8 @@ fn summarize_logs(logs: &[Value]) -> Value {
     let mut total_cache_write_tokens = 0u64;
     let mut total_cache_read_tokens = 0u64;
     let mut total_cost_estimate = 0.0f64;
+    let mut latency_values = Vec::with_capacity(logs.len());
+    let mut first_byte_latency_values = Vec::new();
     let mut first_timestamp = None::<u64>;
     let mut last_timestamp = None::<u64>;
 
@@ -298,6 +301,12 @@ fn summarize_logs(logs: &[Value]) -> Value {
             .get("costEstimate")
             .and_then(Value::as_f64)
             .unwrap_or(0.0);
+        if let Some(latency) = log.get("latencyMs").and_then(Value::as_u64) {
+            latency_values.push(latency);
+        }
+        if let Some(latency) = log.get("firstByteLatencyMs").and_then(Value::as_u64) {
+            first_byte_latency_values.push(latency);
+        }
         if let Some(timestamp) = timestamp_millis(log) {
             first_timestamp = Some(first_timestamp.map_or(timestamp, |value| value.min(timestamp)));
             last_timestamp = Some(last_timestamp.map_or(timestamp, |value| value.max(timestamp)));
@@ -312,6 +321,8 @@ fn summarize_logs(logs: &[Value]) -> Value {
         (Some(first), Some(last)) if last > first => ((last - first) as f64 / 60_000.0).max(1.0),
         _ => 1.0,
     };
+    latency_values.sort_unstable();
+    first_byte_latency_values.sort_unstable();
 
     json!({
         "totalRequests": logs.len(),
@@ -324,6 +335,10 @@ fn summarize_logs(logs: &[Value]) -> Value {
         "totalCacheReadTokens": total_cache_read_tokens,
         "totalTokens": total_tokens,
         "totalCostEstimate": total_cost_estimate,
+        "latencyP95Ms": percentile(&latency_values, 95),
+        "latencySampleCount": latency_values.len(),
+        "firstByteLatencyP95Ms": percentile(&first_byte_latency_values, 95),
+        "firstByteLatencySampleCount": first_byte_latency_values.len(),
         "rpm": logs.len() as f64 / minutes,
         "tpm": total_tokens as f64 / minutes,
     })
@@ -333,40 +348,11 @@ fn field_u64(row: &Value, field: &str) -> u64 {
     row.get(field).and_then(Value::as_u64).unwrap_or(0)
 }
 
-pub(super) fn latency_body(state: &AppState) -> Value {
-    let usage = state.control.usage_rows();
-    if usage.is_empty() {
-        latency_body_from_snapshot(&state.metrics.snapshot())
-    } else {
-        latency_body_from_usage(&usage)
-    }
-}
-
-fn latency_body_from_snapshot(snapshot: &MetricsSnapshot) -> Value {
-    let total_requests = snapshot
-        .messages
-        .iter()
-        .map(|message| message.requests_total)
-        .sum::<u64>();
-    let total_duration = snapshot
-        .messages
-        .iter()
-        .map(|message| message.duration_ms_total)
-        .sum::<u64>();
-    let avg = average(total_duration, total_requests);
-
-    json!({
-        "p50": avg,
-        "p90": avg,
-        "p95": avg,
-        "p99": avg,
-        "avg": avg,
-        "max": avg,
-        "byModel": {},
-        "byProvider": {},
-        "sampleCount": 0,
-        "percentilesEstimated": true,
-    })
+pub(super) async fn latency_body(state: &AppState) -> Result<Value, AppError> {
+    let since = now_millis().saturating_sub(24 * 60 * 60 * 1_000);
+    Ok(latency_body_from_usage(
+        &state.ledger.usage_rows_since(Some(since)).await?,
+    ))
 }
 
 fn latency_body_from_usage(rows: &[Value]) -> Value {
@@ -453,82 +439,6 @@ fn percentile(sorted: &[u64], percentile: usize) -> u64 {
     sorted[rank]
 }
 
-fn fallback_log_rows(state: &AppState) -> Vec<Value> {
-    let config = effective_config(state);
-    let snapshot = state.metrics.snapshot();
-    snapshot
-        .messages
-        .iter()
-        .enumerate()
-        .map(|(index, message)| {
-            let protocol = config
-                .providers
-                .get(&message.provider)
-                .map(|provider| provider_protocol_value(provider.protocol))
-                .unwrap_or("openai-compat");
-            fallback_log_row(message, index, protocol, now_millis_string())
-        })
-        .collect()
-}
-
-fn fallback_log_row(
-    message: &MessageMetricsSnapshot,
-    index: usize,
-    protocol: &str,
-    timestamp: String,
-) -> Value {
-    let requests = message.requests_total.max(1);
-    json!({
-        "id": format!("log_{}_{}_{}", message.provider, message.model.replace('/', "_"), if message.stream { "stream" } else { "nonstream" }),
-        "requestId": null,
-        "timestamp": timestamp,
-        "userId": "usr_local_admin",
-        "username": "local-admin",
-        "apiKeyId": null,
-        "apiKeyName": "MODELPORT_AUTH_TOKEN",
-        "apiKeyGroup": "legacy",
-        "tokenName": "MODELPORT_AUTH_TOKEN",
-        "group": "legacy",
-        "channelId": message.provider,
-        "channelName": message.provider,
-        "model": message.model,
-        "resolvedModel": message.model,
-        "provider": message.provider,
-        "protocol": protocol,
-        "clientProtocol": "anthropic-messages",
-        "toolUseRequested": false,
-        "toolOutcome": "not_requested",
-        "requestType": if message.failures_total > 0 { "error" } else { "consume" },
-        "stream": if message.stream { "stream" } else { "non-stream" },
-        "status": if message.failures_total > 0 { "error" } else { "success" },
-        "statusCode": if message.failures_total > 0 { 502 } else { 200 },
-        "inputTokens": 0,
-        "outputTokens": 0,
-        "cacheWriteTokens": 0,
-        "cacheReadTokens": 0,
-        "billedInputTokens": 0,
-        "totalTokens": 0,
-        "cacheHitRate": 0.0,
-        "costEstimate": 0.0,
-        "costBreakdown": {
-            "inputCost": 0.0,
-            "outputCost": 0.0,
-            "cacheWriteCost": 0.0,
-            "cacheReadCost": 0.0,
-            "totalCost": 0.0,
-        },
-        "latencyMs": average(message.duration_ms_total, requests),
-        "firstByteLatencyMs": average(message.duration_ms_total, requests),
-        "retryCount": 0,
-        "clientIp": null,
-        "requestPath": "/v1/messages",
-        "billingMode": "metrics-fallback",
-        "detail": format!("进程内指标回退日志 · provider={} · model={}", message.provider, message.model),
-        "errorMessage": if message.failures_total > 0 { Some(format!("{} failure(s) recorded", message.failures_total)) } else { None },
-        "sortIndex": index,
-    })
-}
-
 fn average(total: u64, count: u64) -> u64 {
     total.checked_div(count).unwrap_or(0)
 }
@@ -536,25 +446,6 @@ fn average(total: u64, count: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn latency_body_uses_average_duration_across_messages() {
-        let snapshot = MetricsSnapshot {
-            uptime_seconds: 1,
-            routes: vec![],
-            messages: vec![
-                test_message("deepseek", "deepseek-v4-flash", 2, 80, false, 0),
-                test_message("mimo", "mimo-v2.5-pro", 2, 120, false, 0),
-            ],
-        };
-
-        let body = latency_body_from_snapshot(&snapshot);
-
-        assert_eq!(body["avg"], 50);
-        assert_eq!(body["p95"], 50);
-        assert_eq!(body["byModel"], json!({}));
-        assert_eq!(body["percentilesEstimated"], true);
-    }
 
     #[test]
     fn latency_body_calculates_percentiles_from_persisted_usage() {
@@ -671,6 +562,11 @@ mod tests {
         ];
         rows[0]["toolUseRequested"] = json!(true);
         rows[1]["toolUseRequested"] = json!(true);
+        rows[0]["latencyMs"] = json!(100);
+        rows[1]["latencyMs"] = json!(200);
+        rows[2]["latencyMs"] = json!(1_000);
+        rows[0]["firstByteLatencyMs"] = json!(25);
+        rows[2]["firstByteLatencyMs"] = json!(250);
         let query = LogsQuery {
             page: Some(2),
             page_size: Some(1),
@@ -688,6 +584,10 @@ mod tests {
         assert_eq!(body["summary"]["toolUseSuccessRequests"], 1);
         assert_eq!(body["summary"]["totalTokens"], 30);
         assert_eq!(body["summary"]["totalCostEstimate"], 0.75);
+        assert_eq!(body["summary"]["latencyP95Ms"], 1_000);
+        assert_eq!(body["summary"]["latencySampleCount"], 3);
+        assert_eq!(body["summary"]["firstByteLatencyP95Ms"], 250);
+        assert_eq!(body["summary"]["firstByteLatencySampleCount"], 2);
         assert_eq!(body["summary"]["rpm"], 1.5);
         assert_eq!(body["summary"]["tpm"], 15.0);
     }
@@ -738,6 +638,10 @@ mod tests {
                 ..LogsQuery::default()
             },
             LogsQuery {
+                traffic_class: Some("other".to_owned()),
+                ..LogsQuery::default()
+            },
+            LogsQuery {
                 date_from: Some(2),
                 date_to: Some(1),
                 ..LogsQuery::default()
@@ -752,21 +656,51 @@ mod tests {
     }
 
     #[test]
-    fn fallback_log_row_marks_failures_and_sanitizes_model_for_id() {
-        let row = fallback_log_row(
-            &test_message("openai", "foo/bar", 3, 90, true, 2),
-            7,
-            "openai-compat",
-            "12345".to_owned(),
+    fn logs_query_filters_traffic_class() {
+        let mut synthetic = test_log(
+            "log-synthetic",
+            "req-synthetic",
+            2,
+            "success",
+            "provider",
+            "model",
+            "user",
+            "key",
+            None,
         );
+        synthetic["trafficClass"] = json!("synthetic");
+        let mut business = test_log(
+            "log-business",
+            "req-business",
+            1,
+            "success",
+            "provider",
+            "model",
+            "user",
+            "key",
+            None,
+        );
+        business["trafficClass"] = json!("business");
 
-        assert_eq!(row["id"], "log_openai_foo_bar_stream");
-        assert_eq!(row["timestamp"], "12345");
-        assert_eq!(row["status"], "error");
-        assert_eq!(row["statusCode"], 502);
-        assert_eq!(row["latencyMs"], 30);
-        assert_eq!(row["errorMessage"], "2 failure(s) recorded");
-        assert_eq!(row["sortIndex"], 7);
+        let synthetic_body = logs_body_from_rows(
+            vec![business.clone(), synthetic.clone()],
+            &LogsQuery {
+                traffic_class: Some("synthetic".to_owned()),
+                ..LogsQuery::default()
+            },
+        );
+        assert_eq!(synthetic_body["total"], 1);
+        assert_eq!(synthetic_body["logs"][0]["id"], "log-synthetic");
+
+        let business_body = logs_body_from_rows(
+            vec![business, synthetic],
+            &LogsQuery {
+                traffic_class: Some("business".to_owned()),
+                ..LogsQuery::default()
+            },
+        );
+        assert_eq!(business_body["total"], 1);
+        assert_eq!(business_body["logs"][0]["id"], "log-business");
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -787,14 +721,14 @@ mod tests {
             "timestamp": timestamp.to_string(),
             "status": status,
             "provider": provider,
-            "channelId": provider,
             "model": model,
             "resolvedModel": model,
             "userId": user_id,
             "username": format!("{user_id} name"),
             "apiKeyId": api_key_id,
             "apiKeyName": format!("{api_key_id} name"),
-            "group": "test-group",
+            "apiKeyGroup": "test-group",
+            "trafficClass": "business",
             "stream": "non-stream",
             "inputTokens": 4,
             "outputTokens": 3,
@@ -803,29 +737,5 @@ mod tests {
             "costEstimate": 0.25,
             "errorMessage": error_message,
         })
-    }
-
-    fn test_message(
-        provider: &str,
-        model: &str,
-        requests_total: u64,
-        duration_ms_total: u64,
-        stream: bool,
-        failures_total: u64,
-    ) -> MessageMetricsSnapshot {
-        MessageMetricsSnapshot {
-            provider: provider.to_owned(),
-            model: model.to_owned(),
-            stream,
-            requests_total,
-            successes_total: requests_total.saturating_sub(failures_total),
-            failures_total,
-            duration_ms_total,
-            input_tokens_total: 0,
-            output_tokens_total: 0,
-            cache_write_tokens_total: 0,
-            cache_read_tokens_total: 0,
-            cost_estimate_usd_total: 0.0,
-        }
     }
 }

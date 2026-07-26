@@ -59,6 +59,7 @@ describe('log page helpers', () => {
       status: 'error',
       stream: 'stream',
       toolUse: 'requested',
+      trafficClass: 'business',
       dateFrom,
       dateTo,
     }, 3, 100)
@@ -76,6 +77,7 @@ describe('log page helpers', () => {
         status: 'error',
         stream: 'stream',
         toolUse: 'requested',
+        trafficClass: 'business',
       },
     })
     expect(new Date(state.filters.dateFrom!).getTime()).toBe(new Date(dateFrom).getTime())
@@ -87,6 +89,7 @@ describe('log page helpers', () => {
       status: 'maybe',
       stream: 'sometimes',
       toolUse: 'sometimes',
+      trafficClass: 'other',
       page: '-2',
       pageSize: '999',
       dateFrom: 'not-a-date',

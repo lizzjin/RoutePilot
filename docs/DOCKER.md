@@ -5,11 +5,11 @@ backend, a same-origin dashboard proxy, and PostgreSQL.
 
 | Service/volume | Purpose |
 | --- | --- |
-| `postgres` | PostgreSQL 16 for auth and control documents; no host port by default. |
+| `postgres` | PostgreSQL 18.4 for all durable runtime state; no host port by default. |
 | `modelport` | Rust data plane, control API, routing, metrics, and CLI. |
 | `dashboard` | Static React UI plus same-origin proxy to backend routes. |
-| `modelport-postgres` | Persistent PostgreSQL data. |
-| `modelport-data` | Backend working/backup files and file-backend migration source. |
+| `modelport-postgres-18` | Persistent PostgreSQL 18 data. |
+| `modelport-data` | Backend working directory and explicit backup files. |
 
 Redis, queues, Prometheus, Caddy, and an inference runtime are not part of the
 default stack.
@@ -26,14 +26,14 @@ The Compose backend runs as the image's unprivileged `modelport` user with an
 init process, a read-only root filesystem, all Linux capabilities dropped, and
 `no-new-privileges`. Only these paths are writable at runtime:
 
-- `/data`, backed by the `modelport-data` named volume, for JSON state,
-  migration input, and CLI backup files;
+- `/data`, backed by the `modelport-data` named volume, for explicit CLI
+  backup files and bounded runtime working data;
 - `/tmp`, backed by a `noexec,nosuid` 64 MiB tmpfs for temporary runtime files.
 
 `/config/.env` is a read-only bind mount. The read-only root filesystem does
 not make the `/data` named volume read-only; persistence and backup commands
 depend on that volume remaining writable. PostgreSQL data is independently
-stored in `modelport-postgres`.
+stored in `modelport-postgres-18`.
 
 The dashboard Nginx process runs as its unprivileged `nginx` user on internal
 port 8080. Compose also gives it an init process, a read-only root filesystem,
@@ -103,13 +103,13 @@ PostgreSQL and backend data and is irreversible without a backup.
 
 Unless `.env` explicitly sets `MODELPORT_DATABASE_URL`, Compose constructs it
 for the internal PostgreSQL service. An explicit complete URL overrides that
-default. During the compatibility migration, the application stores two
+default. The application stores low-frequency auth/control definitions as two
 `jsonb` documents in `modelport_state`:
 
 | Namespace | Contents |
 | --- | --- |
 | `auth` | Users, roles, status, and password hashes. |
-| `control` | Teams, API-key hashes, policy, quota, usage, audit, route/provider overrides, credential metadata, health, and tests. |
+| `control` | Teams, API-key hashes, policy and quota definitions, route/provider overrides, credential metadata, health, and tests. |
 
 The database is not exposed on host port 5432. If host access is required for
 debugging, add an explicit non-conflicting loopback mapping such as
@@ -129,32 +129,19 @@ such as `@`, `:`, `/`, `%`, and `#` are unsafe in the constructed URL when left
 unencoded.
 
 The Compose service always supplies either the explicit or constructed database
-URL. The default command therefore selects PostgreSQL. To explicitly select the
-single-instance compatibility deployment instead, use the supplied override:
+URL. Auth, control, operational request, budget, usage, and audit state have no
+runtime file or memory mode. Start the supported deployment with plain
+`docker compose up -d --build`. Old JSON files are not imported.
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.files.yml up -d --build
-```
-
-That override removes PostgreSQL from the active services and supplies empty
-database URLs. File-backend paths are
-`/data/admin-auth.json` and `/data/control-plane.json`. On first PostgreSQL use,
-an empty namespace imports an existing corresponding JSON file.
-
-File mode keeps the normalized request and budget ledger only in process
-memory. It is suitable for development or a small disposable installation, not
-for multi-replica or durable enterprise enforcement. Switch back to the
-recommended PostgreSQL deployment with plain `docker compose up -d --build`.
-
-Persistence currently synchronously replaces the complete logical document on
-auth/control changes, including the compatibility usage log. Separately,
-embedded migrations create normalized tenant, gateway-request, and Provider-
-attempt rows, then add hashed idempotency claims, renewable instance leases,
-transactional budget accounts/reservations, and append-only evidence events.
+Persistence replaces logical documents only for low-frequency auth/control
+changes. Embedded migrations create normalized tenant, gateway-request,
+Provider-attempt and audit rows, then add hashed idempotency claims, renewable
+instance leases, transactional budget accounts/reservations, and append-only
+evidence events.
 Every paid upstream attempt is inserted before egress and finalized at the
-response, stream, or expired-lease terminal state. This ledger is the first
-relational slice; identity, policy, response replay, and the dashboard log query
-still use the compatibility path or remain open.
+response, stream, or expired-lease terminal state. Terminal request rows are
+also the source for logs, Dashboard ranges, quota/spend usage, and management
+statistics. Response replay remains open.
 
 ## Backup
 
@@ -181,7 +168,7 @@ writes to the production database. Completed archives older than
 `MODELPORT_BACKUP_RETENTION_DAYS` (14 by default) are pruned only from the
 configured backup directory.
 
-The CLI remains the restorable export for file-backend deployments:
+The CLI can export a logical auth/control backup from PostgreSQL:
 
 ```bash
 docker compose exec modelport \
@@ -220,8 +207,10 @@ docker compose exec -T postgres psql -U modelport modelport < modelport.sql
 ```
 
 The Compose project has `name: modelport`; a physical volume backup therefore
-uses volume `modelport_modelport-postgres`. Prefer `pg_dump` for portable
-restore instead of copying a live database directory.
+uses volume `modelport_modelport-postgres-18`. PostgreSQL 18 stores data below
+the versioned `PGDATA=/var/lib/postgresql/18/docker`, while Compose mounts the
+parent `/var/lib/postgresql` as required by the official image. Prefer
+`pg_dump` for portable restore instead of copying a live database directory.
 
 The Compose services use bounded `json-file` logging: 10 MiB per file and five
 files by default. Override `MODELPORT_LOG_MAX_SIZE` or
@@ -345,10 +334,10 @@ not embed a credential in the URL.
   downstream response body completes or is dropped.
 - `/readyz` checks auth/control storage and the normalized ledger but is not an
   all-Provider gate.
-- Live-stream completion/final usage and fallback after headers are incomplete.
-- Quota enforcement is not a concurrent reservation transaction.
+- Fallback cannot occur after live-stream response headers have been sent.
 - Provider hostname DNS answers are not revalidated by the SSRF guard.
-- Auth/control and retained dashboard usage still live in complete compatibility
-  documents; only request/Provider-attempt lifecycle is normalized so far.
+- Low-frequency auth/control definitions still use two complete PostgreSQL
+  documents; operational usage, audit, request, and Provider-attempt data is
+  normalized.
 
 These limits are detailed in [Operations](OPERATIONS.md#current-operational-limits).

@@ -21,6 +21,12 @@ is rejected. Do not disable those controls to make a dashboard look clean. If a 
 physical retention, implement an reviewed archive/partition policy that preserves account
 reconciliation and evidence export before dropping a partition.
 
+Migration `0005_reconcile_billing_provenance.sql` is an evidence-preserving
+correction: it appends a zero-value `migration-reconciliation` adjustment
+before changing an unambiguous attempt/reservation provenance summary from
+`local-estimate` to `upstream-returned`. It does not change token or monetary
+values and does not mutate the original reservation/settlement events.
+
 ## Testing without contaminating a shared ledger
 
 `scripts/acceptance.sh` and `scripts/tool-use-acceptance.sh` clean temporary control-plane objects,
@@ -39,6 +45,8 @@ the QuantPilot environment.
 5. Re-run doctor, budget reconciliation checks and dashboard usage totals.
 
 The backup script and restore drill are documented in [Operations](OPERATIONS.md). Configuration and
-secret placement are documented in [Configuration](CONFIGURATION.md). ModelPort does not query an
-upstream DeepSeek balance endpoint; it tracks gateway-observed usage and configured internal budget,
-which is not a provider invoice or authoritative external balance.
+secret placement are documented in [Configuration](CONFIGURATION.md). The
+administrator-only live DeepSeek balance action is a point-in-time Provider
+diagnostic; it does not settle the ModelPort ledger. Gateway-observed usage and
+configured internal budgets are not a Provider invoice or authoritative
+external balance.

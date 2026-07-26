@@ -22,49 +22,6 @@ pub(crate) fn quota_increment(quota_type: &str, estimate: UsageEstimate) -> f64 
     }
 }
 
-pub(crate) trait UsageCostRecord {
-    fn timestamp_ms(&self) -> u64;
-    fn api_key_id(&self) -> Option<&str>;
-    fn team_id(&self) -> Option<&str>;
-    fn cost_estimate(&self) -> f64;
-}
-
-#[cfg(test)]
-pub(crate) fn usage_cost_for_api_key<T: UsageCostRecord>(
-    usage: &[T],
-    api_key_id: &str,
-    since: Option<u64>,
-) -> f64 {
-    usage
-        .iter()
-        .filter(|record| record.api_key_id() == Some(api_key_id))
-        .filter(|record| since.is_none_or(|since| record.timestamp_ms() >= since))
-        .map(usage_record_cost)
-        .map(|cost| cost.max(0.0))
-        .sum()
-}
-
-pub(crate) fn usage_cost_for_team<T: UsageCostRecord>(
-    usage: &[T],
-    team_id: &str,
-    since: Option<u64>,
-) -> f64 {
-    usage
-        .iter()
-        .filter(|record| record.team_id() == Some(team_id))
-        .filter(|record| since.is_none_or(|since| record.timestamp_ms() >= since))
-        .map(usage_record_cost)
-        .map(|cost| cost.max(0.0))
-        .sum()
-}
-
-pub(crate) fn usage_record_cost(record: &impl UsageCostRecord) -> f64 {
-    // The stored estimate is the rate snapshot applied when the request ran.
-    // Recomputing from the current catalog would silently rewrite history after
-    // a provider changes price or a local deployment sets an explicit zero rate.
-    record.cost_estimate()
-}
-
 pub(crate) fn current_period(period: &str, now: u64) -> (u64, u64) {
     match period {
         "daily" => {
@@ -141,32 +98,6 @@ pub(crate) fn day_start(now: u64) -> u64 {
 mod tests {
     use super::*;
 
-    #[derive(Debug, Clone)]
-    struct TestUsageRecord {
-        timestamp_ms: u64,
-        api_key_id: Option<String>,
-        team_id: Option<String>,
-        cost_estimate: f64,
-    }
-
-    impl UsageCostRecord for TestUsageRecord {
-        fn timestamp_ms(&self) -> u64 {
-            self.timestamp_ms
-        }
-
-        fn api_key_id(&self) -> Option<&str> {
-            self.api_key_id.as_deref()
-        }
-
-        fn team_id(&self) -> Option<&str> {
-            self.team_id.as_deref()
-        }
-
-        fn cost_estimate(&self) -> f64 {
-            self.cost_estimate
-        }
-    }
-
     #[test]
     fn quota_increment_matches_quota_type() {
         let estimate = UsageEstimate {
@@ -205,56 +136,5 @@ mod tests {
         assert_eq!(current_period("weekly", now), (DAY_MS * 39, DAY_MS * 46));
         assert_eq!(current_period("monthly", now), (DAY_MS * 31, DAY_MS * 59));
         assert_eq!(current_period("custom", now), (now, now + DAY_MS));
-    }
-
-    #[test]
-    fn usage_record_cost_preserves_the_recorded_price_snapshot() {
-        let record = TestUsageRecord {
-            timestamp_ms: 1,
-            api_key_id: Some("key_a".to_owned()),
-            team_id: Some("team_a".to_owned()),
-            cost_estimate: 999.0,
-        };
-
-        assert_eq!(usage_record_cost(&record), 999.0);
-    }
-
-    #[test]
-    fn usage_record_cost_falls_back_to_stored_estimate_without_tokens() {
-        let record = TestUsageRecord {
-            timestamp_ms: 1,
-            api_key_id: Some("key_a".to_owned()),
-            team_id: Some("team_a".to_owned()),
-            cost_estimate: 0.42,
-        };
-
-        assert_eq!(usage_record_cost(&record), 0.42);
-    }
-
-    #[test]
-    fn usage_cost_aggregation_filters_by_owner_and_time() {
-        let records = vec![
-            TestUsageRecord {
-                timestamp_ms: 100,
-                api_key_id: Some("key_a".to_owned()),
-                team_id: Some("team_a".to_owned()),
-                cost_estimate: 1.0,
-            },
-            TestUsageRecord {
-                timestamp_ms: 200,
-                api_key_id: Some("key_a".to_owned()),
-                team_id: Some("team_b".to_owned()),
-                cost_estimate: 2.0,
-            },
-            TestUsageRecord {
-                timestamp_ms: 300,
-                api_key_id: Some("key_b".to_owned()),
-                team_id: Some("team_a".to_owned()),
-                cost_estimate: -10.0,
-            },
-        ];
-
-        assert_eq!(usage_cost_for_api_key(&records, "key_a", Some(150)), 2.0);
-        assert_eq!(usage_cost_for_team(&records, "team_a", None), 1.0);
     }
 }

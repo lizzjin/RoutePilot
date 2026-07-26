@@ -1,7 +1,8 @@
+#[cfg(test)]
+use std::path::PathBuf;
 use std::{
     collections::{BTreeMap, HashMap},
     env,
-    path::PathBuf,
     sync::{
         Mutex,
         atomic::{AtomicBool, Ordering},
@@ -217,8 +218,7 @@ impl std::fmt::Debug for UpdateUserInput {
 
 impl AuthStore {
     pub fn load_or_bootstrap(config: &AppConfig) -> Result<Self, AppError> {
-        let path = auth_store_path();
-        let store = JsonStore::open("auth", path)?;
+        let store = JsonStore::open("auth")?;
         let session_ttl_seconds = env_u64(
             "MODELPORT_ADMIN_SESSION_TTL_SECONDS",
             DEFAULT_SESSION_TTL_SECONDS,
@@ -595,10 +595,6 @@ impl AuthStore {
             .map(JsonStore::read_value)
             .transpose()
             .map(|_| ())
-    }
-
-    pub fn default_data_path() -> PathBuf {
-        auth_store_path()
     }
 
     pub fn create_user(&self, input: CreateUserInput) -> Result<PublicUser, AppError> {
@@ -1144,16 +1140,6 @@ fn hash_session_token(token: &str) -> String {
         output.push_str(&format!("{byte:02x}"));
     }
     output
-}
-
-fn auth_store_path() -> PathBuf {
-    if let Ok(path) = env::var("MODELPORT_AUTH_STORE_PATH") {
-        return PathBuf::from(path);
-    }
-    env::var("MODELPORT_STATE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(".modelport"))
-        .join("admin-auth.json")
 }
 
 fn env_u64(name: &str, default: u64) -> u64 {

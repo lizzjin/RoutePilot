@@ -17,11 +17,12 @@ pub(super) async fn admin_api_keys(
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
     let actor = require_console_user(&state, &headers)?;
-    if actor.role == "user" {
-        Ok(Json(json!(state.control.list_user_api_keys(&actor.id))))
+    let keys = if actor.role == "user" {
+        state.control.list_user_api_keys(&actor.id)
     } else {
-        Ok(Json(json!(state.control.list_api_keys())))
-    }
+        state.control.list_api_keys()
+    };
+    Ok(Json(json!(enrich_api_key_usage(&state, keys).await?)))
 }
 
 pub(super) async fn admin_user_api_keys(
@@ -35,7 +36,22 @@ pub(super) async fn admin_user_api_keys(
             "cannot read another user's API keys".to_owned(),
         ));
     }
-    Ok(Json(json!(state.control.list_user_api_keys(&user_id))))
+    let keys = state.control.list_user_api_keys(&user_id);
+    Ok(Json(json!(enrich_api_key_usage(&state, keys).await?)))
+}
+
+async fn enrich_api_key_usage(
+    state: &AppState,
+    mut keys: Vec<crate::control::PublicApiKey>,
+) -> Result<Vec<crate::control::PublicApiKey>, AppError> {
+    let usage = state.ledger.management_usage().await?;
+    for key in &mut keys {
+        if let Some(stats) = usage.api_keys.get(&key.id) {
+            key.requests_today = stats.requests_today;
+            key.tokens_today = stats.tokens_today;
+        }
+    }
+    Ok(keys)
 }
 
 pub(super) async fn admin_create_api_key(
@@ -56,7 +72,8 @@ pub(super) async fn admin_create_api_key(
             created.public.username, created.public.name
         ),
         "info",
-    );
+    )
+    .await;
     Ok(Json(json!(created)))
 }
 
@@ -89,7 +106,8 @@ pub(super) async fn admin_revoke_api_key(
         format!("api_key:{key_id}"),
         format!("吊销 API Key {key_id}"),
         "warning",
-    );
+    )
+    .await;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -112,7 +130,8 @@ pub(super) async fn admin_update_api_key(
         format!("api_key:{key_id}"),
         format!("更新 API Key {} ({})", updated.name, updated.status),
         "info",
-    );
+    )
+    .await;
     Ok(Json(json!(updated)))
 }
 
@@ -134,7 +153,8 @@ pub(super) async fn admin_bind_api_key_scope(
             updated.name, updated.organization_id, updated.project_id, updated.environment_id
         ),
         "warning",
-    );
+    )
+    .await;
     Ok(Json(json!(updated)))
 }
 
@@ -176,7 +196,8 @@ pub(super) async fn admin_delete_api_key(
         format!("api_key:{key_id}"),
         format!("删除 API Key {key_id}"),
         "warning",
-    );
+    )
+    .await;
     Ok(Json(json!({ "ok": true })))
 }
 

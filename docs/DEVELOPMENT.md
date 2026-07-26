@@ -140,7 +140,7 @@ and may incur cost. Use mock-backed Tool Use acceptance for routine adapter work
 | Provider catalog/defaults | Config validation, `/v1/models`, provider matrix, docs catalog update. |
 | Dashboard behavior | lint, build, affected Playwright specs. |
 | Docker/systemd/reverse proxy | Render/build the deployment and run smoke through the deployed origin. |
-| Persistence/backup | File and PostgreSQL tests plus export/validate/restore rehearsal. |
+| Persistence/backup | Clean PostgreSQL migration plus export/validate/restore rehearsal. |
 | Documentation only | Link, command, default-value, and bilingual-entry checks below. |
 
 ## Code Boundaries

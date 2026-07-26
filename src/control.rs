@@ -1,7 +1,8 @@
+#[cfg(test)]
+use std::path::PathBuf;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     env,
-    path::PathBuf,
     sync::{
         Mutex,
         atomic::{AtomicBool, Ordering},
@@ -20,15 +21,14 @@ use crate::{
     config::{ProviderConfig, ToolUseConfig},
     control_view::{
         ApiKeyViewRecord, ProviderCredentialHealthViewRecord, ProviderCredentialViewRecord,
-        ProviderHealthViewRecord, QuotaViewRecord, TeamViewRecord, UsageTokenRecord,
-        provider_credential_health_row, provider_health_row, public_api_key, public_quota,
-        public_team,
+        ProviderHealthViewRecord, QuotaViewRecord, TeamViewRecord, provider_credential_health_row,
+        provider_health_row, public_api_key, public_quota, public_team,
     },
     domain::{TenantScope, valid_tenant_identifier},
     error::{AppError, audit_safe_persisted_error},
     policy::{
-        enforce_ip_policy, enforce_model_policy, enforce_provider_policy, enforce_spend_limit,
-        normalize_ip_rules, normalize_policy_list, policy_references_provider,
+        enforce_ip_policy, enforce_model_policy, enforce_provider_policy, normalize_ip_rules,
+        normalize_policy_list, policy_references_provider,
     },
     pricing,
     provider_credentials::{
@@ -36,21 +36,14 @@ use crate::{
         validate_credential_status, validate_env_name, validate_provider_credential_id,
     },
     provider_status::{
-        cooldown_seconds, credential_cooldown_seconds, provider_account_issue,
-        provider_failure_guidance, provider_failure_reason_label,
+        cooldown_seconds, credential_cooldown_seconds, provider_failure_guidance,
         should_rotate_provider_credential,
     },
     storage::JsonStore,
-    usage::{
-        DAY_MS, UsageCostRecord, current_period, day_start, quota_increment, usage_record_cost,
-    },
+    usage::current_period,
 };
 
 pub use crate::usage::UsageEstimate;
-
-const DEFAULT_USAGE_LIMIT: usize = 5_000;
-const HOUR_MS: u64 = 60 * 60 * 1_000;
-const SPEND_LEDGER_RETENTION_MS: u64 = 31 * DAY_MS;
 
 fn default_organization_id() -> String {
     "org_local".to_owned()
@@ -109,7 +102,6 @@ pub struct ControlStore {
     store: Option<JsonStore>,
     inner: Mutex<ControlInner>,
     persistence_degraded: AtomicBool,
-    usage_limit: usize,
 }
 
 impl std::fmt::Debug for ControlStore {
@@ -117,7 +109,6 @@ impl std::fmt::Debug for ControlStore {
         formatter
             .debug_struct("ControlStore")
             .field("data_path", &self.data_path())
-            .field("usage_limit", &self.usage_limit)
             .finish_non_exhaustive()
     }
 }
@@ -127,10 +118,7 @@ struct ControlInner {
     teams: BTreeMap<String, TeamRecord>,
     api_keys: BTreeMap<String, ApiKeyRecord>,
     quotas: BTreeMap<String, QuotaRecord>,
-    usage: Vec<UsageRecord>,
-    spend_ledger: SpendLedger,
     route_config: RouteConfigRecord,
-    activities: Vec<ActivityRecord>,
     provider_tests: BTreeMap<String, ProviderTestRecord>,
     provider_health: BTreeMap<String, ProviderHealthRecord>,
     provider_overrides: BTreeMap<String, ProviderOverrideRecord>,
@@ -153,13 +141,7 @@ struct ControlFile {
     #[serde(default)]
     quotas: Vec<QuotaRecord>,
     #[serde(default)]
-    usage: Vec<UsageRecord>,
-    #[serde(default)]
-    spend_ledger: SpendLedger,
-    #[serde(default)]
     route_config: RouteConfigRecord,
-    #[serde(default)]
-    activities: Vec<ActivityRecord>,
     #[serde(default)]
     provider_tests: Vec<ProviderTestRecord>,
     #[serde(default)]
@@ -184,106 +166,6 @@ struct ControlFile {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SpendLedger {
-    #[serde(default)]
-    api_key_all_time: BTreeMap<String, f64>,
-    #[serde(default)]
-    team_all_time: BTreeMap<String, f64>,
-    #[serde(default)]
-    api_key_hourly: BTreeMap<String, BTreeMap<u64, f64>>,
-    #[serde(default)]
-    team_hourly: BTreeMap<String, BTreeMap<u64, f64>>,
-}
-
-impl SpendLedger {
-    fn is_empty(&self) -> bool {
-        self.api_key_all_time.is_empty()
-            && self.team_all_time.is_empty()
-            && self.api_key_hourly.is_empty()
-            && self.team_hourly.is_empty()
-    }
-
-    fn record(
-        &mut self,
-        timestamp_ms: u64,
-        api_key_id: Option<&str>,
-        team_id: Option<&str>,
-        cost: f64,
-    ) {
-        let cost = cost.max(0.0);
-        if !cost.is_finite() || cost == 0.0 {
-            return;
-        }
-        let hour = (timestamp_ms / HOUR_MS) * HOUR_MS;
-        if let Some(api_key_id) = api_key_id {
-            *self
-                .api_key_all_time
-                .entry(api_key_id.to_owned())
-                .or_default() += cost;
-            *self
-                .api_key_hourly
-                .entry(api_key_id.to_owned())
-                .or_default()
-                .entry(hour)
-                .or_default() += cost;
-        }
-        if let Some(team_id) = team_id {
-            *self.team_all_time.entry(team_id.to_owned()).or_default() += cost;
-            *self
-                .team_hourly
-                .entry(team_id.to_owned())
-                .or_default()
-                .entry(hour)
-                .or_default() += cost;
-        }
-        self.prune(timestamp_ms);
-    }
-
-    fn api_key_cost(&self, api_key_id: &str, since: Option<u64>) -> f64 {
-        since.map_or_else(
-            || {
-                self.api_key_all_time
-                    .get(api_key_id)
-                    .copied()
-                    .unwrap_or(0.0)
-            },
-            |since| hourly_cost(&self.api_key_hourly, api_key_id, since),
-        )
-    }
-
-    fn team_cost(&self, team_id: &str, since: Option<u64>) -> f64 {
-        since.map_or_else(
-            || self.team_all_time.get(team_id).copied().unwrap_or(0.0),
-            |since| hourly_cost(&self.team_hourly, team_id, since),
-        )
-    }
-
-    fn prune(&mut self, now_ms: u64) {
-        let cutoff = now_ms.saturating_sub(SPEND_LEDGER_RETENTION_MS);
-        prune_hourly_costs(&mut self.api_key_hourly, cutoff);
-        prune_hourly_costs(&mut self.team_hourly, cutoff);
-    }
-}
-
-fn hourly_cost(ledger: &BTreeMap<String, BTreeMap<u64, f64>>, subject_id: &str, since: u64) -> f64 {
-    ledger
-        .get(subject_id)
-        .into_iter()
-        .flat_map(|buckets| buckets.range(since.saturating_sub(HOUR_MS)..))
-        .filter(|(hour, _)| hour.saturating_add(HOUR_MS) > since)
-        .map(|(_, cost)| cost.max(0.0))
-        .sum()
-}
-
-fn prune_hourly_costs(ledger: &mut BTreeMap<String, BTreeMap<u64, f64>>, cutoff: u64) {
-    ledger.retain(|_, buckets| {
-        buckets.retain(|hour, _| hour.saturating_add(HOUR_MS) > cutoff);
-        !buckets.is_empty()
-    });
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct RouteConfigRecord {
     #[serde(default)]
     aliases: BTreeMap<String, String>,
@@ -291,18 +173,6 @@ struct RouteConfigRecord {
     deleted_aliases: BTreeSet<String>,
     default_provider: Option<String>,
     provider_order: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ActivityRecord {
-    id: String,
-    timestamp_ms: u64,
-    activity_type: String,
-    actor: String,
-    target: String,
-    message: String,
-    severity: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -626,15 +496,6 @@ impl ProviderHealthViewRecord for ProviderHealthRecord {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ActivityInput {
-    pub activity_type: String,
-    pub actor: String,
-    pub target: String,
-    pub message: String,
-    pub severity: String,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpsertTeamInput {
@@ -810,7 +671,6 @@ struct QuotaRecord {
     username: String,
     quota_type: String,
     limit: f64,
-    used: f64,
     period: String,
     period_start_ms: u64,
     period_end_ms: u64,
@@ -838,10 +698,6 @@ impl QuotaViewRecord for QuotaRecord {
         self.limit
     }
 
-    fn used(&self) -> f64 {
-        self.used
-    }
-
     fn period(&self) -> &str {
         &self.period
     }
@@ -856,108 +712,6 @@ impl QuotaViewRecord for QuotaRecord {
 
     fn reset_at_ms(&self) -> u64 {
         self.reset_at_ms
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UsageRecord {
-    id: String,
-    #[serde(default)]
-    request_id: Option<String>,
-    #[serde(default)]
-    attempt_id: Option<String>,
-    timestamp_ms: u64,
-    user_id: String,
-    username: String,
-    api_key_id: Option<String>,
-    api_key_name: Option<String>,
-    #[serde(default)]
-    api_key_group: Option<String>,
-    #[serde(default)]
-    team_id: Option<String>,
-    #[serde(default)]
-    team_name: Option<String>,
-    model: String,
-    resolved_model: String,
-    provider: String,
-    #[serde(default = "default_protocol")]
-    protocol: String,
-    #[serde(default = "default_client_protocol")]
-    client_protocol: String,
-    #[serde(default)]
-    tool_use_requested: bool,
-    #[serde(default = "default_tool_outcome")]
-    tool_outcome: String,
-    #[serde(default = "default_traffic_class")]
-    traffic_class: String,
-    #[serde(default)]
-    tool_repair_attempted: bool,
-    #[serde(default)]
-    tool_repair_recovered: bool,
-    stream: bool,
-    status: String,
-    status_code: u16,
-    #[serde(default = "default_terminal_reason")]
-    terminal_reason: String,
-    input_tokens: u64,
-    output_tokens: u64,
-    #[serde(default)]
-    cache_write_tokens: u64,
-    #[serde(default)]
-    cache_read_tokens: u64,
-    cost_estimate: f64,
-    #[serde(default)]
-    model_pricing: Option<pricing::ModelPricing>,
-    #[serde(default = "default_billing_mode")]
-    billing_mode: String,
-    latency_ms: u64,
-    #[serde(default)]
-    first_byte_latency_ms: Option<u64>,
-    #[serde(default)]
-    retry_count: u32,
-    #[serde(default)]
-    fallback_from_provider: Option<String>,
-    #[serde(default)]
-    client_ip: Option<String>,
-    #[serde(default)]
-    request_path: Option<String>,
-    error_message: Option<String>,
-}
-
-impl UsageCostRecord for UsageRecord {
-    fn timestamp_ms(&self) -> u64 {
-        self.timestamp_ms
-    }
-
-    fn api_key_id(&self) -> Option<&str> {
-        self.api_key_id.as_deref()
-    }
-
-    fn team_id(&self) -> Option<&str> {
-        self.team_id.as_deref()
-    }
-
-    fn cost_estimate(&self) -> f64 {
-        self.cost_estimate
-    }
-}
-
-impl UsageTokenRecord for UsageRecord {
-    fn input_tokens(&self) -> u64 {
-        self.input_tokens
-    }
-
-    fn output_tokens(&self) -> u64 {
-        self.output_tokens
-    }
-
-    fn cache_write_tokens(&self) -> u64 {
-        self.cache_write_tokens
-    }
-
-    fn cache_read_tokens(&self) -> u64 {
-        self.cache_read_tokens
     }
 }
 
@@ -1113,14 +867,11 @@ pub struct ApiKeyPolicy {
 
 #[derive(Debug, Clone)]
 pub struct UsageEventInput {
-    pub identity: ClientIdentity,
     pub request_id: Option<String>,
     pub attempt_id: Option<String>,
-    pub model: String,
     pub resolved_model: String,
     pub provider: String,
     pub protocol: String,
-    pub client_protocol: String,
     /// Whether the request declares tools, selects a tool, or continues an
     /// existing tool call/result exchange. No tool arguments are persisted.
     pub tool_use_requested: bool,
@@ -1131,7 +882,6 @@ pub struct UsageEventInput {
     pub traffic_class: String,
     pub tool_repair_attempted: bool,
     pub tool_repair_recovered: bool,
-    pub stream: bool,
     pub success: bool,
     pub timed_out: bool,
     pub status_code: u16,
@@ -1147,15 +897,33 @@ pub struct UsageEventInput {
     pub first_byte_latency: Option<Duration>,
     pub retry_count: u32,
     pub fallback_from_provider: Option<String>,
-    pub client_ip: Option<String>,
-    pub request_path: String,
     pub error_message: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
+pub(crate) struct UsageQuotaLimit {
+    pub(crate) id: String,
+    pub(crate) user_id: String,
+    pub(crate) quota_type: String,
+    pub(crate) limit: f64,
+    pub(crate) period_start_ms: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct UsagePolicySnapshot {
+    pub(crate) user_id: String,
+    pub(crate) username: String,
+    pub(crate) api_key_id: Option<String>,
+    pub(crate) team_id: Option<String>,
+    pub(crate) api_key_policy: ApiKeyPolicy,
+    pub(crate) quotas: Vec<UsageQuotaLimit>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageSummary {
     pub total_requests: u64,
+    pub total_successes: u64,
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     pub total_cache_write_tokens: u64,
@@ -1197,20 +965,12 @@ pub struct ProviderControlSnapshot {
 
 impl ControlStore {
     pub fn load() -> Result<Self, AppError> {
-        let path = control_store_path();
-        let store = JsonStore::open("control", path)?;
-        let usage_limit = env::var("MODELPORT_USAGE_LOG_LIMIT")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(DEFAULT_USAGE_LIMIT);
+        let store = JsonStore::open("control")?;
         let mut file: ControlFile = store.read_or_default(json!({
             "teams": [],
             "apiKeys": [],
             "quotas": [],
-            "usage": [],
-            "spendLedger": {},
             "routeConfig": {},
-            "activities": [],
             "providerTests": [],
             "providerHealth": [],
             "providerOverrides": [],
@@ -1253,19 +1013,6 @@ impl ControlStore {
                 .or_default()
                 .insert(record.credential_id.clone(), record);
         }
-        let mut spend_ledger = file.spend_ledger;
-        if spend_ledger.is_empty() {
-            for record in &file.usage {
-                spend_ledger.record(
-                    record.timestamp_ms,
-                    record.api_key_id.as_deref(),
-                    record.team_id.as_deref(),
-                    usage_record_cost(record),
-                );
-            }
-        }
-        spend_ledger.prune(now_millis());
-
         Ok(Self {
             store: Some(store),
             inner: Mutex::new(ControlInner {
@@ -1284,10 +1031,7 @@ impl ControlStore {
                     .into_iter()
                     .map(|record| (record.id.clone(), record))
                     .collect(),
-                usage: file.usage,
-                spend_ledger,
                 route_config: file.route_config,
-                activities: file.activities,
                 provider_tests: file
                     .provider_tests
                     .into_iter()
@@ -1312,7 +1056,6 @@ impl ControlStore {
                 provider_credential_health,
             }),
             persistence_degraded: AtomicBool::new(false),
-            usage_limit,
         })
     }
 
@@ -1322,7 +1065,6 @@ impl ControlStore {
             store: None,
             inner: Mutex::new(ControlInner::default()),
             persistence_degraded: AtomicBool::new(false),
-            usage_limit: DEFAULT_USAGE_LIMIT,
         }
     }
 
@@ -1772,50 +1514,6 @@ impl ControlStore {
         references
     }
 
-    pub fn record_activity(&self, input: ActivityInput) -> Result<(), AppError> {
-        let mut inner = self.inner.lock().expect("control lock poisoned");
-        inner.activities.push(ActivityRecord {
-            id: format!("act_{}", Uuid::new_v4().simple()),
-            timestamp_ms: now_millis(),
-            activity_type: input.activity_type,
-            actor: input.actor,
-            target: input.target,
-            message: input.message,
-            severity: input.severity,
-        });
-        let overflow = inner.activities.len().saturating_sub(500);
-        if overflow > 0 {
-            inner.activities.drain(0..overflow);
-        }
-        self.save_locked(&inner)
-    }
-
-    pub fn activity_rows(&self, limit: usize) -> Vec<serde_json::Value> {
-        let inner = self.inner.lock().expect("control lock poisoned");
-        inner
-            .activities
-            .iter()
-            .rev()
-            .take(limit)
-            .map(|record| {
-                json!({
-                    "id": record.id,
-                    "timestamp": record.timestamp_ms.to_string(),
-                    "type": record.activity_type,
-                    "actor": record.actor,
-                    "target": record.target,
-                    "message": record.message,
-                    "severity": record.severity,
-                })
-            })
-            .collect()
-    }
-
-    pub fn activity_count(&self) -> usize {
-        let inner = self.inner.lock().expect("control lock poisoned");
-        inner.activities.len()
-    }
-
     pub fn data_path(&self) -> Option<String> {
         self.store.as_ref().map(JsonStore::location)
     }
@@ -1833,28 +1531,21 @@ impl ControlStore {
             .map(|_| ())
     }
 
-    pub fn default_data_path() -> PathBuf {
-        control_store_path()
-    }
-
     pub fn export_snapshot(&self) -> serde_json::Value {
         let inner = self.inner.lock().expect("control lock poisoned");
-        let now = now_millis();
         json!({
             "teams": inner
                 .teams
                 .values()
-                .map(|record| public_team_with_ledger(&inner, record, now))
+                .map(|record| public_team(record, &inner.api_keys))
                 .collect::<Vec<_>>(),
             "apiKeys": inner
                 .api_keys
                 .values()
-                .map(|record| public_api_key(record, &inner.usage, now))
+                .map(public_api_key)
                 .collect::<Vec<_>>(),
             "quotas": inner.quotas.values().map(public_quota).collect::<Vec<_>>(),
-            "usage": &inner.usage,
             "routeConfig": &inner.route_config,
-            "activities": &inner.activities,
             "providerTests": inner.provider_tests.values().collect::<Vec<_>>(),
             "providerHealth": inner.provider_health.values().collect::<Vec<_>>(),
             "providerCredentials": inner
@@ -1922,11 +1613,10 @@ impl ControlStore {
 
     pub fn list_teams(&self) -> Vec<serde_json::Value> {
         let inner = self.inner.lock().expect("control lock poisoned");
-        let now = now_millis();
         inner
             .teams
             .values()
-            .map(|team| public_team_with_ledger(&inner, team, now))
+            .map(|team| public_team(team, &inner.api_keys))
             .collect()
     }
 
@@ -2001,7 +1691,7 @@ impl ControlStore {
             }
         }
         self.save_or_restore_locked(&mut inner, previous)?;
-        Ok(public_team_with_ledger(&inner, &team, now))
+        Ok(public_team(&team, &inner.api_keys))
     }
 
     pub fn delete_team(&self, team_id: &str) -> Result<(), AppError> {
@@ -2106,24 +1796,6 @@ impl ControlStore {
         let mut inner = self.inner.lock().expect("control lock poisoned");
         let previous = persist_immediately.then(|| inner.clone());
         let now = now_millis();
-        let previous_provider_issue = inner
-            .provider_health
-            .get(provider_id)
-            .map(|record| {
-                provider_account_issue(record.last_status_code, record.last_error.as_deref())
-            })
-            .unwrap_or("none");
-        let previous_credential_issue = credential_id
-            .and_then(|credential_id| {
-                inner
-                    .provider_credential_health
-                    .get(provider_id)
-                    .and_then(|health| health.get(credential_id))
-            })
-            .map(|record| {
-                provider_account_issue(record.last_status_code, record.last_error.as_deref())
-            })
-            .unwrap_or("none");
         let failure_kind = record_provider_health_locked(
             &mut inner,
             provider_id,
@@ -2147,40 +1819,13 @@ impl ControlStore {
             );
         }
         if !success {
-            record_recharge_required_activity_locked(
-                &mut inner,
-                RechargeActivityInput {
-                    provider_id,
-                    credential_id,
-                    previous_provider_issue,
-                    previous_credential_issue,
-                    status_code,
-                    error_message,
-                    now,
-                },
-            );
             let mode = provider_credential_pool_mode_locked(&inner, provider_id);
             if mode != "manual"
                 && should_rotate_provider_credential(failure_kind)
-                && let Some((from_id, to_id, to_name)) =
-                    rotate_provider_credential_locked(&mut inner, provider_id, now)
+                && rotate_provider_credential_locked(&mut inner, provider_id, now).is_some()
+                && let Some(health) = inner.provider_health.get_mut(provider_id)
             {
-                if let Some(health) = inner.provider_health.get_mut(provider_id) {
-                    health.cooldown_until_ms = None;
-                }
-                inner.activities.push(ActivityRecord {
-                    id: format!("act_{}", Uuid::new_v4().simple()),
-                    timestamp_ms: now,
-                    activity_type: "auto_governance".to_owned(),
-                    actor: "system".to_owned(),
-                    target: format!("provider:{provider_id}:credential:{to_id}"),
-                    message: format!(
-                        "自动将供应商 {provider_id} 账号从 {from_id} 切换为 {to_name}（{}）",
-                        provider_failure_reason_label(failure_kind)
-                    ),
-                    severity: "warning".to_owned(),
-                });
-                trim_activities_locked(&mut inner);
+                health.cooldown_until_ms = None;
             }
         }
         previous.map_or(Ok(()), |previous| {
@@ -2323,14 +1968,8 @@ impl ControlStore {
     }
 
     pub fn list_api_keys(&self) -> Vec<PublicApiKey> {
-        let mut inner = self.inner.lock().expect("control lock poisoned");
-        let now = now_millis();
-        reset_expired_quotas_locked(&mut inner, now);
-        inner
-            .api_keys
-            .values()
-            .map(|record| public_api_key(record, &inner.usage, now))
-            .collect()
+        let inner = self.inner.lock().expect("control lock poisoned");
+        inner.api_keys.values().map(public_api_key).collect()
     }
 
     pub fn tenant_scope(&self, identity: &ClientIdentity) -> Result<TenantScope, AppError> {
@@ -2365,6 +2004,20 @@ impl ControlStore {
             .count()
             .try_into()
             .unwrap_or(u32::MAX)
+    }
+
+    pub fn api_key_counts(&self) -> (u64, u64) {
+        let inner = self.inner.lock().expect("control lock poisoned");
+        (
+            inner.api_keys.len().try_into().unwrap_or(u64::MAX),
+            inner
+                .api_keys
+                .values()
+                .filter(|record| record.status == "active")
+                .count()
+                .try_into()
+                .unwrap_or(u64::MAX),
+        )
     }
 
     pub fn api_key_user_id(&self, key_id: &str) -> Result<String, AppError> {
@@ -2446,7 +2099,7 @@ impl ControlStore {
         inner.api_keys.insert(record.id.clone(), record.clone());
         self.save_or_restore_locked(&mut inner, previous)?;
         Ok(CreatedApiKey {
-            public: public_api_key(&record, &inner.usage, now),
+            public: public_api_key(&record),
             key,
         })
     }
@@ -2562,7 +2215,7 @@ impl ControlStore {
         let previous = inner.clone();
         inner.api_keys.insert(updated.id.clone(), updated.clone());
         self.save_or_restore_locked(&mut inner, previous)?;
-        Ok(public_api_key(&updated, &inner.usage, now_millis()))
+        Ok(public_api_key(&updated))
     }
 
     pub fn bind_api_key_scope(
@@ -2585,7 +2238,7 @@ impl ControlStore {
         let previous = inner.clone();
         inner.api_keys.insert(updated.id.clone(), updated.clone());
         self.save_or_restore_locked(&mut inner, previous)?;
-        Ok(public_api_key(&updated, &inner.usage, now_millis()))
+        Ok(public_api_key(&updated))
     }
 
     pub fn delete_api_key(&self, key_id: &str) -> Result<(), AppError> {
@@ -2618,6 +2271,22 @@ impl ControlStore {
         Ok(inner.quotas.values().map(public_quota).collect())
     }
 
+    pub(crate) fn usage_quota_limits(&self) -> Vec<UsageQuotaLimit> {
+        let mut inner = self.inner.lock().expect("control lock poisoned");
+        reset_expired_quotas_locked(&mut inner, now_millis());
+        inner
+            .quotas
+            .values()
+            .map(|quota| UsageQuotaLimit {
+                id: quota.id.clone(),
+                user_id: quota.user_id.clone(),
+                quota_type: quota.quota_type.clone(),
+                limit: quota.limit,
+                period_start_ms: quota.period_start_ms,
+            })
+            .collect()
+    }
+
     pub fn upsert_quota(&self, input: UpsertQuotaInput) -> Result<PublicQuota, AppError> {
         if input.user_id.trim().is_empty() || input.username.trim().is_empty() {
             return Err(AppError::InvalidRequest(
@@ -2643,14 +2312,12 @@ impl ControlStore {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| format!("quota_{}", Uuid::new_v4().simple()));
         let mut inner = self.inner.lock().expect("control lock poisoned");
-        let used = inner.quotas.get(&id).map(|quota| quota.used).unwrap_or(0.0);
         let quota = QuotaRecord {
             id: id.clone(),
             user_id: input.user_id,
             username: input.username,
             quota_type: input.quota_type,
             limit: input.limit,
-            used,
             period: input.period,
             period_start_ms,
             period_end_ms,
@@ -2672,316 +2339,48 @@ impl ControlStore {
     pub fn check_quotas(
         &self,
         identity: &ClientIdentity,
-        estimate: UsageEstimate,
         client_ip: Option<&str>,
         requested_model: &str,
         resolved_model: &str,
         provider_id: &str,
-    ) -> Result<(), AppError> {
+    ) -> Result<UsagePolicySnapshot, AppError> {
         if !identity.enforce_quotas {
-            return Ok(());
+            return Ok(UsagePolicySnapshot::default());
         }
         let mut inner = self.inner.lock().expect("control lock poisoned");
         let now = now_millis();
         reset_expired_quotas_locked(&mut inner, now);
-        if let Some(api_key_id) = &identity.api_key_id {
+        if identity.api_key_id.is_some() {
             enforce_api_key_policy(ApiKeyPolicyCheck {
                 policy: &identity.api_key_policy,
-                spend_ledger: &inner.spend_ledger,
-                api_key_id,
-                estimate,
                 client_ip,
                 requested_model,
                 resolved_model,
                 provider_id,
-                now,
             })?;
         }
-        for quota in inner
-            .quotas
-            .values()
-            .filter(|quota| quota.user_id == identity.user_id)
-        {
-            let increment = quota_increment(&quota.quota_type, estimate);
-            if increment > 0.0 && quota.used + increment > quota.limit {
-                return Err(AppError::QuotaExceeded(format!(
-                    "{} quota exceeded for user {}",
-                    quota.quota_type, identity.username
-                )));
-            }
-        }
-        Ok(())
-    }
-
-    pub fn record_usage(&self, input: UsageEventInput) -> Result<(), AppError> {
-        let mut inner = self.inner.lock().expect("control lock poisoned");
-        let now = now_millis();
-        reset_expired_quotas_locked(&mut inner, now);
-        if input.chargeable && input.identity.enforce_quotas {
-            for quota in inner
+        Ok(UsagePolicySnapshot {
+            user_id: identity.user_id.clone(),
+            username: identity.username.clone(),
+            api_key_id: identity.api_key_id.clone(),
+            team_id: identity
+                .team_id
+                .clone()
+                .or_else(|| identity.api_key_policy.team_id.clone()),
+            api_key_policy: identity.api_key_policy.clone(),
+            quotas: inner
                 .quotas
-                .values_mut()
-                .filter(|quota| quota.user_id == input.identity.user_id)
-            {
-                quota.used += quota_increment(&quota.quota_type, input.estimate);
-            }
-        }
-        let record = UsageRecord {
-            id: format!("log_{}", Uuid::new_v4().simple()),
-            request_id: input.request_id,
-            attempt_id: input.attempt_id,
-            timestamp_ms: now,
-            user_id: input.identity.user_id,
-            username: input.identity.username,
-            api_key_id: input.identity.api_key_id,
-            api_key_name: input.identity.api_key_name,
-            api_key_group: input.identity.api_key_group,
-            team_id: input.identity.team_id,
-            team_name: input.identity.team_name,
-            model: input.model,
-            resolved_model: input.resolved_model,
-            provider: input.provider,
-            protocol: input.protocol,
-            client_protocol: input.client_protocol,
-            tool_use_requested: input.tool_use_requested,
-            tool_outcome: input.tool_outcome,
-            traffic_class: input.traffic_class,
-            tool_repair_attempted: input.tool_repair_attempted,
-            tool_repair_recovered: input.tool_repair_recovered,
-            stream: input.stream,
-            status: usage_status(input.success, input.timed_out).to_owned(),
-            status_code: input.status_code,
-            terminal_reason: input.terminal_reason,
-            input_tokens: input.estimate.input_tokens,
-            output_tokens: input.estimate.output_tokens,
-            cache_write_tokens: input.estimate.cache_write_tokens,
-            cache_read_tokens: input.estimate.cache_read_tokens,
-            cost_estimate: input.estimate.cost_estimate,
-            model_pricing: input.model_pricing,
-            billing_mode: input.billing_mode,
-            latency_ms: duration_ms(input.latency),
-            first_byte_latency_ms: input.first_byte_latency.map(duration_ms),
-            retry_count: input.retry_count,
-            fallback_from_provider: input.fallback_from_provider,
-            client_ip: input.client_ip,
-            request_path: Some(input.request_path),
-            error_message: input.error_message,
-        };
-        if input.chargeable {
-            inner.spend_ledger.record(
-                record.timestamp_ms,
-                record.api_key_id.as_deref(),
-                record.team_id.as_deref(),
-                usage_record_cost(&record),
-            );
-        }
-        inner.usage.push(record);
-        let overflow = inner.usage.len().saturating_sub(self.usage_limit);
-        if overflow > 0 {
-            inner.usage.drain(0..overflow);
-        }
-        self.save_locked(&inner)
-    }
-
-    pub fn usage_rows(&self) -> Vec<serde_json::Value> {
-        let inner = self.inner.lock().expect("control lock poisoned");
-        inner
-            .usage
-            .iter()
-            .rev()
-            .map(|record| {
-                let pricing = record
-                    .model_pricing
-                    .unwrap_or_else(|| pricing::pricing_for_model(&record.resolved_model));
-                let cost_estimate = usage_record_cost(record);
-                let input_cost =
-                    pricing::cost_component(record.input_tokens, pricing.input_per_million);
-                let output_cost =
-                    pricing::cost_component(record.output_tokens, pricing.output_per_million);
-                let cache_write_cost = pricing::cost_component(
-                    record.cache_write_tokens,
-                    pricing.cache_write_per_million,
-                );
-                let cache_read_cost = pricing::cost_component(
-                    record.cache_read_tokens,
-                    pricing.cache_read_per_million,
-                );
-                let billed_input_tokens = record
-                    .input_tokens
-                    .saturating_add(record.cache_write_tokens)
-                    .saturating_add(record.cache_read_tokens);
-                let total_tokens = billed_input_tokens.saturating_add(record.output_tokens);
-                let cache_total = record
-                    .cache_write_tokens
-                    .saturating_add(record.cache_read_tokens);
-                let cache_hit_rate = if billed_input_tokens == 0 {
-                    0.0
-                } else {
-                    (cache_total as f64 / billed_input_tokens as f64) * 100.0
-                };
-                let first_byte_latency_ms = record.first_byte_latency_ms;
-                let request_path = record
-                    .request_path
-                    .clone()
-                    .unwrap_or_else(|| "/v1/messages".to_owned());
-                let tool_outcome =
-                    if record.tool_use_requested && record.tool_outcome == "not_requested" {
-                        "unknown_legacy"
-                    } else {
-                        record.tool_outcome.as_str()
-                    };
-                json!({
-                    "id": record.id,
-                    "requestId": record.request_id,
-                    "attemptId": record.attempt_id,
-                    "timestamp": record.timestamp_ms.to_string(),
-                    "userId": record.user_id,
-                    "username": record.username,
-                    "apiKeyId": record.api_key_id,
-                    "apiKeyName": record.api_key_name,
-                    "apiKeyGroup": record.api_key_group,
-                    "tokenName": record.api_key_name,
-                    "group": record.api_key_group,
-                    "teamId": record.team_id,
-                    "teamName": record.team_name,
-                    "channelId": record.provider,
-                    "channelName": record.provider,
-                    "model": record.model,
-                    "resolvedModel": record.resolved_model,
-                    "provider": record.provider,
-                    "protocol": record.protocol,
-                    "clientProtocol": record.client_protocol,
-                    "toolUseRequested": record.tool_use_requested,
-                    "toolOutcome": tool_outcome,
-                    "trafficClass": record.traffic_class,
-                    "toolRepairAttempted": record.tool_repair_attempted,
-                    "toolRepairRecovered": record.tool_repair_recovered,
-                    "requestType": if record.status == "success" { "consume" } else { "error" },
-                    "stream": if record.stream { "stream" } else { "non-stream" },
-                    "status": record.status,
-                    "statusCode": record.status_code,
-                    "terminalReason": record.terminal_reason,
-                    "inputTokens": record.input_tokens,
-                    "outputTokens": record.output_tokens,
-                    "cacheWriteTokens": record.cache_write_tokens,
-                    "cacheReadTokens": record.cache_read_tokens,
-                    "billedInputTokens": billed_input_tokens,
-                    "totalTokens": total_tokens,
-                    "cacheHitRate": cache_hit_rate,
-                    "costEstimate": cost_estimate,
-                    "modelPricing": pricing,
-                    "costBreakdown": {
-                        "inputCost": input_cost,
-                        "outputCost": output_cost,
-                        "cacheWriteCost": cache_write_cost,
-                        "cacheReadCost": cache_read_cost,
-                        "totalCost": cost_estimate,
-                    },
-                    "latencyMs": record.latency_ms,
-                    "firstByteLatencyMs": first_byte_latency_ms,
-                    "retryCount": record.retry_count,
-                    "fallbackFromProvider": record.fallback_from_provider,
-                    "clientIp": record.client_ip,
-                    "requestPath": request_path,
-                    "billingMode": record.billing_mode,
-                    "detail": format!(
-                        "模型: {} · 缓存创建: ${:.6}/1M · 缓存命中: ${:.6}/1M · 分组: {}",
-                        record.resolved_model,
-                        pricing.cache_write_per_million,
-                        pricing.cache_read_per_million,
-                        record.api_key_group.as_deref().unwrap_or("default"),
-                    ),
-                    "errorMessage": record.error_message,
-                })
-            })
-            .collect()
-    }
-
-    pub fn usage_retention_at_capacity(&self) -> bool {
-        let inner = self.inner.lock().expect("control lock poisoned");
-        inner.usage.len() >= self.usage_limit
-    }
-
-    pub fn provider_usage_today(&self) -> BTreeMap<String, ProviderUsageStats> {
-        let inner = self.inner.lock().expect("control lock poisoned");
-        let today_start = day_start(now_millis());
-        let mut providers = BTreeMap::new();
-
-        for record in inner
-            .usage
-            .iter()
-            .filter(|record| record.timestamp_ms >= today_start)
-        {
-            let stats = providers
-                .entry(record.provider.clone())
-                .or_insert_with(ProviderUsageStats::default);
-            stats.requests_total = stats.requests_total.saturating_add(1);
-            if record.status == "success" {
-                stats.successes_total = stats.successes_total.saturating_add(1);
-            }
-            stats.duration_ms_total = stats.duration_ms_total.saturating_add(record.latency_ms);
-            stats.input_tokens_total = stats.input_tokens_total.saturating_add(record.input_tokens);
-            stats.output_tokens_total = stats
-                .output_tokens_total
-                .saturating_add(record.output_tokens);
-            stats.cache_write_tokens_total = stats
-                .cache_write_tokens_total
-                .saturating_add(record.cache_write_tokens);
-            stats.cache_read_tokens_total = stats
-                .cache_read_tokens_total
-                .saturating_add(record.cache_read_tokens);
-            stats.cost_estimate_usd_total += usage_record_cost(record);
-        }
-
-        providers
-    }
-
-    pub fn usage_summary_today(&self) -> UsageSummary {
-        let inner = self.inner.lock().expect("control lock poisoned");
-        let today_start = day_start(now_millis());
-        let mut summary = UsageSummary {
-            total_requests: 0,
-            total_input_tokens: 0,
-            total_output_tokens: 0,
-            total_cache_write_tokens: 0,
-            total_cache_read_tokens: 0,
-            total_cost_estimate: 0.0,
-            api_keys_total: inner.api_keys.len().try_into().unwrap_or(u64::MAX),
-            api_keys_active: inner
-                .api_keys
                 .values()
-                .filter(|record| record.status == "active")
-                .count()
-                .try_into()
-                .unwrap_or(u64::MAX),
-            average_latency_ms: 0,
-        };
-        let mut total_latency = 0u64;
-        for record in inner
-            .usage
-            .iter()
-            .filter(|record| record.timestamp_ms >= today_start)
-        {
-            summary.total_requests += 1;
-            summary.total_input_tokens = summary
-                .total_input_tokens
-                .saturating_add(record.input_tokens);
-            summary.total_output_tokens = summary
-                .total_output_tokens
-                .saturating_add(record.output_tokens);
-            summary.total_cache_write_tokens = summary
-                .total_cache_write_tokens
-                .saturating_add(record.cache_write_tokens);
-            summary.total_cache_read_tokens = summary
-                .total_cache_read_tokens
-                .saturating_add(record.cache_read_tokens);
-            summary.total_cost_estimate += usage_record_cost(record);
-            total_latency = total_latency.saturating_add(record.latency_ms);
-        }
-        summary.average_latency_ms = total_latency
-            .checked_div(summary.total_requests)
-            .unwrap_or(0);
-        summary
+                .filter(|quota| quota.user_id == identity.user_id)
+                .map(|quota| UsageQuotaLimit {
+                    id: quota.id.clone(),
+                    user_id: quota.user_id.clone(),
+                    quota_type: quota.quota_type.clone(),
+                    limit: quota.limit,
+                    period_start_ms: quota.period_start_ms,
+                })
+                .collect(),
+        })
     }
 
     fn save_or_restore_locked(
@@ -3012,10 +2411,7 @@ impl ControlStore {
             teams: inner.teams.values().cloned().collect(),
             api_keys: inner.api_keys.values().cloned().collect(),
             quotas: inner.quotas.values().cloned().collect(),
-            usage: inner.usage.clone(),
-            spend_ledger: inner.spend_ledger.clone(),
             route_config: inner.route_config.clone(),
-            activities: inner.activities.clone(),
             provider_tests: inner.provider_tests.values().cloned().collect(),
             provider_health: inner.provider_health.values().cloned().collect(),
             provider_overrides: inner.provider_overrides.values().cloned().collect(),
@@ -3045,9 +2441,6 @@ impl ControlStore {
 
 fn redact_historical_control_errors(file: &mut ControlFile) -> bool {
     let mut changed = false;
-    for record in &mut file.usage {
-        changed |= redact_optional_error(&mut record.error_message);
-    }
     for record in &mut file.provider_health {
         changed |= redact_optional_error(&mut record.last_error);
     }
@@ -3057,14 +2450,6 @@ fn redact_historical_control_errors(file: &mut ControlFile) -> bool {
     for record in &mut file.provider_tests {
         if !record.success && record.message != "provider test failed [details redacted]" {
             record.message = "provider test failed [details redacted]".to_owned();
-            changed = true;
-        }
-    }
-    for record in &mut file.activities {
-        if (record.message.contains("测试供应商") || record.message.contains("发现供应商"))
-            && record.message != "供应商诊断完成，详细错误已脱敏"
-        {
-            record.message = "供应商诊断完成，详细错误已脱敏".to_owned();
             changed = true;
         }
     }
@@ -3081,25 +2466,6 @@ fn redact_optional_error(error: &mut Option<String>) -> bool {
     }
     *error = Some(redacted);
     true
-}
-
-fn public_team_with_ledger(inner: &ControlInner, team: &TeamRecord, now: u64) -> serde_json::Value {
-    let mut row = public_team(team, &inner.api_keys, &inner.usage, now);
-    if let Some(object) = row.as_object_mut() {
-        object.insert(
-            "dailySpendUsd".to_owned(),
-            json!(inner.spend_ledger.team_cost(&team.id, Some(day_start(now)))),
-        );
-        object.insert(
-            "monthlySpendUsd".to_owned(),
-            json!(
-                inner
-                    .spend_ledger
-                    .team_cost(&team.id, Some(now.saturating_sub(30 * DAY_MS)))
-            ),
-        );
-    }
-    row
 }
 
 fn record_provider_health_locked(
@@ -3151,16 +2517,6 @@ struct ProviderHealthUpdate<'a> {
     status_code: u16,
     error_message: Option<&'a str>,
     failure_kind: &'a str,
-    now: u64,
-}
-
-struct RechargeActivityInput<'a> {
-    provider_id: &'a str,
-    credential_id: Option<&'a str>,
-    previous_provider_issue: &'a str,
-    previous_credential_issue: &'a str,
-    status_code: u16,
-    error_message: Option<&'a str>,
     now: u64,
 }
 
@@ -3329,56 +2685,6 @@ fn provider_credential_pool_mode_locked(inner: &ControlInner, provider_id: &str)
         .map(String::as_str)
         .unwrap_or("failover")
         .to_owned()
-}
-
-fn trim_activities_locked(inner: &mut ControlInner) {
-    let overflow = inner.activities.len().saturating_sub(500);
-    if overflow > 0 {
-        inner.activities.drain(0..overflow);
-    }
-}
-
-fn record_recharge_required_activity_locked(
-    inner: &mut ControlInner,
-    input: RechargeActivityInput<'_>,
-) {
-    if provider_account_issue(Some(input.status_code), input.error_message)
-        != "insufficient_balance"
-    {
-        return;
-    }
-    let previous_issue = if input.credential_id.is_some() {
-        input.previous_credential_issue
-    } else {
-        input.previous_provider_issue
-    };
-    if previous_issue == "insufficient_balance" {
-        return;
-    }
-
-    let target = input
-        .credential_id
-        .map(|credential_id| format!("provider:{}:credential:{credential_id}", input.provider_id))
-        .unwrap_or_else(|| format!("provider:{}", input.provider_id));
-    let message = input
-        .credential_id
-        .map(|credential_id| {
-            format!(
-                "供应商 {} 账号 {credential_id} 余额不足，已标记为等待充值",
-                input.provider_id
-            )
-        })
-        .unwrap_or_else(|| format!("供应商 {} 余额不足，已标记为等待充值", input.provider_id));
-    inner.activities.push(ActivityRecord {
-        id: format!("act_{}", Uuid::new_v4().simple()),
-        timestamp_ms: input.now,
-        activity_type: "account_issue".to_owned(),
-        actor: "system".to_owned(),
-        target,
-        message,
-        severity: "warning".to_owned(),
-    });
-    trim_activities_locked(inner);
 }
 
 fn rotate_provider_credential_locked(
@@ -3553,27 +2859,19 @@ fn resolve_team_ref(
 
 struct ApiKeyPolicyCheck<'a> {
     policy: &'a ApiKeyPolicy,
-    spend_ledger: &'a SpendLedger,
-    api_key_id: &'a str,
-    estimate: UsageEstimate,
     client_ip: Option<&'a str>,
     requested_model: &'a str,
     resolved_model: &'a str,
     provider_id: &'a str,
-    now: u64,
 }
 
 fn enforce_api_key_policy(check: ApiKeyPolicyCheck<'_>) -> Result<(), AppError> {
     let ApiKeyPolicyCheck {
         policy,
-        spend_ledger,
-        api_key_id,
-        estimate,
         client_ip,
         requested_model,
         resolved_model,
         provider_id,
-        now,
     } = check;
 
     enforce_ip_policy(policy.ip_restricted, &policy.allowed_ips, client_ip)?;
@@ -3591,54 +2889,6 @@ fn enforce_api_key_policy(check: ApiKeyPolicyCheck<'_>) -> Result<(), AppError> 
         resolved_model,
     )?;
     enforce_provider_policy("team", &policy.team_allowed_providers, provider_id)?;
-    enforce_spend_limit(
-        "total spend",
-        policy.spend_limit_usd,
-        spend_ledger.api_key_cost(api_key_id, None),
-        estimate.cost_estimate,
-    )?;
-
-    if policy.rate_limited {
-        enforce_spend_limit(
-            "5 hour spend",
-            policy.five_hour_limit_usd,
-            spend_ledger.api_key_cost(api_key_id, Some(now.saturating_sub(5 * 60 * 60 * 1_000))),
-            estimate.cost_estimate,
-        )?;
-        enforce_spend_limit(
-            "daily spend",
-            policy.daily_limit_usd,
-            spend_ledger.api_key_cost(api_key_id, Some(now.saturating_sub(DAY_MS))),
-            estimate.cost_estimate,
-        )?;
-        enforce_spend_limit(
-            "7 day spend",
-            policy.weekly_limit_usd,
-            spend_ledger.api_key_cost(api_key_id, Some(now.saturating_sub(7 * DAY_MS))),
-            estimate.cost_estimate,
-        )?;
-        enforce_spend_limit(
-            "monthly spend",
-            policy.monthly_limit_usd,
-            spend_ledger.api_key_cost(api_key_id, Some(now.saturating_sub(30 * DAY_MS))),
-            estimate.cost_estimate,
-        )?;
-    }
-
-    if let Some(team_id) = &policy.team_id {
-        enforce_spend_limit(
-            "team daily spend",
-            policy.team_daily_limit_usd,
-            spend_ledger.team_cost(team_id, Some(now.saturating_sub(DAY_MS))),
-            estimate.cost_estimate,
-        )?;
-        enforce_spend_limit(
-            "team monthly spend",
-            policy.team_monthly_limit_usd,
-            spend_ledger.team_cost(team_id, Some(now.saturating_sub(30 * DAY_MS))),
-            estimate.cost_estimate,
-        )?;
-    }
 
     Ok(())
 }
@@ -3657,37 +2907,12 @@ fn effective_aliases_locked(
     aliases
 }
 
-fn default_protocol() -> String {
-    "openai-compat".to_owned()
-}
-
-fn default_client_protocol() -> String {
-    "anthropic-messages".to_owned()
-}
-
-fn default_billing_mode() -> String {
-    "local-estimate".to_owned()
-}
-
-fn default_terminal_reason() -> String {
-    "legacy_record".to_owned()
-}
-
-fn default_tool_outcome() -> String {
-    "unknown_legacy".to_owned()
-}
-
-fn default_traffic_class() -> String {
-    "business".to_owned()
-}
-
 fn reset_expired_quotas_locked(inner: &mut ControlInner, now: u64) {
     for quota in inner.quotas.values_mut() {
         if quota.reset_at_ms > now {
             continue;
         }
         let (start, end) = current_period(&quota.period, now);
-        quota.used = 0.0;
         quota.period_start_ms = start;
         quota.period_end_ms = end;
         quota.reset_at_ms = end;
@@ -3704,12 +2929,6 @@ fn client_token(headers: &HeaderMap) -> Option<&str> {
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.strip_prefix("Bearer "))
         })
-}
-
-fn control_store_path() -> PathBuf {
-    env::var("MODELPORT_CONTROL_STORE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(".modelport").join("control-plane.json"))
 }
 
 fn env_flag(name: &str) -> bool {
@@ -3764,20 +2983,6 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
         diff |= usize::from(a ^ b);
     }
     diff == 0
-}
-
-fn duration_ms(duration: Duration) -> u64 {
-    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
-}
-
-fn usage_status(success: bool, timed_out: bool) -> &'static str {
-    if success {
-        "success"
-    } else if timed_out {
-        "timeout"
-    } else {
-        "error"
-    }
 }
 
 fn now_millis() -> u64 {
@@ -3890,15 +3095,6 @@ mod tests {
                 last_error: Some("tool schema path /properties/private_customer_id".to_owned()),
                 ..ProviderHealthRecord::default()
             }],
-            activities: vec![ActivityRecord {
-                id: "activity_test".to_owned(),
-                timestamp_ms: 1,
-                activity_type: "config_change".to_owned(),
-                actor: "admin".to_owned(),
-                target: "provider:local".to_owned(),
-                message: "测试供应商 local: private response".to_owned(),
-                severity: "warning".to_owned(),
-            }],
             ..ControlFile::default()
         };
 
@@ -3911,7 +3107,6 @@ mod tests {
             file.provider_health[0].last_error.as_deref(),
             Some("request failed: tool protocol error [details redacted]")
         );
-        assert_eq!(file.activities[0].message, "供应商诊断完成，详细错误已脱敏");
         assert!(!redact_historical_control_errors(&mut file));
     }
 
@@ -3965,15 +3160,7 @@ mod tests {
             "activeProviderCredentials": &inner.active_provider_credentials,
             "providerCredentialPoolModes": &inner.provider_credential_pool_modes,
             "providerCredentialHealth": &inner.provider_credential_health,
-            "activities": &inner.activities,
         })
-    }
-
-    #[test]
-    fn timeout_usage_has_a_distinct_status() {
-        assert_eq!(usage_status(true, true), "success");
-        assert_eq!(usage_status(false, true), "timeout");
-        assert_eq!(usage_status(false, false), "error");
     }
 
     #[test]
@@ -4115,132 +3302,6 @@ mod tests {
     }
 
     #[test]
-    fn request_quota_is_enforced() {
-        let store = ControlStore::for_tests();
-        let identity = ClientIdentity {
-            user_id: "usr_test".to_owned(),
-            username: "test-user".to_owned(),
-            api_key_id: Some("key_test".to_owned()),
-            api_key_name: Some("local".to_owned()),
-            api_key_group: Some("test".to_owned()),
-            team_id: None,
-            team_name: None,
-            enforce_quotas: true,
-            api_key_policy: ApiKeyPolicy::default(),
-        };
-        store
-            .upsert_quota(UpsertQuotaInput {
-                id: Some("quota_test".to_owned()),
-                user_id: identity.user_id.clone(),
-                username: identity.username.clone(),
-                quota_type: "requests".to_owned(),
-                limit: 1.0,
-                period: "daily".to_owned(),
-            })
-            .unwrap();
-
-        store
-            .record_usage(UsageEventInput {
-                identity: identity.clone(),
-                request_id: Some("req_rejected_locally".to_owned()),
-                attempt_id: None,
-                model: "mimo-v2.5-pro".to_owned(),
-                resolved_model: "mimo-v2.5-pro".to_owned(),
-                provider: "mimo".to_owned(),
-                protocol: "openai-compat".to_owned(),
-                client_protocol: "anthropic-messages".to_owned(),
-                tool_use_requested: false,
-                tool_outcome: "not_requested".to_owned(),
-                traffic_class: "business".to_owned(),
-                tool_repair_attempted: false,
-                tool_repair_recovered: false,
-                stream: false,
-                success: false,
-                timed_out: false,
-                status_code: 429,
-                terminal_reason: "failed_before_response".to_owned(),
-                estimate: UsageEstimate {
-                    input_tokens: 100,
-                    output_tokens: 100,
-                    cost_estimate: 10.0,
-                    ..UsageEstimate::default()
-                },
-                model_pricing: None,
-                billing_mode: "local-estimate".to_owned(),
-                chargeable: false,
-                latency: Duration::from_millis(1),
-                first_byte_latency: None,
-                retry_count: 0,
-                fallback_from_provider: None,
-                client_ip: Some("127.0.0.1".to_owned()),
-                request_path: "/v1/messages".to_owned(),
-                error_message: Some("rejected before upstream".to_owned()),
-            })
-            .unwrap();
-        assert_eq!(store.list_quotas().unwrap()[0].used, 0.0);
-
-        store
-            .check_quotas(
-                &identity,
-                UsageEstimate::default(),
-                None,
-                "mimo-v2.5-pro",
-                "mimo-v2.5-pro",
-                "mimo",
-            )
-            .unwrap();
-        store
-            .record_usage(UsageEventInput {
-                identity: identity.clone(),
-                request_id: Some("req_test".to_owned()),
-                attempt_id: None,
-                model: "mimo-v2.5-pro".to_owned(),
-                resolved_model: "mimo-v2.5-pro".to_owned(),
-                provider: "mimo".to_owned(),
-                protocol: "openai-compat".to_owned(),
-                client_protocol: "anthropic-messages".to_owned(),
-                tool_use_requested: true,
-                tool_outcome: "completed".to_owned(),
-                traffic_class: "business".to_owned(),
-                tool_repair_attempted: false,
-                tool_repair_recovered: false,
-                stream: false,
-                success: true,
-                timed_out: false,
-                status_code: 200,
-                terminal_reason: "completed".to_owned(),
-                estimate: UsageEstimate::default(),
-                model_pricing: None,
-                billing_mode: "local-estimate".to_owned(),
-                chargeable: true,
-                latency: Duration::from_millis(10),
-                first_byte_latency: Some(Duration::from_millis(10)),
-                retry_count: 0,
-                fallback_from_provider: None,
-                client_ip: Some("127.0.0.1".to_owned()),
-                request_path: "/v1/messages".to_owned(),
-                error_message: None,
-            })
-            .unwrap();
-
-        assert_eq!(store.usage_rows()[0]["requestId"], "req_test");
-        assert_eq!(store.usage_rows()[0]["toolUseRequested"], true);
-
-        assert!(
-            store
-                .check_quotas(
-                    &identity,
-                    UsageEstimate::default(),
-                    None,
-                    "mimo-v2.5-pro",
-                    "mimo-v2.5-pro",
-                    "mimo",
-                )
-                .is_err()
-        );
-    }
-
-    #[test]
     fn api_key_ip_allowlist_is_enforced() {
         let store = ControlStore::for_tests();
         let identity = ClientIdentity {
@@ -4262,7 +3323,6 @@ mod tests {
         store
             .check_quotas(
                 &identity,
-                UsageEstimate::default(),
                 Some("10.1.2.3"),
                 "mimo-v2.5-pro",
                 "mimo-v2.5-pro",
@@ -4273,159 +3333,7 @@ mod tests {
             store
                 .check_quotas(
                     &identity,
-                    UsageEstimate::default(),
                     Some("192.168.1.10"),
-                    "mimo-v2.5-pro",
-                    "mimo-v2.5-pro",
-                    "mimo",
-                )
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn api_key_spend_limit_is_enforced() {
-        let store = ControlStore::for_tests();
-        let identity = ClientIdentity {
-            user_id: "usr_test".to_owned(),
-            username: "test-user".to_owned(),
-            api_key_id: Some("key_test".to_owned()),
-            api_key_name: Some("local".to_owned()),
-            api_key_group: Some("test".to_owned()),
-            team_id: None,
-            team_name: None,
-            enforce_quotas: true,
-            api_key_policy: ApiKeyPolicy {
-                spend_limit_usd: 0.02,
-                rate_limited: true,
-                daily_limit_usd: 0.02,
-                ..ApiKeyPolicy::default()
-            },
-        };
-
-        store
-            .record_usage(UsageEventInput {
-                identity: identity.clone(),
-                request_id: None,
-                attempt_id: None,
-                model: "mimo-v2.5-pro".to_owned(),
-                resolved_model: "mimo-v2.5-pro".to_owned(),
-                provider: "mimo".to_owned(),
-                protocol: "openai-compat".to_owned(),
-                client_protocol: "anthropic-messages".to_owned(),
-                tool_use_requested: false,
-                tool_outcome: "not_requested".to_owned(),
-                traffic_class: "business".to_owned(),
-                tool_repair_attempted: false,
-                tool_repair_recovered: false,
-                stream: false,
-                success: true,
-                timed_out: false,
-                status_code: 200,
-                terminal_reason: "completed".to_owned(),
-                estimate: UsageEstimate {
-                    cost_estimate: 0.015,
-                    ..UsageEstimate::default()
-                },
-                model_pricing: None,
-                billing_mode: "local-estimate".to_owned(),
-                chargeable: true,
-                latency: Duration::from_millis(10),
-                first_byte_latency: Some(Duration::from_millis(10)),
-                retry_count: 0,
-                fallback_from_provider: None,
-                client_ip: Some("127.0.0.1".to_owned()),
-                request_path: "/v1/messages".to_owned(),
-                error_message: None,
-            })
-            .unwrap();
-
-        assert!(
-            store
-                .check_quotas(
-                    &identity,
-                    UsageEstimate {
-                        cost_estimate: 0.01,
-                        ..UsageEstimate::default()
-                    },
-                    None,
-                    "mimo-v2.5-pro",
-                    "mimo-v2.5-pro",
-                    "mimo",
-                )
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn spend_limit_survives_usage_log_truncation() {
-        let store = ControlStore {
-            store: None,
-            inner: Mutex::new(ControlInner::default()),
-            persistence_degraded: AtomicBool::new(false),
-            usage_limit: 1,
-        };
-        let identity = ClientIdentity {
-            user_id: "usr_test".to_owned(),
-            username: "test-user".to_owned(),
-            api_key_id: Some("key_test".to_owned()),
-            api_key_name: Some("local".to_owned()),
-            api_key_group: Some("test".to_owned()),
-            team_id: None,
-            team_name: None,
-            enforce_quotas: true,
-            api_key_policy: ApiKeyPolicy {
-                spend_limit_usd: 0.02,
-                ..ApiKeyPolicy::default()
-            },
-        };
-
-        for _ in 0..2 {
-            store
-                .record_usage(UsageEventInput {
-                    identity: identity.clone(),
-                    request_id: None,
-                    attempt_id: None,
-                    model: "mimo-v2.5-pro".to_owned(),
-                    resolved_model: "mimo-v2.5-pro".to_owned(),
-                    provider: "mimo".to_owned(),
-                    protocol: "openai-compat".to_owned(),
-                    client_protocol: "anthropic-messages".to_owned(),
-                    tool_use_requested: false,
-                    tool_outcome: "not_requested".to_owned(),
-                    traffic_class: "business".to_owned(),
-                    tool_repair_attempted: false,
-                    tool_repair_recovered: false,
-                    stream: false,
-                    success: true,
-                    timed_out: false,
-                    status_code: 200,
-                    terminal_reason: "completed".to_owned(),
-                    estimate: UsageEstimate {
-                        cost_estimate: 0.015,
-                        ..UsageEstimate::default()
-                    },
-                    model_pricing: None,
-                    billing_mode: "local-estimate".to_owned(),
-                    chargeable: true,
-                    latency: Duration::from_millis(10),
-                    first_byte_latency: Some(Duration::from_millis(10)),
-                    retry_count: 0,
-                    fallback_from_provider: None,
-                    client_ip: None,
-                    request_path: "/v1/messages".to_owned(),
-                    error_message: None,
-                })
-                .unwrap();
-        }
-
-        assert_eq!(store.usage_rows().len(), 1);
-        assert!(
-            store
-                .check_quotas(
-                    &identity,
-                    UsageEstimate::default(),
-                    None,
                     "mimo-v2.5-pro",
                     "mimo-v2.5-pro",
                     "mimo",
@@ -4477,25 +3385,11 @@ mod tests {
         let identity = store.authenticate_headers(&headers).unwrap().unwrap();
 
         store
-            .check_quotas(
-                &identity,
-                UsageEstimate::default(),
-                None,
-                "mimo-v2.5-pro",
-                "mimo-v2.5-pro",
-                "mimo",
-            )
+            .check_quotas(&identity, None, "mimo-v2.5-pro", "mimo-v2.5-pro", "mimo")
             .unwrap();
         assert!(
             store
-                .check_quotas(
-                    &identity,
-                    UsageEstimate::default(),
-                    None,
-                    "gpt-5",
-                    "gpt-5",
-                    "openai",
-                )
+                .check_quotas(&identity, None, "gpt-5", "gpt-5", "openai",)
                 .is_err()
         );
     }
@@ -4533,91 +3427,6 @@ mod tests {
         store.delete_api_key(&key.public.id).unwrap();
         store.delete_team("team_safe").unwrap();
         assert!(store.list_teams().is_empty());
-    }
-
-    #[test]
-    fn team_daily_budget_is_enforced() {
-        let store = ControlStore::for_tests();
-        store
-            .upsert_team(UpsertTeamInput {
-                id: Some("team_budget".to_owned()),
-                name: "Budget".to_owned(),
-                slug: Some("budget".to_owned()),
-                description: None,
-                status: Some("active".to_owned()),
-                daily_limit_usd: Some(0.02),
-                monthly_limit_usd: Some(0.0),
-                allowed_models: None,
-                allowed_providers: None,
-            })
-            .unwrap();
-        let created = store
-            .create_api_key(CreateApiKeyInput {
-                user_id: "usr_test".to_owned(),
-                username: Some("test-user".to_owned()),
-                name: "budget key".to_owned(),
-                group: None,
-                team_id: Some("team_budget".to_owned()),
-                allowed_models: None,
-                allowed_providers: None,
-                expires_at: None,
-            })
-            .unwrap();
-        let mut headers = HeaderMap::new();
-        headers.insert("x-api-key", HeaderValue::from_str(&created.key).unwrap());
-        let identity = store.authenticate_headers(&headers).unwrap().unwrap();
-        store
-            .record_usage(UsageEventInput {
-                identity: identity.clone(),
-                request_id: None,
-                attempt_id: None,
-                model: "mimo-v2.5-pro".to_owned(),
-                resolved_model: "mimo-v2.5-pro".to_owned(),
-                provider: "mimo".to_owned(),
-                protocol: "openai-compat".to_owned(),
-                client_protocol: "anthropic-messages".to_owned(),
-                tool_use_requested: false,
-                tool_outcome: "not_requested".to_owned(),
-                traffic_class: "business".to_owned(),
-                tool_repair_attempted: false,
-                tool_repair_recovered: false,
-                stream: false,
-                success: true,
-                timed_out: false,
-                status_code: 200,
-                terminal_reason: "completed".to_owned(),
-                estimate: UsageEstimate {
-                    cost_estimate: 0.015,
-                    ..UsageEstimate::default()
-                },
-                model_pricing: None,
-                billing_mode: "local-estimate".to_owned(),
-                chargeable: true,
-                latency: Duration::from_millis(10),
-                first_byte_latency: Some(Duration::from_millis(10)),
-                retry_count: 0,
-                fallback_from_provider: None,
-                client_ip: Some("127.0.0.1".to_owned()),
-                request_path: "/v1/messages".to_owned(),
-                error_message: None,
-            })
-            .unwrap();
-
-        assert!(
-            store
-                .check_quotas(
-                    &identity,
-                    UsageEstimate {
-                        cost_estimate: 0.01,
-                        ..UsageEstimate::default()
-                    },
-                    None,
-                    "mimo-v2.5-pro",
-                    "mimo-v2.5-pro",
-                    "mimo",
-                )
-                .is_err()
-        );
     }
 
     #[test]
@@ -4689,48 +3498,6 @@ mod tests {
         assert_eq!(row["accountIssue"], "insufficient_balance");
         assert_eq!(row["rechargeRequired"], true);
         assert_eq!(row["rechargeBadge"], "等待充值");
-    }
-
-    #[test]
-    fn insufficient_balance_records_recharge_activity_once() {
-        let store = ControlStore::for_tests();
-
-        for _ in 0..2 {
-            store
-                .record_provider_outcome_for_credential(
-                    "deepseek",
-                    Some("main"),
-                    false,
-                    500,
-                    Some(
-                        r#"upstream returned HTTP 402: {"error":{"message":"Insufficient Balance"}}"#,
-                    ),
-                    true,
-                )
-                .unwrap();
-        }
-
-        let health = store.provider_credential_health_rows();
-        let row = health
-            .get("deepseek")
-            .and_then(|items| items.get("main"))
-            .unwrap();
-        assert_eq!(row["accountIssue"], "insufficient_balance");
-        assert_eq!(row["rechargeRequired"], true);
-
-        let activities = store.activity_rows(10);
-        let recharge_activities = activities
-            .iter()
-            .filter(|activity| {
-                activity.get("type").and_then(serde_json::Value::as_str) == Some("account_issue")
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(recharge_activities.len(), 1);
-        assert!(
-            recharge_activities[0]["message"]
-                .as_str()
-                .is_some_and(|value| value.contains("等待充值"))
-        );
     }
 
     #[test]
@@ -4873,7 +3640,6 @@ mod tests {
             store: Some(JsonStore::File(path.clone())),
             inner: Mutex::new(seed.inner.lock().unwrap().clone()),
             persistence_degraded: AtomicBool::new(false),
-            usage_limit: DEFAULT_USAGE_LIMIT,
         };
         let expected = provider_routing_state(&store);
 
@@ -4943,7 +3709,6 @@ mod tests {
             store: Some(JsonStore::File(path.clone())),
             inner: Mutex::new(ControlInner::default()),
             persistence_degraded: AtomicBool::new(false),
-            usage_limit: DEFAULT_USAGE_LIMIT,
         };
 
         assert!(matches!(
@@ -5066,7 +3831,6 @@ mod tests {
         {
             let mut inner = store.inner.lock().unwrap();
             let quota = inner.quotas.get_mut(&quota_id).unwrap();
-            quota.used = 42.0;
             quota.period_end_ms = 0;
             quota.reset_at_ms = 0;
         }
@@ -5074,7 +3838,6 @@ mod tests {
         {
             let inner = store.inner.lock().unwrap();
             let quota = &inner.quotas[&quota_id];
-            assert_eq!(quota.used, 42.0);
             assert_eq!(quota.period_end_ms, 0);
             assert_eq!(quota.reset_at_ms, 0);
         }

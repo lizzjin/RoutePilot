@@ -31,6 +31,9 @@ export interface EnterpriseRequest {
   principalId: string
   clientProtocol: EnterpriseClientProtocol
   requestedModel: string
+  requestPath: string
+  trafficClass: 'business' | 'synthetic' | 'diagnostic'
+  toolUseRequested: boolean
   stream: boolean
   state: EnterpriseRequestState
   statusCode: number | null
@@ -44,6 +47,13 @@ export interface EnterpriseRequest {
   currency: string
   billingMode: string | null
   chargeable: boolean
+  latencyMs: number
+  firstByteLatencyMs: number | null
+  toolOutcome: string
+  toolRepairAttempted: boolean
+  toolRepairRecovered: boolean
+  retryCount: number
+  fallbackFromProvider: string | null
   hasIdempotencyKey: boolean
   leaseOwner: string
   leaseExpiresAtMs: number
@@ -74,6 +84,8 @@ export interface EnterpriseAttempt {
   currency: string
   billingMode: string | null
   chargeable: boolean
+  latencyMs: number
+  firstByteLatencyMs: number | null
   leaseOwner: string
   leaseExpiresAtMs: number
   createdAtMs: number
@@ -96,6 +108,7 @@ export interface EnterpriseRequestDetail {
 export interface EnterpriseRequestFilters {
   state?: EnterpriseRequestState
   protocol?: EnterpriseClientProtocol
+  trafficClass?: 'business' | 'synthetic' | 'diagnostic'
   organizationId?: string
   projectId?: string
   environmentId?: string

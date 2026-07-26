@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKUP_DIR="${MODELPORT_BACKUP_DIR:-$ROOT_DIR/backups}"
 RETENTION_DAYS="${MODELPORT_BACKUP_RETENTION_DAYS:-14}"
-POSTGRES_IMAGE="${MODELPORT_BACKUP_POSTGRES_IMAGE:-postgres:16-alpine}"
+POSTGRES_IMAGE="${MODELPORT_BACKUP_POSTGRES_IMAGE:-postgres:18.4-alpine}"
 STAGING_DIR=""
 DRILL_CONTAINER=""
 
@@ -19,7 +19,7 @@ Environment:
   MODELPORT_BACKUP_DIR             Destination directory (default: ./backups)
   MODELPORT_BACKUP_RETENTION_DAYS  Delete completed archives older than this (default: 14)
   MODELPORT_COMPOSE_ENV_FILE       Compose environment file to include (default: ./.env)
-  MODELPORT_BACKUP_POSTGRES_IMAGE  Ephemeral restore-drill image (default: postgres:16-alpine)
+  MODELPORT_BACKUP_POSTGRES_IMAGE  Ephemeral restore-drill image (default: postgres:18.4-alpine)
 
 Archives contain a complete PostgreSQL dump and plaintext runtime configuration,
 including the Compose environment file. Treat every archive as credential material.

@@ -966,7 +966,10 @@ mod tests {
             }),
         );
         let base_url = spawn_upstream(app).await;
-        let transport = test_transport(Duration::from_millis(25), 1024, 4096, 8192);
+        // Keep enough headroom for the local server to schedule under a fully
+        // parallel test run. The body is infinite, so this still exercises the
+        // total body timeout rather than the SSE handshake timeout.
+        let transport = test_transport(Duration::from_millis(250), 1024, 4096, 8192);
 
         let error = match transport
             .post_json_sse(

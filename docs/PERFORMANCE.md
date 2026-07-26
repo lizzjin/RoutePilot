@@ -28,19 +28,16 @@ dated benchmark.
   generation plus conversion.
 - Authentication, model routing, rate policy, quota checks, credential health,
   pricing estimates, metrics, and usage records add local work.
-- Auth and control persistence currently replaces a complete logical JSON
-  document synchronously. PostgreSQL stores two `jsonb` rows; file mode rewrites
-  JSON files. This is measurable write amplification as usage/audit state grows.
-- Gateway-request and Provider-attempt lifecycle writes use the separate async,
-  pooled, row-oriented ledger; this removes whole-document amplification for
-  those records, but the dashboard usage log has not switched its query source.
-- Log filtering and pagination happen server-side for the HTTP contract, but
-  still materialize and scan retained usage rows in memory before slicing the
-  page. They reduce response/UI work, not complete-document storage cost.
-- Dashboard trend aggregation also scans the complete retained usage set for
-  the selected window rather than the visible logs page. It is bounded to 90
-  days and by `MODELPORT_USAGE_LOG_LIMIT`; reaching the retention cap can make
-  an older range incomplete.
+- Auth and low-frequency control mutations replace logical JSON documents.
+  Request usage and audit activity are not stored in those documents, so normal
+  inference traffic does not amplify them.
+- Gateway-request, Provider-attempt, budget, usage, and audit writes use the
+  async pooled row-oriented PostgreSQL ledger.
+- Log queries apply the lower time bound in PostgreSQL and retrieve details by
+  primary key. The selected rows are then filtered and summarized before
+  pagination.
+- Dashboard trend aggregation reads only the selected window plus the current
+  UTC day. Custom windows remain bounded to 90 days.
 
 ## Benchmark
 
@@ -56,6 +53,9 @@ Real upstream, default 3 paid calls:
 scripts/bench.sh --upstream
 scripts/bench.sh --upstream -n 5
 ```
+
+Upstream benchmark calls carry `x-modelport-traffic-class: synthetic`, so they
+remain available in request logs without changing business dashboard totals.
 
 Record at least:
 
@@ -82,12 +82,15 @@ Current process-local series:
 
 - `modelport_uptime_seconds`
 - `modelport_route_{requests,successes,failures,duration_ms}_total`
+- `modelport_inference_rejections_total`
 - `modelport_message_{requests,successes,failures,duration_ms}_total`
 - `modelport_message_{input,output,cache_write,cache_read}_tokens_total`
 - `modelport_message_cost_estimate_usd_total`
 
-Message metrics are labelled by provider, model, and stream. Arbitrary model
-passthrough can create high cardinality. Metrics reset on restart.
+Message metrics are labelled by provider, model, traffic class, and stream.
+Arbitrary model passthrough can create high cardinality; bounded overflow
+series preserve business/synthetic/diagnostic separation. Pre-ledger rejection
+metrics use fixed phase and error-category labels. Metrics reset on restart.
 
 For streams, request logs are finalized when the downstream body completes,
 fails, times out, or is dropped. `firstByteLatencyMs` is recorded only for a
@@ -97,8 +100,10 @@ still fall back to a request estimate when the Provider does not emit usage, so
 do not treat local estimates as invoices. Request logs expose `billingMode` to
 distinguish Provider-returned usage from a local estimate. Attempt-level
 preflight rows record zero usage; earlier ingress failures may return before
-persistence. Neither updates quota/spend, though both still incur local
-validation/metrics work.
+persistence and are counted by the bounded rejection metric. Neither updates
+quota/spend, though both still incur local validation/metrics work. Filtered log
+summaries expose lifecycle P95 and semantic TTFT P95 over the full result set,
+not only the current page.
 
 ## Tuning
 
@@ -112,7 +117,6 @@ MODELPORT_HTTP_MAX_RESPONSE_BYTES=33554432
 MODELPORT_HTTP_SSE_MAX_LINE_BYTES=1048576
 MODELPORT_HTTP_SSE_MAX_EVENT_BYTES=8388608
 MODELPORT_HTTP_SSE_MAX_STREAM_BYTES=67108864
-MODELPORT_USAGE_LOG_LIMIT=5000
 ```
 
 - Lower concurrency before raising it when provider rate limits or storage
@@ -127,13 +131,15 @@ MODELPORT_USAGE_LOG_LIMIT=5000
 - Do not use `MODELPORT_HTTP_REQUEST_TIMEOUT_SECS` as a live-generation cap. It
   covers the full non-stream exchange but only the SSE handshake; tune the
   stream idle and byte limits for the established phase.
-- Reduce usage retention when complete-document writes become visible.
-- Prefer PostgreSQL over JSON files when control state changes frequently, while
-  recognizing that the logical document is still replaced synchronously.
+- Apply explicit PostgreSQL retention/partitioning only when evidence shows it
+  is required.
+- Prefer PostgreSQL for durable operational state; low-frequency control
+  document writes remain synchronous.
 - Diagnose provider/network latency before changing gateway timeouts.
 - Measure Tool Use and large-context workloads separately from tiny text calls.
 
-Multi-instance rate limiting, transactional quota reservations, event-oriented
-usage storage, and final live-stream accounting are not implemented. Those are
-the scaling triggers for architectural work, not settings that can be tuned
-away.
+Multi-instance rate limiting and exact invoice reconciliation are not
+implemented. PostgreSQL usage/audit rows, tenant-budget reservation, and
+in-process live-stream terminal accounting are implemented, but user/key/team
+preflight limits and process-loss evidence remain explicit boundaries. These
+are architectural triggers, not settings that can be tuned away.

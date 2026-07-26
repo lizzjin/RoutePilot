@@ -1,11 +1,13 @@
 use std::{
     collections::{HashMap, HashSet},
     env,
+    net::IpAddr,
     sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row, postgres::PgRow};
 use tokio::sync::oneshot;
@@ -14,12 +16,15 @@ use uuid::Uuid;
 
 use crate::{
     AppError,
-    control::{UsageEstimate, UsageEventInput},
+    control::{UsageEstimate, UsageEventInput, UsagePolicySnapshot, UsageQuotaLimit},
     database::{
         connect_pool, database_url as control_database_url, enterprise_database_url,
-        enterprise_mode_enabled, redact_database_url,
+        redact_database_url,
     },
     domain::{AttemptId, RequestContext, TenantScope},
+    policy::enforce_spend_limit,
+    pricing::{self, ModelPricing},
+    usage::{current_period, quota_increment},
 };
 
 const DEFAULT_LEASE_TTL_SECS: u64 = 300;
@@ -37,6 +42,7 @@ pub(crate) struct EnterpriseLedger {
 }
 
 enum LedgerBackend {
+    #[allow(dead_code)]
     Memory(Box<Mutex<MemoryLedger>>),
     Postgres(PgPool),
 }
@@ -48,6 +54,7 @@ struct MemoryLedger {
     budget_accounts: HashMap<TenantKey, MemoryBudgetAccount>,
     budget_reservations: HashMap<String, MemoryBudgetReservation>,
     budget_events: Vec<EnterpriseBudgetEvent>,
+    audit_events: Vec<EnterpriseAuditEvent>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -91,6 +98,13 @@ struct MemoryRecord {
     cost_amount_microunits: i64,
     billing_mode: Option<String>,
     chargeable: bool,
+    latency_ms: i64,
+    first_byte_latency_ms: Option<i64>,
+    tool_outcome: String,
+    tool_repair_attempted: bool,
+    tool_repair_recovered: bool,
+    retry_count: i32,
+    fallback_from_provider: Option<String>,
     created_at_ms: i64,
     updated_at_ms: i64,
     completed_at_ms: Option<i64>,
@@ -104,8 +118,23 @@ struct MemoryRequestRecord {
     record: MemoryRecord,
     request_id: String,
     principal_id: String,
+    username: String,
+    api_key_id: Option<String>,
+    api_key_name: Option<String>,
+    api_key_group: Option<String>,
+    team_id: Option<String>,
+    team_name: Option<String>,
+    client_ip: Option<String>,
     client_protocol: String,
     requested_model: String,
+    request_path: String,
+    traffic_class: String,
+    tool_use_requested: bool,
+    provider_id: Option<String>,
+    resolved_model: Option<String>,
+    provider_protocol: Option<String>,
+    last_attempt_id: Option<String>,
+    model_pricing: Option<serde_json::Value>,
     stream: bool,
     idempotency_key_hash: Option<String>,
     request_fingerprint: String,
@@ -123,6 +152,67 @@ pub(crate) struct LedgerRequest {
     ledger_id: String,
     tenant: TenantKey,
     lease_owner: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LedgerRequestMetadata {
+    pub(crate) request_path: String,
+    pub(crate) traffic_class: String,
+    pub(crate) tool_use_requested: bool,
+    pub(crate) username: String,
+    pub(crate) api_key_id: Option<String>,
+    pub(crate) api_key_name: Option<String>,
+    pub(crate) api_key_group: Option<String>,
+    pub(crate) team_id: Option<String>,
+    pub(crate) team_name: Option<String>,
+    pub(crate) client_ip: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AuditEventInput {
+    pub(crate) activity_type: String,
+    pub(crate) actor_id: String,
+    pub(crate) actor_name: String,
+    pub(crate) target: String,
+    pub(crate) message: String,
+    pub(crate) severity: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ApiKeyUsageStats {
+    pub(crate) requests_today: u64,
+    pub(crate) tokens_today: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TeamUsageStats {
+    pub(crate) requests_today: u64,
+    pub(crate) daily_spend_usd: f64,
+    pub(crate) monthly_spend_usd: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ManagementUsageStats {
+    pub(crate) api_keys: HashMap<String, ApiKeyUsageStats>,
+    pub(crate) teams: HashMap<String, TeamUsageStats>,
+    pub(crate) users_24h: HashMap<String, u64>,
+}
+
+impl Default for LedgerRequestMetadata {
+    fn default() -> Self {
+        Self {
+            request_path: "/v1/messages".to_owned(),
+            traffic_class: "business".to_owned(),
+            tool_use_requested: false,
+            username: "local-admin".to_owned(),
+            api_key_id: None,
+            api_key_name: None,
+            api_key_group: None,
+            team_id: None,
+            team_name: None,
+            client_ip: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -151,6 +241,7 @@ pub(crate) struct EnterpriseLedgerQuery {
     pub(crate) page_size: Option<usize>,
     pub(crate) state: Option<String>,
     pub(crate) protocol: Option<String>,
+    pub(crate) traffic_class: Option<String>,
     pub(crate) organization_id: Option<String>,
     pub(crate) project_id: Option<String>,
     pub(crate) environment_id: Option<String>,
@@ -189,8 +280,23 @@ pub(crate) struct EnterpriseRequestRow {
     project_id: String,
     environment_id: String,
     principal_id: String,
+    username: String,
+    api_key_id: Option<String>,
+    api_key_name: Option<String>,
+    api_key_group: Option<String>,
+    team_id: Option<String>,
+    team_name: Option<String>,
+    client_ip: Option<String>,
     client_protocol: String,
     requested_model: String,
+    request_path: String,
+    traffic_class: String,
+    tool_use_requested: bool,
+    provider_id: Option<String>,
+    resolved_model: Option<String>,
+    provider_protocol: Option<String>,
+    last_attempt_id: Option<String>,
+    model_pricing: Option<serde_json::Value>,
     stream: bool,
     state: String,
     status_code: Option<i32>,
@@ -204,6 +310,13 @@ pub(crate) struct EnterpriseRequestRow {
     currency: String,
     billing_mode: Option<String>,
     chargeable: bool,
+    latency_ms: i64,
+    first_byte_latency_ms: Option<i64>,
+    tool_outcome: String,
+    tool_repair_attempted: bool,
+    tool_repair_recovered: bool,
+    retry_count: i32,
+    fallback_from_provider: Option<String>,
     has_idempotency_key: bool,
     lease_owner: String,
     lease_expires_at_ms: i64,
@@ -236,6 +349,8 @@ pub(crate) struct EnterpriseAttemptRow {
     currency: String,
     billing_mode: Option<String>,
     chargeable: bool,
+    latency_ms: i64,
+    first_byte_latency_ms: Option<i64>,
     lease_owner: String,
     lease_expires_at_ms: i64,
     created_at_ms: i64,
@@ -337,6 +452,31 @@ pub(crate) struct EnterpriseBudgetView {
     recent_events: Vec<EnterpriseBudgetEvent>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EnterpriseAuditEvent {
+    id: String,
+    timestamp: String,
+    #[serde(rename = "type")]
+    activity_type: String,
+    actor_id: String,
+    actor: String,
+    target: String,
+    message: String,
+    severity: String,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct UsageSpendTotals {
+    api_key_all_time: f64,
+    api_key_five_hours: f64,
+    api_key_day: f64,
+    api_key_week: f64,
+    api_key_month: f64,
+    team_day: f64,
+    team_month: f64,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct LedgerOutcome {
     state: &'static str,
@@ -346,6 +486,13 @@ pub(crate) struct LedgerOutcome {
     estimate: UsageEstimate,
     billing_mode: String,
     chargeable: bool,
+    latency_ms: i64,
+    first_byte_latency_ms: Option<i64>,
+    tool_outcome: String,
+    tool_repair_attempted: bool,
+    tool_repair_recovered: bool,
+    retry_count: i32,
+    fallback_from_provider: Option<String>,
 }
 
 impl MemoryRecord {
@@ -384,6 +531,13 @@ impl MemoryRecord {
             cost_amount_microunits: 0,
             billing_mode: None,
             chargeable: false,
+            latency_ms: 0,
+            first_byte_latency_ms: None,
+            tool_outcome: "not_requested".to_owned(),
+            tool_repair_attempted: false,
+            tool_repair_recovered: false,
+            retry_count: 0,
+            fallback_from_provider: None,
             created_at_ms: now,
             updated_at_ms: now,
             completed_at_ms: None,
@@ -407,6 +561,14 @@ impl MemoryRecord {
         self.cost_amount_microunits = cost_microunits(outcome.estimate.cost_estimate);
         self.billing_mode = Some(outcome.billing_mode.clone());
         self.chargeable = outcome.chargeable;
+        self.latency_ms = outcome.latency_ms;
+        self.first_byte_latency_ms = outcome.first_byte_latency_ms;
+        self.tool_outcome.clone_from(&outcome.tool_outcome);
+        self.tool_repair_attempted = outcome.tool_repair_attempted;
+        self.tool_repair_recovered = outcome.tool_repair_recovered;
+        self.retry_count = outcome.retry_count;
+        self.fallback_from_provider
+            .clone_from(&outcome.fallback_from_provider);
         self.updated_at_ms = now;
         self.completed_at_ms = Some(now);
     }
@@ -427,6 +589,7 @@ impl MemoryRecord {
         );
         self.billing_mode = Some("unreconciled".to_owned());
         self.chargeable = false;
+        self.latency_ms = now.saturating_sub(self.created_at_ms);
         self.updated_at_ms = now;
         self.completed_at_ms = Some(now);
     }
@@ -437,6 +600,7 @@ impl EnterpriseLedger {
         lease_config().map(|_| ())
     }
 
+    #[cfg(test)]
     pub(crate) fn memory() -> Self {
         Self {
             backend: Arc::new(LedgerBackend::Memory(Box::new(Mutex::new(
@@ -450,22 +614,18 @@ impl EnterpriseLedger {
     }
 
     pub(crate) async fn connect_from_env() -> Result<Self, AppError> {
-        let enterprise = enterprise_mode_enabled()?;
         let (lease_ttl, reconcile_interval) = lease_config()?;
-        if enterprise && control_database_url().is_none() {
+        if control_database_url().is_none() {
             return Err(AppError::Config(
-                "MODELPORT_ENTERPRISE_MODE requires MODELPORT_DATABASE_URL so auth and control state do not fall back to files"
+                "MODELPORT_DATABASE_URL is required; current ModelPort releases use PostgreSQL as the only runtime request ledger"
                     .to_owned(),
             ));
         }
         let Some(database_url) = enterprise_database_url() else {
-            if enterprise {
-                return Err(AppError::Config(
-                    "MODELPORT_ENTERPRISE_MODE requires MODELPORT_ENTERPRISE_DATABASE_URL or MODELPORT_DATABASE_URL"
-                        .to_owned(),
-                ));
-            }
-            return Ok(Self::memory());
+            return Err(AppError::Config(
+                "MODELPORT_ENTERPRISE_DATABASE_URL or MODELPORT_DATABASE_URL is required"
+                    .to_owned(),
+            ));
         };
 
         let pool = connect_pool(&database_url, None).await?;
@@ -502,6 +662,7 @@ impl EnterpriseLedger {
         }
     }
 
+    #[cfg(test)]
     pub(crate) async fn begin_request(
         &self,
         context: &RequestContext,
@@ -510,6 +671,43 @@ impl EnterpriseLedger {
         idempotency_key: Option<&str>,
         request_fingerprint: &str,
     ) -> Result<LedgerRequest, AppError> {
+        self.begin_request_with_metadata(
+            context,
+            requested_model,
+            stream,
+            idempotency_key,
+            request_fingerprint,
+            &LedgerRequestMetadata::default(),
+        )
+        .await
+    }
+
+    pub(crate) async fn begin_request_with_metadata(
+        &self,
+        context: &RequestContext,
+        requested_model: &str,
+        stream: bool,
+        idempotency_key: Option<&str>,
+        request_fingerprint: &str,
+        metadata: &LedgerRequestMetadata,
+    ) -> Result<LedgerRequest, AppError> {
+        if !matches!(
+            metadata.request_path.as_str(),
+            "/v1/messages" | "/v1/chat/completions"
+        ) {
+            return Err(AppError::InvalidRequest(
+                "unsupported request path for enterprise ledger".to_owned(),
+            ));
+        }
+        if !matches!(
+            metadata.traffic_class.as_str(),
+            "business" | "synthetic" | "diagnostic"
+        ) {
+            return Err(AppError::InvalidRequest(
+                "unsupported traffic class for enterprise ledger".to_owned(),
+            ));
+        }
+        validate_request_metadata(metadata)?;
         if request_fingerprint.len() != 64 {
             return Err(AppError::Database(
                 "request fingerprint must be a SHA-256 hex digest".to_owned(),
@@ -549,8 +747,23 @@ impl EnterpriseLedger {
                         record,
                         request_id: context.request_id.to_string(),
                         principal_id: context.principal_id.to_string(),
+                        username: metadata.username.clone(),
+                        api_key_id: metadata.api_key_id.clone(),
+                        api_key_name: metadata.api_key_name.clone(),
+                        api_key_group: metadata.api_key_group.clone(),
+                        team_id: metadata.team_id.clone(),
+                        team_name: metadata.team_name.clone(),
+                        client_ip: metadata.client_ip.clone(),
                         client_protocol: context.protocol.as_str().to_owned(),
                         requested_model: requested_model.to_owned(),
+                        request_path: metadata.request_path.clone(),
+                        traffic_class: metadata.traffic_class.clone(),
+                        tool_use_requested: metadata.tool_use_requested,
+                        provider_id: None,
+                        resolved_model: None,
+                        provider_protocol: None,
+                        last_attempt_id: None,
+                        model_pricing: None,
                         stream,
                         idempotency_key_hash,
                         request_fingerprint: request_fingerprint.to_owned(),
@@ -564,12 +777,18 @@ impl EnterpriseLedger {
                     "INSERT INTO modelport_gateway_requests (
                         ledger_id, request_id,
                         organization_id, project_id, environment_id,
-                        principal_id, client_protocol, requested_model, stream,
+                        principal_id, username,
+                        api_key_id, api_key_name, api_key_group,
+                        team_id, team_name, client_ip,
+                        client_protocol, requested_model, stream,
+                        request_path, traffic_class, tool_use_requested,
                         idempotency_key_hash, request_fingerprint,
                         lease_owner, lease_expires_at
                     ) VALUES (
                         $1, $2, $3, $4, $5, $6, $7, $8, $9,
-                        $10, $11, $12, now() + ($13 * interval '1 second')
+                        $10, $11, $12, $13::inet, $14, $15, $16,
+                        $17, $18, $19, $20, $21, $22,
+                        now() + ($23 * interval '1 second')
                     )
                     ON CONFLICT (
                         organization_id, project_id, environment_id, idempotency_key_hash
@@ -582,9 +801,19 @@ impl EnterpriseLedger {
                 .bind(&request.tenant.project_id)
                 .bind(&request.tenant.environment_id)
                 .bind(context.principal_id.as_str())
+                .bind(&metadata.username)
+                .bind(metadata.api_key_id.as_deref())
+                .bind(metadata.api_key_name.as_deref())
+                .bind(metadata.api_key_group.as_deref())
+                .bind(metadata.team_id.as_deref())
+                .bind(metadata.team_name.as_deref())
+                .bind(metadata.client_ip.as_deref())
                 .bind(context.protocol.as_str())
                 .bind(requested_model)
                 .bind(stream)
+                .bind(&metadata.request_path)
+                .bind(&metadata.traffic_class)
+                .bind(metadata.tool_use_requested)
                 .bind(idempotency_key_hash.as_deref())
                 .bind(request_fingerprint)
                 .bind(&request.lease_owner)
@@ -896,6 +1125,7 @@ impl EnterpriseLedger {
         }
     }
 
+    #[cfg(test)]
     pub(crate) async fn finalize_request(
         &self,
         request: &LedgerRequest,
@@ -910,6 +1140,104 @@ impl EnterpriseLedger {
         .await
     }
 
+    pub(crate) async fn finalize_request_usage(
+        &self,
+        request: &LedgerRequest,
+        usage: &UsageEventInput,
+    ) -> Result<(), AppError> {
+        let outcome = LedgerOutcome::from_usage(usage);
+        let provider_snapshot = usage.attempt_id.as_ref().map(|attempt_id| {
+            (
+                usage.provider.as_str(),
+                usage.resolved_model.as_str(),
+                usage.protocol.as_str(),
+                attempt_id.as_str(),
+            )
+        });
+        let model_pricing = usage.model_pricing.map(serde_json::to_value).transpose()?;
+
+        match self.backend.as_ref() {
+            LedgerBackend::Memory(ledger) => {
+                let mut ledger = ledger.lock().expect("enterprise ledger lock poisoned");
+                let Some(record) = ledger
+                    .requests
+                    .get_mut(&request.ledger_id)
+                    .filter(|record| {
+                        record.record.tenant == request.tenant
+                            && record.record.lease_owner == request.lease_owner
+                    })
+                else {
+                    return Err(missing_scoped_record());
+                };
+                record.record.finalize(&outcome);
+                if let Some((provider_id, resolved_model, provider_protocol, attempt_id)) =
+                    provider_snapshot
+                {
+                    record.provider_id = Some(provider_id.to_owned());
+                    record.resolved_model = Some(resolved_model.to_owned());
+                    record.provider_protocol = Some(provider_protocol.to_owned());
+                    record.last_attempt_id = Some(attempt_id.to_owned());
+                }
+                record.model_pricing = model_pricing;
+                Ok(())
+            }
+            LedgerBackend::Postgres(pool) => {
+                let mut transaction = pool.begin().await?;
+                let updated = update_terminal_record_pg(
+                    &mut transaction,
+                    true,
+                    &request.ledger_id,
+                    &request.tenant,
+                    &request.lease_owner,
+                    &outcome,
+                )
+                .await?;
+                if !updated {
+                    return Err(missing_scoped_record());
+                }
+                let (provider_id, resolved_model, provider_protocol, attempt_id) =
+                    provider_snapshot
+                        .map(|snapshot| {
+                            (
+                                Some(snapshot.0),
+                                Some(snapshot.1),
+                                Some(snapshot.2),
+                                Some(snapshot.3),
+                            )
+                        })
+                        .unwrap_or((None, None, None, None));
+                sqlx::query(
+                    "UPDATE modelport_gateway_requests
+                     SET provider_id = $1,
+                         resolved_model = $2,
+                         provider_protocol = $3,
+                         last_attempt_id = $4,
+                         model_pricing = $5
+                     WHERE ledger_id = $6
+                       AND organization_id = $7
+                       AND project_id = $8
+                       AND environment_id = $9
+                       AND lease_owner = $10",
+                )
+                .bind(provider_id)
+                .bind(resolved_model)
+                .bind(provider_protocol)
+                .bind(attempt_id)
+                .bind(model_pricing)
+                .bind(&request.ledger_id)
+                .bind(&request.tenant.organization_id)
+                .bind(&request.tenant.project_id)
+                .bind(&request.tenant.environment_id)
+                .bind(&request.lease_owner)
+                .execute(&mut *transaction)
+                .await?;
+                transaction.commit().await?;
+                Ok(())
+            }
+        }
+    }
+
+    #[cfg(test)]
     async fn finalize_request_record(
         &self,
         id: &str,
@@ -1071,6 +1399,11 @@ impl EnterpriseLedger {
                     !record.record.terminal && record.record.lease_expires_at <= now
                 }) {
                     record.record.mark_unreconciled(false);
+                    if record.tool_use_requested {
+                        record.record.tool_outcome = "upstream_or_delivery_error".to_owned();
+                    } else {
+                        record.record.tool_outcome = "not_requested".to_owned();
+                    }
                     result.requests += 1;
                 }
                 Ok(result)
@@ -1085,6 +1418,10 @@ impl EnterpriseLedger {
                          error_message = 'ledger lease expired before a terminal Provider outcome was persisted',
                          billing_mode = 'unreconciled',
                          chargeable = false,
+                         latency_ms = GREATEST(
+                             0,
+                             (EXTRACT(EPOCH FROM (now() - created_at)) * 1000)::bigint
+                         ),
                          updated_at = now(),
                          completed_at = now()
                      WHERE state = 'started'
@@ -1113,6 +1450,14 @@ impl EnterpriseLedger {
                          error_message = 'ledger lease expired before a terminal request outcome was persisted',
                          billing_mode = 'unreconciled',
                          chargeable = false,
+                         latency_ms = GREATEST(
+                             0,
+                             (EXTRACT(EPOCH FROM (now() - created_at)) * 1000)::bigint
+                         ),
+                         tool_outcome = CASE
+                             WHEN tool_use_requested THEN 'upstream_or_delivery_error'
+                             ELSE 'not_requested'
+                         END,
                          updated_at = now(),
                          completed_at = now()
                      WHERE state = 'started'
@@ -1294,6 +1639,7 @@ impl EnterpriseLedger {
                     .bind(query.project_id.as_deref())
                     .bind(query.environment_id.as_deref())
                     .bind(query.search.as_deref())
+                    .bind(query.traffic_class.as_deref())
                     .fetch_one(pool)
                     .await?;
                 let rows = sqlx::query(REQUEST_LIST_SQL)
@@ -1303,8 +1649,10 @@ impl EnterpriseLedger {
                     .bind(query.project_id.as_deref())
                     .bind(query.environment_id.as_deref())
                     .bind(query.search.as_deref())
+                    .bind(query.traffic_class.as_deref())
                     .bind(usize_to_i64(query.page_size))
                     .bind(usize_to_i64(query.offset()))
+                    .bind(None::<i64>)
                     .fetch_all(pool)
                     .await?;
                 Ok(EnterpriseRequestPage {
@@ -1316,6 +1664,552 @@ impl EnterpriseLedger {
                     page: query.page,
                     page_size: query.page_size,
                 })
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn usage_rows(&self) -> Result<Vec<Value>, AppError> {
+        self.usage_rows_since(None).await
+    }
+
+    pub(crate) async fn usage_rows_since(
+        &self,
+        since_ms: Option<u64>,
+    ) -> Result<Vec<Value>, AppError> {
+        let since_ms_i64 = since_ms.map(|value| i64::try_from(value).unwrap_or(i64::MAX));
+        let mut requests = match self.backend.as_ref() {
+            LedgerBackend::Memory(ledger) => {
+                let ledger = ledger.lock().expect("enterprise ledger lock poisoned");
+                ledger
+                    .requests
+                    .iter()
+                    .filter(|(_, request)| {
+                        since_ms_i64.is_none_or(|since| request.record.created_at_ms >= since)
+                    })
+                    .map(|(ledger_id, request)| {
+                        memory_request_row(
+                            ledger_id,
+                            request,
+                            usize_to_i64(
+                                ledger
+                                    .attempts
+                                    .values()
+                                    .filter(|attempt| attempt.request_ledger_id == *ledger_id)
+                                    .count(),
+                            ),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            }
+            LedgerBackend::Postgres(pool) => sqlx::query(REQUEST_LIST_SQL)
+                .bind(None::<&str>)
+                .bind(None::<&str>)
+                .bind(None::<&str>)
+                .bind(None::<&str>)
+                .bind(None::<&str>)
+                .bind(None::<&str>)
+                .bind(None::<&str>)
+                .bind(i64::MAX)
+                .bind(0_i64)
+                .bind(since_ms_i64)
+                .fetch_all(pool)
+                .await?
+                .iter()
+                .map(request_row_from_pg)
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+        requests.retain(|request| request.state != "started");
+        requests.sort_by(|left, right| {
+            right
+                .created_at_ms
+                .cmp(&left.created_at_ms)
+                .then_with(|| right.ledger_id.cmp(&left.ledger_id))
+        });
+        Ok(requests.iter().map(operational_log_row).collect())
+    }
+
+    pub(crate) async fn usage_row(&self, ledger_id: &str) -> Result<Option<Value>, AppError> {
+        let request = match self.backend.as_ref() {
+            LedgerBackend::Memory(ledger) => {
+                let ledger = ledger.lock().expect("enterprise ledger lock poisoned");
+                ledger.requests.get(ledger_id).map(|request| {
+                    memory_request_row(
+                        ledger_id,
+                        request,
+                        usize_to_i64(
+                            ledger
+                                .attempts
+                                .values()
+                                .filter(|attempt| attempt.request_ledger_id == ledger_id)
+                                .count(),
+                        ),
+                    )
+                })
+            }
+            LedgerBackend::Postgres(pool) => sqlx::query(REQUEST_DETAIL_SQL)
+                .bind(ledger_id)
+                .fetch_optional(pool)
+                .await?
+                .as_ref()
+                .map(request_row_from_pg)
+                .transpose()?,
+        };
+        Ok(request
+            .filter(|request| request.state != "started")
+            .as_ref()
+            .map(operational_log_row))
+    }
+
+    pub(crate) async fn management_usage(&self) -> Result<ManagementUsageStats, AppError> {
+        match self.backend.as_ref() {
+            LedgerBackend::Memory(ledger) => {
+                let ledger = ledger.lock().expect("enterprise ledger lock poisoned");
+                let now = u64::try_from(now_millis()).unwrap_or(u64::MAX);
+                let day_start = current_period("daily", now).0;
+                let month_start = current_period("monthly", now).0;
+                let rolling_day_start = now.saturating_sub(24 * 60 * 60 * 1_000);
+                let mut stats = ManagementUsageStats::default();
+                for request in ledger
+                    .requests
+                    .values()
+                    .filter(|request| request.record.terminal)
+                {
+                    let created_at = u64::try_from(request.record.created_at_ms).unwrap_or(0);
+                    if created_at >= rolling_day_start {
+                        let requests = stats
+                            .users_24h
+                            .entry(request.principal_id.clone())
+                            .or_default();
+                        *requests = requests.saturating_add(1);
+                    }
+                    if let Some(api_key_id) = request.api_key_id.as_deref()
+                        && created_at >= day_start
+                    {
+                        let row = stats.api_keys.entry(api_key_id.to_owned()).or_default();
+                        row.requests_today = row.requests_today.saturating_add(1);
+                        row.tokens_today = row
+                            .tokens_today
+                            .saturating_add(request_total_tokens(&request.record));
+                    }
+                    if let Some(team_id) = request.team_id.as_deref()
+                        && created_at >= month_start
+                    {
+                        let row = stats.teams.entry(team_id.to_owned()).or_default();
+                        let cost = if request.record.chargeable {
+                            microunits_usd(request.record.cost_amount_microunits)
+                        } else {
+                            0.0
+                        };
+                        row.monthly_spend_usd += cost;
+                        if created_at >= day_start {
+                            row.requests_today = row.requests_today.saturating_add(1);
+                            row.daily_spend_usd += cost;
+                        }
+                    }
+                }
+                Ok(stats)
+            }
+            LedgerBackend::Postgres(pool) => {
+                let api_key_rows = sqlx::query(
+                    "SELECT
+                        api_key_id,
+                        count(*)::bigint AS requests_today,
+                        COALESCE(sum(
+                            input_tokens + output_tokens
+                            + cache_write_tokens + cache_read_tokens
+                        ), 0)::bigint AS tokens_today
+                     FROM modelport_gateway_requests
+                     WHERE state <> 'started'
+                       AND api_key_id IS NOT NULL
+                       AND created_at >= (
+                           date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                       )
+                     GROUP BY api_key_id",
+                )
+                .fetch_all(pool)
+                .await?;
+                let team_rows = sqlx::query(
+                    "SELECT
+                        team_id,
+                        count(*) FILTER (
+                            WHERE created_at >= (
+                                date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                            )
+                        )::bigint AS requests_today,
+                        COALESCE(sum(cost_amount_microunits) FILTER (
+                            WHERE chargeable
+                              AND created_at >= (
+                                  date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                              )
+                        ), 0)::bigint AS daily_spend_microunits,
+                        COALESCE(sum(cost_amount_microunits) FILTER (
+                            WHERE chargeable
+                        ), 0)::bigint AS monthly_spend_microunits
+                     FROM modelport_gateway_requests
+                     WHERE state <> 'started'
+                       AND team_id IS NOT NULL
+                       AND created_at >= (
+                           date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                       )
+                     GROUP BY team_id",
+                )
+                .fetch_all(pool)
+                .await?;
+                let user_rows = sqlx::query(
+                    "SELECT principal_id, count(*)::bigint AS requests_24h
+                     FROM modelport_gateway_requests
+                     WHERE state <> 'started'
+                       AND created_at >= now() - interval '24 hours'
+                     GROUP BY principal_id",
+                )
+                .fetch_all(pool)
+                .await?;
+                let mut stats = ManagementUsageStats::default();
+                for row in api_key_rows {
+                    stats.api_keys.insert(
+                        row.try_get("api_key_id")?,
+                        ApiKeyUsageStats {
+                            requests_today: nonnegative_u64(row.try_get("requests_today")?),
+                            tokens_today: nonnegative_u64(row.try_get("tokens_today")?),
+                        },
+                    );
+                }
+                for row in team_rows {
+                    stats.teams.insert(
+                        row.try_get("team_id")?,
+                        TeamUsageStats {
+                            requests_today: nonnegative_u64(row.try_get("requests_today")?),
+                            daily_spend_usd: microunits_usd(row.try_get("daily_spend_microunits")?),
+                            monthly_spend_usd: microunits_usd(
+                                row.try_get("monthly_spend_microunits")?,
+                            ),
+                        },
+                    );
+                }
+                for row in user_rows {
+                    stats.users_24h.insert(
+                        row.try_get("principal_id")?,
+                        nonnegative_u64(row.try_get("requests_24h")?),
+                    );
+                }
+                Ok(stats)
+            }
+        }
+    }
+
+    pub(crate) async fn check_usage_policy(
+        &self,
+        policy: &UsagePolicySnapshot,
+        estimate: UsageEstimate,
+    ) -> Result<(), AppError> {
+        if policy.user_id.is_empty() {
+            return Ok(());
+        }
+        let spend = self.usage_spend_totals(policy).await?;
+        let limits = &policy.api_key_policy;
+        enforce_spend_limit(
+            "total spend",
+            limits.spend_limit_usd,
+            spend.api_key_all_time,
+            estimate.cost_estimate,
+        )?;
+        if limits.rate_limited {
+            for (label, limit, used) in [
+                (
+                    "5 hour spend",
+                    limits.five_hour_limit_usd,
+                    spend.api_key_five_hours,
+                ),
+                ("daily spend", limits.daily_limit_usd, spend.api_key_day),
+                ("7 day spend", limits.weekly_limit_usd, spend.api_key_week),
+                (
+                    "monthly spend",
+                    limits.monthly_limit_usd,
+                    spend.api_key_month,
+                ),
+            ] {
+                enforce_spend_limit(label, limit, used, estimate.cost_estimate)?;
+            }
+        }
+        enforce_spend_limit(
+            "team daily spend",
+            limits.team_daily_limit_usd,
+            spend.team_day,
+            estimate.cost_estimate,
+        )?;
+        enforce_spend_limit(
+            "team monthly spend",
+            limits.team_monthly_limit_usd,
+            spend.team_month,
+            estimate.cost_estimate,
+        )?;
+
+        for quota in &policy.quotas {
+            let used = self.quota_value(quota).await?;
+            let increment = quota_increment(&quota.quota_type, estimate);
+            if increment > 0.0 && used + increment > quota.limit {
+                return Err(AppError::QuotaExceeded(format!(
+                    "{} quota exceeded for user {}",
+                    quota.quota_type, policy.username
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn quota_usage_values(
+        &self,
+        quotas: &[UsageQuotaLimit],
+    ) -> Result<HashMap<String, f64>, AppError> {
+        let mut values = HashMap::with_capacity(quotas.len());
+        for quota in quotas {
+            values.insert(quota.id.clone(), self.quota_value(quota).await?);
+        }
+        Ok(values)
+    }
+
+    async fn usage_spend_totals(
+        &self,
+        policy: &UsagePolicySnapshot,
+    ) -> Result<UsageSpendTotals, AppError> {
+        match self.backend.as_ref() {
+            LedgerBackend::Memory(ledger) => {
+                let ledger = ledger.lock().expect("enterprise ledger lock poisoned");
+                let now = now_millis();
+                let mut totals = UsageSpendTotals::default();
+                for request in ledger
+                    .requests
+                    .values()
+                    .filter(|request| request.record.terminal && request.record.chargeable)
+                {
+                    let cost = microunits_usd(request.record.cost_amount_microunits);
+                    let age = now.saturating_sub(request.record.created_at_ms);
+                    if request.api_key_id == policy.api_key_id && policy.api_key_id.is_some() {
+                        totals.api_key_all_time += cost;
+                        if age <= 5 * 60 * 60 * 1_000 {
+                            totals.api_key_five_hours += cost;
+                        }
+                        if age <= 24 * 60 * 60 * 1_000 {
+                            totals.api_key_day += cost;
+                        }
+                        if age <= 7 * 24 * 60 * 60 * 1_000 {
+                            totals.api_key_week += cost;
+                        }
+                        if age <= 30 * 24 * 60 * 60 * 1_000 {
+                            totals.api_key_month += cost;
+                        }
+                    }
+                    if request.team_id == policy.team_id && policy.team_id.is_some() {
+                        if age <= 24 * 60 * 60 * 1_000 {
+                            totals.team_day += cost;
+                        }
+                        if age <= 30 * 24 * 60 * 60 * 1_000 {
+                            totals.team_month += cost;
+                        }
+                    }
+                }
+                Ok(totals)
+            }
+            LedgerBackend::Postgres(pool) => {
+                let row = sqlx::query(
+                    "SELECT
+                        COALESCE(sum(cost_amount_microunits)
+                            FILTER (WHERE api_key_id = $1), 0)::bigint AS api_key_all_time,
+                        COALESCE(sum(cost_amount_microunits)
+                            FILTER (WHERE api_key_id = $1
+                                AND created_at >= now() - interval '5 hours'), 0)::bigint
+                            AS api_key_five_hours,
+                        COALESCE(sum(cost_amount_microunits)
+                            FILTER (WHERE api_key_id = $1
+                                AND created_at >= now() - interval '1 day'), 0)::bigint
+                            AS api_key_day,
+                        COALESCE(sum(cost_amount_microunits)
+                            FILTER (WHERE api_key_id = $1
+                                AND created_at >= now() - interval '7 days'), 0)::bigint
+                            AS api_key_week,
+                        COALESCE(sum(cost_amount_microunits)
+                            FILTER (WHERE api_key_id = $1
+                                AND created_at >= now() - interval '30 days'), 0)::bigint
+                            AS api_key_month,
+                        COALESCE(sum(cost_amount_microunits)
+                            FILTER (WHERE team_id = $2
+                                AND created_at >= now() - interval '1 day'), 0)::bigint
+                            AS team_day,
+                        COALESCE(sum(cost_amount_microunits)
+                            FILTER (WHERE team_id = $2
+                                AND created_at >= now() - interval '30 days'), 0)::bigint
+                            AS team_month
+                     FROM modelport_gateway_requests
+                     WHERE state <> 'started'
+                       AND chargeable
+                       AND (($1::text IS NOT NULL AND api_key_id = $1)
+                         OR ($2::text IS NOT NULL AND team_id = $2))",
+                )
+                .bind(policy.api_key_id.as_deref())
+                .bind(policy.team_id.as_deref())
+                .fetch_one(pool)
+                .await?;
+                Ok(UsageSpendTotals {
+                    api_key_all_time: microunits_usd(row.try_get("api_key_all_time")?),
+                    api_key_five_hours: microunits_usd(row.try_get("api_key_five_hours")?),
+                    api_key_day: microunits_usd(row.try_get("api_key_day")?),
+                    api_key_week: microunits_usd(row.try_get("api_key_week")?),
+                    api_key_month: microunits_usd(row.try_get("api_key_month")?),
+                    team_day: microunits_usd(row.try_get("team_day")?),
+                    team_month: microunits_usd(row.try_get("team_month")?),
+                })
+            }
+        }
+    }
+
+    async fn quota_value(&self, quota: &UsageQuotaLimit) -> Result<f64, AppError> {
+        match self.backend.as_ref() {
+            LedgerBackend::Memory(ledger) => {
+                let ledger = ledger.lock().expect("enterprise ledger lock poisoned");
+                let mut requests = 0u64;
+                let mut tokens = 0u64;
+                let mut cost_microunits = 0i64;
+                for request in ledger.requests.values().filter(|request| {
+                    request.record.terminal
+                        && request.record.chargeable
+                        && request.principal_id == quota.user_id
+                        && request.record.created_at_ms
+                            >= i64::try_from(quota.period_start_ms).unwrap_or(i64::MAX)
+                }) {
+                    requests = requests.saturating_add(1);
+                    tokens = tokens
+                        .saturating_add(nonnegative_u64(request.record.input_tokens))
+                        .saturating_add(nonnegative_u64(request.record.output_tokens))
+                        .saturating_add(nonnegative_u64(request.record.cache_write_tokens))
+                        .saturating_add(nonnegative_u64(request.record.cache_read_tokens));
+                    cost_microunits = cost_microunits
+                        .saturating_add(request.record.cost_amount_microunits.max(0));
+                }
+                Ok(quota_value_from_totals(
+                    &quota.quota_type,
+                    requests,
+                    tokens,
+                    cost_microunits,
+                ))
+            }
+            LedgerBackend::Postgres(pool) => {
+                let row = sqlx::query(
+                    "SELECT
+                        count(*)::bigint AS requests,
+                        COALESCE(sum(
+                            input_tokens + output_tokens
+                            + cache_write_tokens + cache_read_tokens
+                        ), 0)::bigint AS tokens,
+                        COALESCE(sum(cost_amount_microunits), 0)::bigint
+                            AS cost_microunits
+                     FROM modelport_gateway_requests
+                     WHERE principal_id = $1
+                       AND state <> 'started'
+                       AND chargeable
+                       AND created_at >= to_timestamp($2::double precision / 1000.0)",
+                )
+                .bind(&quota.user_id)
+                .bind(i64::try_from(quota.period_start_ms).unwrap_or(i64::MAX))
+                .fetch_one(pool)
+                .await?;
+                Ok(quota_value_from_totals(
+                    &quota.quota_type,
+                    nonnegative_u64(row.try_get("requests")?),
+                    nonnegative_u64(row.try_get("tokens")?),
+                    row.try_get("cost_microunits")?,
+                ))
+            }
+        }
+    }
+
+    pub(crate) async fn record_audit_event(&self, input: &AuditEventInput) -> Result<(), AppError> {
+        validate_audit_event(input)?;
+        let event = EnterpriseAuditEvent {
+            id: format!("aev_{}", Uuid::new_v4().simple()),
+            timestamp: now_millis().to_string(),
+            activity_type: input.activity_type.clone(),
+            actor_id: input.actor_id.clone(),
+            actor: input.actor_name.clone(),
+            target: input.target.clone(),
+            message: input.message.clone(),
+            severity: input.severity.clone(),
+        };
+        match self.backend.as_ref() {
+            LedgerBackend::Memory(ledger) => {
+                ledger
+                    .lock()
+                    .expect("enterprise ledger lock poisoned")
+                    .audit_events
+                    .push(event);
+            }
+            LedgerBackend::Postgres(pool) => {
+                sqlx::query(
+                    "INSERT INTO modelport_audit_events (
+                        event_id, activity_type, actor_id, actor_name,
+                        target, message, severity
+                     ) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                )
+                .bind(&event.id)
+                .bind(&event.activity_type)
+                .bind(&event.actor_id)
+                .bind(&event.actor)
+                .bind(&event.target)
+                .bind(&event.message)
+                .bind(&event.severity)
+                .execute(pool)
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn audit_events(&self, limit: usize) -> Result<(Vec<Value>, i64), AppError> {
+        let limit = limit.clamp(1, 1_000);
+        match self.backend.as_ref() {
+            LedgerBackend::Memory(ledger) => {
+                let ledger = ledger.lock().expect("enterprise ledger lock poisoned");
+                let total = usize_to_i64(ledger.audit_events.len());
+                let rows = ledger
+                    .audit_events
+                    .iter()
+                    .rev()
+                    .take(limit)
+                    .map(|event| json!(event))
+                    .collect();
+                Ok((rows, total))
+            }
+            LedgerBackend::Postgres(pool) => {
+                let total =
+                    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM modelport_audit_events")
+                        .fetch_one(pool)
+                        .await?;
+                let rows = sqlx::query(
+                    "SELECT event_id, activity_type, actor_id, actor_name,
+                            target, message, severity,
+                            (EXTRACT(EPOCH FROM occurred_at) * 1000)::bigint AS occurred_at_ms
+                     FROM modelport_audit_events
+                     ORDER BY occurred_at DESC, event_id DESC
+                     LIMIT $1",
+                )
+                .bind(usize_to_i64(limit))
+                .fetch_all(pool)
+                .await?
+                .iter()
+                .map(|row| {
+                    Ok(json!({
+                        "id": row.try_get::<String, _>("event_id")?,
+                        "timestamp": row.try_get::<i64, _>("occurred_at_ms")?.to_string(),
+                        "type": row.try_get::<String, _>("activity_type")?,
+                        "actorId": row.try_get::<String, _>("actor_id")?,
+                        "actor": row.try_get::<String, _>("actor_name")?,
+                        "target": row.try_get::<String, _>("target")?,
+                        "message": row.try_get::<String, _>("message")?,
+                        "severity": row.try_get::<String, _>("severity")?,
+                    }))
+                })
+                .collect::<Result<Vec<Value>, sqlx::Error>>()?;
+                Ok((rows, total))
             }
         }
     }
@@ -1671,13 +2565,20 @@ async fn update_terminal_record_pg(
              cost_amount_microunits = $9,
              billing_mode = $10,
              chargeable = $11,
+             latency_ms = $12,
+             first_byte_latency_ms = $13,
+             tool_outcome = $14,
+             tool_repair_attempted = $15,
+             tool_repair_recovered = $16,
+             retry_count = $17,
+             fallback_from_provider = $18,
              updated_at = now(),
              completed_at = now()
-         WHERE {id_column} = $12
-           AND organization_id = $13
-           AND project_id = $14
-           AND environment_id = $15
-           AND lease_owner = $16
+         WHERE {id_column} = $19
+           AND organization_id = $20
+           AND project_id = $21
+           AND environment_id = $22
+           AND lease_owner = $23
            AND state = 'started'"
     );
     let result = sqlx::query(&query)
@@ -1692,6 +2593,13 @@ async fn update_terminal_record_pg(
         .bind(cost_microunits(outcome.estimate.cost_estimate))
         .bind(&outcome.billing_mode)
         .bind(outcome.chargeable)
+        .bind(outcome.latency_ms)
+        .bind(outcome.first_byte_latency_ms)
+        .bind(&outcome.tool_outcome)
+        .bind(outcome.tool_repair_attempted)
+        .bind(outcome.tool_repair_recovered)
+        .bind(outcome.retry_count)
+        .bind(&outcome.fallback_from_provider)
         .bind(id)
         .bind(&tenant.organization_id)
         .bind(&tenant.project_id)
@@ -2052,6 +2960,7 @@ const REQUEST_COUNT_SQL: &str = "SELECT count(*)::bigint
         AND ($3::text IS NULL OR r.organization_id = $3)
         AND ($4::text IS NULL OR r.project_id = $4)
         AND ($5::text IS NULL OR r.environment_id = $5)
+        AND ($7::text IS NULL OR r.traffic_class = $7)
         AND (
             $6::text IS NULL
             OR r.ledger_id ILIKE '%' || $6 || '%'
@@ -2068,10 +2977,19 @@ const REQUEST_COUNT_SQL: &str = "SELECT count(*)::bigint
 const REQUEST_LIST_SQL: &str = "SELECT
         r.ledger_id, r.request_id,
         r.organization_id, r.project_id, r.environment_id,
-        r.principal_id, r.client_protocol, r.requested_model, r.stream,
+        r.principal_id, r.username,
+        r.api_key_id, r.api_key_name, r.api_key_group,
+        r.team_id, r.team_name, host(r.client_ip) AS client_ip,
+        r.client_protocol, r.requested_model, r.stream,
+        r.request_path, r.traffic_class, r.tool_use_requested,
+        r.provider_id, r.resolved_model, r.provider_protocol,
+        r.last_attempt_id, r.model_pricing,
         r.state, r.status_code, r.terminal_reason, r.error_message,
         r.input_tokens, r.output_tokens, r.cache_write_tokens, r.cache_read_tokens,
         r.cost_amount_microunits, r.currency, r.billing_mode, r.chargeable,
+        r.latency_ms, r.first_byte_latency_ms,
+        r.tool_outcome, r.tool_repair_attempted, r.tool_repair_recovered,
+        r.retry_count, r.fallback_from_provider,
         (r.idempotency_key_hash IS NOT NULL) AS has_idempotency_key,
         r.lease_owner,
         (EXTRACT(EPOCH FROM r.lease_expires_at) * 1000)::bigint AS lease_expires_at_ms,
@@ -2090,6 +3008,7 @@ const REQUEST_LIST_SQL: &str = "SELECT
         AND ($3::text IS NULL OR r.organization_id = $3)
         AND ($4::text IS NULL OR r.project_id = $4)
         AND ($5::text IS NULL OR r.environment_id = $5)
+        AND ($7::text IS NULL OR r.traffic_class = $7)
         AND (
             $6::text IS NULL
             OR r.ledger_id ILIKE '%' || $6 || '%'
@@ -2102,16 +3021,29 @@ const REQUEST_LIST_SQL: &str = "SELECT
             OR COALESCE(r.terminal_reason, '') ILIKE '%' || $6 || '%'
             OR COALESCE(r.error_message, '') ILIKE '%' || $6 || '%'
         )
+        AND (
+            $10::bigint IS NULL
+            OR r.created_at >= to_timestamp($10::double precision / 1000.0)
+        )
     ORDER BY r.created_at DESC, r.ledger_id DESC
-    LIMIT $7 OFFSET $8";
+    LIMIT $8 OFFSET $9";
 
 const REQUEST_DETAIL_SQL: &str = "SELECT
         r.ledger_id, r.request_id,
         r.organization_id, r.project_id, r.environment_id,
-        r.principal_id, r.client_protocol, r.requested_model, r.stream,
+        r.principal_id, r.username,
+        r.api_key_id, r.api_key_name, r.api_key_group,
+        r.team_id, r.team_name, host(r.client_ip) AS client_ip,
+        r.client_protocol, r.requested_model, r.stream,
+        r.request_path, r.traffic_class, r.tool_use_requested,
+        r.provider_id, r.resolved_model, r.provider_protocol,
+        r.last_attempt_id, r.model_pricing,
         r.state, r.status_code, r.terminal_reason, r.error_message,
         r.input_tokens, r.output_tokens, r.cache_write_tokens, r.cache_read_tokens,
         r.cost_amount_microunits, r.currency, r.billing_mode, r.chargeable,
+        r.latency_ms, r.first_byte_latency_ms,
+        r.tool_outcome, r.tool_repair_attempted, r.tool_repair_recovered,
+        r.retry_count, r.fallback_from_provider,
         (r.idempotency_key_hash IS NOT NULL) AS has_idempotency_key,
         r.lease_owner,
         (EXTRACT(EPOCH FROM r.lease_expires_at) * 1000)::bigint AS lease_expires_at_ms,
@@ -2133,6 +3065,7 @@ const ATTEMPT_LIST_SQL: &str = "SELECT
         state, status_code, terminal_reason, error_message,
         input_tokens, output_tokens, cache_write_tokens, cache_read_tokens,
         cost_amount_microunits, currency, billing_mode, chargeable,
+        latency_ms, first_byte_latency_ms,
         lease_owner,
         (EXTRACT(EPOCH FROM lease_expires_at) * 1000)::bigint AS lease_expires_at_ms,
         (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_at_ms,
@@ -2412,6 +3345,7 @@ struct NormalizedLedgerQuery {
     page_size: usize,
     state: Option<String>,
     protocol: Option<String>,
+    traffic_class: Option<String>,
     organization_id: Option<String>,
     project_id: Option<String>,
     environment_id: Option<String>,
@@ -2452,11 +3386,22 @@ impl EnterpriseLedgerQuery {
                     .to_owned(),
             ));
         }
+        let traffic_class = normalized_filter(self.traffic_class.as_deref(), "trafficClass", 32)?;
+        if traffic_class
+            .as_deref()
+            .is_some_and(|value| !matches!(value, "business" | "synthetic" | "diagnostic"))
+        {
+            return Err(AppError::InvalidRequest(
+                "enterprise ledger trafficClass must be business, synthetic, or diagnostic"
+                    .to_owned(),
+            ));
+        }
         Ok(NormalizedLedgerQuery {
             page,
             page_size,
             state,
             protocol,
+            traffic_class,
             organization_id: normalized_filter(
                 self.organization_id.as_deref(),
                 "organizationId",
@@ -2488,6 +3433,10 @@ impl NormalizedLedgerQuery {
                 .protocol
                 .as_deref()
                 .is_some_and(|value| request.client_protocol != value)
+            || self
+                .traffic_class
+                .as_deref()
+                .is_some_and(|value| request.traffic_class != value)
             || self
                 .organization_id
                 .as_deref()
@@ -2536,6 +3485,67 @@ fn normalized_filter(
     Ok(value.map(str::to_owned))
 }
 
+fn validate_request_metadata(metadata: &LedgerRequestMetadata) -> Result<(), AppError> {
+    validate_metadata_text("username", Some(&metadata.username), true)?;
+    for (field, value) in [
+        ("apiKeyId", metadata.api_key_id.as_deref()),
+        ("apiKeyName", metadata.api_key_name.as_deref()),
+        ("apiKeyGroup", metadata.api_key_group.as_deref()),
+        ("teamId", metadata.team_id.as_deref()),
+        ("teamName", metadata.team_name.as_deref()),
+    ] {
+        validate_metadata_text(field, value, false)?;
+    }
+    if let Some(client_ip) = metadata.client_ip.as_deref()
+        && client_ip.parse::<IpAddr>().is_err()
+    {
+        return Err(AppError::InvalidRequest(
+            "client IP metadata must be an IPv4 or IPv6 address".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_metadata_text(
+    field: &str,
+    value: Option<&str>,
+    required: bool,
+) -> Result<(), AppError> {
+    if required && value.is_none_or(str::is_empty) {
+        return Err(AppError::InvalidRequest(format!(
+            "{field} metadata is required"
+        )));
+    }
+    if value.is_some_and(|value| value.len() > 256 || value.chars().any(char::is_control)) {
+        return Err(AppError::InvalidRequest(format!(
+            "{field} metadata must not exceed 256 non-control bytes"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_audit_event(input: &AuditEventInput) -> Result<(), AppError> {
+    if !matches!(input.severity.as_str(), "info" | "warning" | "error") {
+        return Err(AppError::InvalidRequest(
+            "audit severity must be info, warning, or error".to_owned(),
+        ));
+    }
+    for (field, value, max_len) in [
+        ("type", input.activity_type.as_str(), 80),
+        ("actorId", input.actor_id.as_str(), 160),
+        ("actorName", input.actor_name.as_str(), 160),
+        ("target", input.target.as_str(), 500),
+        ("message", input.message.as_str(), 1_000),
+    ] {
+        if value.is_empty() || value.len() > max_len || value.chars().any(char::is_control) {
+            return Err(AppError::InvalidRequest(format!(
+                "audit {field} must contain 1-{max_len} non-control bytes"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn memory_request_row(
     ledger_id: &str,
     request: &MemoryRequestRecord,
@@ -2549,8 +3559,23 @@ fn memory_request_row(
         project_id: record.tenant.project_id.clone(),
         environment_id: record.tenant.environment_id.clone(),
         principal_id: request.principal_id.clone(),
+        username: request.username.clone(),
+        api_key_id: request.api_key_id.clone(),
+        api_key_name: request.api_key_name.clone(),
+        api_key_group: request.api_key_group.clone(),
+        team_id: request.team_id.clone(),
+        team_name: request.team_name.clone(),
+        client_ip: request.client_ip.clone(),
         client_protocol: request.client_protocol.clone(),
         requested_model: request.requested_model.clone(),
+        request_path: request.request_path.clone(),
+        traffic_class: request.traffic_class.clone(),
+        tool_use_requested: request.tool_use_requested,
+        provider_id: request.provider_id.clone(),
+        resolved_model: request.resolved_model.clone(),
+        provider_protocol: request.provider_protocol.clone(),
+        last_attempt_id: request.last_attempt_id.clone(),
+        model_pricing: request.model_pricing.clone(),
         stream: request.stream,
         state: record.state.clone(),
         status_code: record.status_code,
@@ -2564,6 +3589,13 @@ fn memory_request_row(
         currency: "USD".to_owned(),
         billing_mode: record.billing_mode.clone(),
         chargeable: record.chargeable,
+        latency_ms: record.latency_ms,
+        first_byte_latency_ms: record.first_byte_latency_ms,
+        tool_outcome: record.tool_outcome.clone(),
+        tool_repair_attempted: record.tool_repair_attempted,
+        tool_repair_recovered: record.tool_repair_recovered,
+        retry_count: record.retry_count,
+        fallback_from_provider: record.fallback_from_provider.clone(),
         has_idempotency_key: request.idempotency_key_hash.is_some(),
         lease_owner: record.lease_owner.clone(),
         lease_expires_at_ms: record.lease_expires_at_ms,
@@ -2596,6 +3628,8 @@ fn memory_attempt_row(attempt_id: &str, record: &MemoryRecord) -> EnterpriseAtte
         currency: "USD".to_owned(),
         billing_mode: record.billing_mode.clone(),
         chargeable: record.chargeable,
+        latency_ms: record.latency_ms,
+        first_byte_latency_ms: record.first_byte_latency_ms,
         lease_owner: record.lease_owner.clone(),
         lease_expires_at_ms: record.lease_expires_at_ms,
         created_at_ms: record.created_at_ms,
@@ -2612,8 +3646,23 @@ fn request_row_from_pg(row: &PgRow) -> Result<EnterpriseRequestRow, sqlx::Error>
         project_id: row.try_get("project_id")?,
         environment_id: row.try_get("environment_id")?,
         principal_id: row.try_get("principal_id")?,
+        username: row.try_get("username")?,
+        api_key_id: row.try_get("api_key_id")?,
+        api_key_name: row.try_get("api_key_name")?,
+        api_key_group: row.try_get("api_key_group")?,
+        team_id: row.try_get("team_id")?,
+        team_name: row.try_get("team_name")?,
+        client_ip: row.try_get("client_ip")?,
         client_protocol: row.try_get("client_protocol")?,
         requested_model: row.try_get("requested_model")?,
+        request_path: row.try_get("request_path")?,
+        traffic_class: row.try_get("traffic_class")?,
+        tool_use_requested: row.try_get("tool_use_requested")?,
+        provider_id: row.try_get("provider_id")?,
+        resolved_model: row.try_get("resolved_model")?,
+        provider_protocol: row.try_get("provider_protocol")?,
+        last_attempt_id: row.try_get("last_attempt_id")?,
+        model_pricing: row.try_get("model_pricing")?,
         stream: row.try_get("stream")?,
         state: row.try_get("state")?,
         status_code: row.try_get("status_code")?,
@@ -2627,6 +3676,13 @@ fn request_row_from_pg(row: &PgRow) -> Result<EnterpriseRequestRow, sqlx::Error>
         currency: row.try_get("currency")?,
         billing_mode: row.try_get("billing_mode")?,
         chargeable: row.try_get("chargeable")?,
+        latency_ms: row.try_get("latency_ms")?,
+        first_byte_latency_ms: row.try_get("first_byte_latency_ms")?,
+        tool_outcome: row.try_get("tool_outcome")?,
+        tool_repair_attempted: row.try_get("tool_repair_attempted")?,
+        tool_repair_recovered: row.try_get("tool_repair_recovered")?,
+        retry_count: row.try_get("retry_count")?,
+        fallback_from_provider: row.try_get("fallback_from_provider")?,
         has_idempotency_key: row.try_get("has_idempotency_key")?,
         lease_owner: row.try_get("lease_owner")?,
         lease_expires_at_ms: row.try_get("lease_expires_at_ms")?,
@@ -2659,12 +3715,135 @@ fn attempt_row_from_pg(row: &PgRow) -> Result<EnterpriseAttemptRow, sqlx::Error>
         currency: row.try_get("currency")?,
         billing_mode: row.try_get("billing_mode")?,
         chargeable: row.try_get("chargeable")?,
+        latency_ms: row.try_get("latency_ms")?,
+        first_byte_latency_ms: row.try_get("first_byte_latency_ms")?,
         lease_owner: row.try_get("lease_owner")?,
         lease_expires_at_ms: row.try_get("lease_expires_at_ms")?,
         created_at_ms: row.try_get("created_at_ms")?,
         updated_at_ms: row.try_get("updated_at_ms")?,
         completed_at_ms: row.try_get("completed_at_ms")?,
     })
+}
+
+fn operational_log_row(request: &EnterpriseRequestRow) -> Value {
+    let input_tokens = nonnegative_u64(request.input_tokens);
+    let output_tokens = nonnegative_u64(request.output_tokens);
+    let cache_write_tokens = nonnegative_u64(request.cache_write_tokens);
+    let cache_read_tokens = nonnegative_u64(request.cache_read_tokens);
+    let billed_input_tokens = input_tokens
+        .saturating_add(cache_write_tokens)
+        .saturating_add(cache_read_tokens);
+    let total_tokens = billed_input_tokens.saturating_add(output_tokens);
+    let cache_tokens = cache_write_tokens.saturating_add(cache_read_tokens);
+    let cache_hit_rate = if billed_input_tokens == 0 {
+        0.0
+    } else {
+        cache_tokens as f64 / billed_input_tokens as f64 * 100.0
+    };
+    let resolved_model = request
+        .resolved_model
+        .as_deref()
+        .unwrap_or(&request.requested_model);
+    let provider = request.provider_id.as_deref().unwrap_or("unrouted");
+    let pricing = request
+        .model_pricing
+        .clone()
+        .and_then(|value| serde_json::from_value::<ModelPricing>(value).ok())
+        .unwrap_or_else(|| pricing::pricing_for_model(resolved_model));
+    let cost_estimate = request.cost_amount_microunits.max(0) as f64 / 1_000_000.0;
+    let status = if request.state == "completed" {
+        "success"
+    } else if request
+        .terminal_reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("timeout"))
+    {
+        "timeout"
+    } else {
+        "error"
+    };
+
+    json!({
+        "id": request.ledger_id,
+        "requestId": request.request_id,
+        "attemptId": request.last_attempt_id,
+        "timestamp": request.created_at_ms.to_string(),
+        "userId": request.principal_id,
+        "username": request.username,
+        "apiKeyId": request.api_key_id,
+        "apiKeyName": request.api_key_name,
+        "apiKeyGroup": request.api_key_group,
+        "teamId": request.team_id,
+        "teamName": request.team_name,
+        "model": request.requested_model,
+        "resolvedModel": resolved_model,
+        "provider": provider,
+        "protocol": request.provider_protocol,
+        "clientProtocol": request.client_protocol,
+        "toolUseRequested": request.tool_use_requested,
+        "toolOutcome": request.tool_outcome,
+        "trafficClass": request.traffic_class,
+        "toolRepairAttempted": request.tool_repair_attempted,
+        "toolRepairRecovered": request.tool_repair_recovered,
+        "stream": if request.stream { "stream" } else { "non-stream" },
+        "status": status,
+        "statusCode": request.status_code,
+        "terminalReason": request.terminal_reason,
+        "inputTokens": input_tokens,
+        "outputTokens": output_tokens,
+        "cacheWriteTokens": cache_write_tokens,
+        "cacheReadTokens": cache_read_tokens,
+        "billedInputTokens": billed_input_tokens,
+        "totalTokens": total_tokens,
+        "cacheHitRate": cache_hit_rate,
+        "costEstimate": cost_estimate,
+        "modelPricing": pricing,
+        "costBreakdown": {
+            "inputCost": pricing::cost_component(input_tokens, pricing.input_per_million),
+            "outputCost": pricing::cost_component(output_tokens, pricing.output_per_million),
+            "cacheWriteCost": pricing::cost_component(cache_write_tokens, pricing.cache_write_per_million),
+            "cacheReadCost": pricing::cost_component(cache_read_tokens, pricing.cache_read_per_million),
+            "totalCost": cost_estimate,
+        },
+        "latencyMs": nonnegative_u64(request.latency_ms),
+        "firstByteLatencyMs": request.first_byte_latency_ms.map(nonnegative_u64),
+        "retryCount": request.retry_count.max(0),
+        "fallbackFromProvider": request.fallback_from_provider,
+        "clientIp": request.client_ip,
+        "requestPath": request.request_path,
+        "billingMode": request.billing_mode,
+        "chargeable": request.chargeable,
+        "errorMessage": request.error_message,
+    })
+}
+
+fn nonnegative_u64(value: i64) -> u64 {
+    u64::try_from(value.max(0)).unwrap_or(u64::MAX)
+}
+
+fn request_total_tokens(request: &MemoryRecord) -> u64 {
+    nonnegative_u64(request.input_tokens)
+        .saturating_add(nonnegative_u64(request.output_tokens))
+        .saturating_add(nonnegative_u64(request.cache_write_tokens))
+        .saturating_add(nonnegative_u64(request.cache_read_tokens))
+}
+
+fn microunits_usd(value: i64) -> f64 {
+    value.max(0) as f64 / 1_000_000.0
+}
+
+fn quota_value_from_totals(
+    quota_type: &str,
+    requests: u64,
+    tokens: u64,
+    cost_microunits: i64,
+) -> f64 {
+    match quota_type {
+        "requests" => requests as f64,
+        "tokens" => tokens as f64,
+        "cost" => microunits_usd(cost_microunits),
+        _ => 0.0,
+    }
 }
 
 impl Drop for LedgerLease {
@@ -2681,7 +3860,13 @@ impl LedgerOutcome {
         status_code: u16,
         error_message: Option<String>,
         estimate: UsageEstimate,
+        billing_mode: &'static str,
+        latency: Duration,
     ) -> Self {
+        debug_assert!(matches!(
+            billing_mode,
+            "local-estimate" | "upstream-returned"
+        ));
         Self {
             state: if success { "completed" } else { "failed" },
             status_code,
@@ -2693,12 +3878,23 @@ impl LedgerOutcome {
             .to_owned(),
             error_message,
             estimate,
-            billing_mode: "local-estimate".to_owned(),
+            billing_mode: billing_mode.to_owned(),
             chargeable: true,
+            latency_ms: duration_millis_i64(latency),
+            first_byte_latency_ms: None,
+            tool_outcome: "not_requested".to_owned(),
+            tool_repair_attempted: false,
+            tool_repair_recovered: false,
+            retry_count: 0,
+            fallback_from_provider: None,
         }
     }
 
     pub(crate) fn from_usage(usage: &UsageEventInput) -> Self {
+        Self::from_usage_with_latency(usage, usage.latency)
+    }
+
+    pub(crate) fn from_usage_with_latency(usage: &UsageEventInput, latency: Duration) -> Self {
         let state = if usage.success {
             "completed"
         } else if usage.terminal_reason.contains("cancel") {
@@ -2714,6 +3910,13 @@ impl LedgerOutcome {
             estimate: usage.estimate,
             billing_mode: usage.billing_mode.clone(),
             chargeable: usage.chargeable,
+            latency_ms: duration_millis_i64(latency),
+            first_byte_latency_ms: usage.first_byte_latency.map(duration_millis_i64),
+            tool_outcome: usage.tool_outcome.clone(),
+            tool_repair_attempted: usage.tool_repair_attempted,
+            tool_repair_recovered: usage.tool_repair_recovered,
+            retry_count: i32::try_from(usage.retry_count).unwrap_or(i32::MAX),
+            fallback_from_provider: usage.fallback_from_provider.clone(),
         }
     }
 }
@@ -2832,7 +4035,10 @@ fn cost_microunits(value: f64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{ClientProtocol, RequestId};
+    use crate::{
+        control::ApiKeyPolicy,
+        domain::{ClientProtocol, RequestId},
+    };
 
     const TEST_FINGERPRINT: &str =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -2889,11 +4095,256 @@ mod tests {
             )
             .await
             .unwrap();
-        let outcome = LedgerOutcome::provider_attempt(true, 200, None, UsageEstimate::default());
+        let outcome = LedgerOutcome::provider_attempt(
+            true,
+            200,
+            None,
+            UsageEstimate::default(),
+            "local-estimate",
+            Duration::ZERO,
+        );
         ledger.finalize_attempt(&attempt, &outcome).await.unwrap();
         ledger.finalize_request(&request, &outcome).await.unwrap();
 
         assert_eq!(ledger.incomplete_requests(&context.tenant).await, 0);
+    }
+
+    #[tokio::test]
+    async fn memory_ledger_persists_and_filters_operational_dimensions() {
+        let ledger = EnterpriseLedger::memory();
+        let request = ledger
+            .begin_request_with_metadata(
+                &context(),
+                "gpt-test",
+                true,
+                None,
+                TEST_FINGERPRINT,
+                &LedgerRequestMetadata {
+                    request_path: "/v1/chat/completions".to_owned(),
+                    traffic_class: "synthetic".to_owned(),
+                    tool_use_requested: true,
+                    ..LedgerRequestMetadata::default()
+                },
+            )
+            .await
+            .unwrap();
+        let outcome = LedgerOutcome {
+            state: "completed",
+            status_code: 200,
+            terminal_reason: "completed".to_owned(),
+            error_message: None,
+            estimate: estimate(0.25),
+            billing_mode: "upstream-returned".to_owned(),
+            chargeable: true,
+            latency_ms: 1250,
+            first_byte_latency_ms: Some(125),
+            tool_outcome: "tool_called".to_owned(),
+            tool_repair_attempted: true,
+            tool_repair_recovered: true,
+            retry_count: 1,
+            fallback_from_provider: Some("primary".to_owned()),
+        };
+        ledger.finalize_request(&request, &outcome).await.unwrap();
+
+        let page = ledger
+            .list_requests(&EnterpriseLedgerQuery {
+                traffic_class: Some("synthetic".to_owned()),
+                ..EnterpriseLedgerQuery::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(page.total, 1);
+        assert_eq!(page.requests[0].request_path, "/v1/chat/completions");
+        assert_eq!(page.requests[0].traffic_class, "synthetic");
+        assert!(page.requests[0].tool_use_requested);
+        assert_eq!(page.requests[0].latency_ms, 1250);
+        assert_eq!(page.requests[0].first_byte_latency_ms, Some(125));
+        assert_eq!(page.requests[0].tool_outcome, "tool_called");
+        assert_eq!(page.requests[0].retry_count, 1);
+        assert_eq!(
+            page.requests[0].fallback_from_provider.as_deref(),
+            Some("primary")
+        );
+
+        let business_page = ledger
+            .list_requests(&EnterpriseLedgerQuery {
+                traffic_class: Some("business".to_owned()),
+                ..EnterpriseLedgerQuery::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(business_page.total, 0);
+    }
+
+    #[tokio::test]
+    async fn current_operational_ledger_is_the_single_usage_and_audit_source() {
+        let ledger = EnterpriseLedger::memory();
+        let request = ledger
+            .begin_request_with_metadata(
+                &context(),
+                "gpt-test",
+                false,
+                None,
+                TEST_FINGERPRINT,
+                &LedgerRequestMetadata {
+                    username: "alice".to_owned(),
+                    api_key_id: Some("key_current".to_owned()),
+                    api_key_name: Some("production".to_owned()),
+                    api_key_group: Some("core".to_owned()),
+                    team_id: Some("team_current".to_owned()),
+                    team_name: Some("Core".to_owned()),
+                    client_ip: Some("198.51.100.10".to_owned()),
+                    ..LedgerRequestMetadata::default()
+                },
+            )
+            .await
+            .unwrap();
+        let attempt = ledger
+            .begin_attempt(
+                &request,
+                &AttemptId::from_string("att_current"),
+                "openai",
+                "gpt-test-2026",
+                "openai-compat",
+                UsageEstimate::default(),
+            )
+            .await
+            .unwrap();
+        let usage = UsageEventInput {
+            request_id: Some("req_ledger_test".to_owned()),
+            attempt_id: Some("att_current".to_owned()),
+            resolved_model: "gpt-test-2026".to_owned(),
+            provider: "openai".to_owned(),
+            protocol: "openai-compat".to_owned(),
+            tool_use_requested: false,
+            tool_outcome: "not_requested".to_owned(),
+            traffic_class: "business".to_owned(),
+            tool_repair_attempted: false,
+            tool_repair_recovered: false,
+            success: true,
+            timed_out: false,
+            status_code: 200,
+            terminal_reason: "completed".to_owned(),
+            estimate: estimate(0.25),
+            model_pricing: None,
+            billing_mode: "upstream-returned".to_owned(),
+            chargeable: true,
+            latency: Duration::from_millis(40),
+            first_byte_latency: Some(Duration::from_millis(10)),
+            retry_count: 0,
+            fallback_from_provider: None,
+            error_message: None,
+        };
+        let outcome = LedgerOutcome::from_usage(&usage);
+        ledger.finalize_attempt(&attempt, &outcome).await.unwrap();
+        ledger
+            .finalize_request_usage(&request, &usage)
+            .await
+            .unwrap();
+
+        let rows = ledger.usage_rows().await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["apiKeyName"], "production");
+        assert_eq!(rows[0]["teamId"], "team_current");
+        assert_eq!(rows[0]["clientIp"], "198.51.100.10");
+        assert_eq!(rows[0]["provider"], "openai");
+        for removed_field in [
+            "tokenName",
+            "group",
+            "channelId",
+            "channelName",
+            "requestType",
+            "detail",
+        ] {
+            assert!(rows[0].get(removed_field).is_none());
+        }
+
+        let management = ledger.management_usage().await.unwrap();
+        assert_eq!(management.api_keys["key_current"].requests_today, 1);
+        assert_eq!(management.api_keys["key_current"].tokens_today, 120);
+        assert_eq!(management.teams["team_current"].requests_today, 1);
+        assert_eq!(management.teams["team_current"].daily_spend_usd, 0.25);
+        assert_eq!(management.users_24h["usr_test"], 1);
+
+        let policy = UsagePolicySnapshot {
+            user_id: "usr_test".to_owned(),
+            username: "alice".to_owned(),
+            api_key_id: Some("key_current".to_owned()),
+            team_id: Some("team_current".to_owned()),
+            api_key_policy: ApiKeyPolicy {
+                spend_limit_usd: 0.25,
+                ..ApiKeyPolicy::default()
+            },
+            quotas: vec![UsageQuotaLimit {
+                id: "quota_current".to_owned(),
+                user_id: "usr_test".to_owned(),
+                quota_type: "requests".to_owned(),
+                limit: 1.0,
+                period_start_ms: 0,
+            }],
+        };
+        assert!(matches!(
+            ledger.check_usage_policy(&policy, estimate(0.01)).await,
+            Err(AppError::QuotaExceeded(_))
+        ));
+
+        ledger
+            .record_audit_event(&AuditEventInput {
+                activity_type: "config_change".to_owned(),
+                actor_id: "usr_admin".to_owned(),
+                actor_name: "admin".to_owned(),
+                target: "provider:openai".to_owned(),
+                message: "更新 Provider".to_owned(),
+                severity: "info".to_owned(),
+            })
+            .await
+            .unwrap();
+        let (events, total) = ledger.audit_events(10).await.unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(events[0]["target"], "provider:openai");
+    }
+
+    #[tokio::test]
+    async fn memory_ledger_rejects_invalid_operational_dimensions() {
+        let ledger = EnterpriseLedger::memory();
+        for metadata in [
+            LedgerRequestMetadata {
+                request_path: "/v1/unknown".to_owned(),
+                ..LedgerRequestMetadata::default()
+            },
+            LedgerRequestMetadata {
+                traffic_class: "unbounded-user-label".to_owned(),
+                ..LedgerRequestMetadata::default()
+            },
+        ] {
+            let result = ledger
+                .begin_request_with_metadata(
+                    &context(),
+                    "gpt-test",
+                    false,
+                    None,
+                    TEST_FINGERPRINT,
+                    &metadata,
+                )
+                .await;
+            assert!(matches!(result, Err(AppError::InvalidRequest(_))));
+        }
+    }
+
+    #[test]
+    fn provider_attempt_preserves_usage_provenance() {
+        let outcome = LedgerOutcome::provider_attempt(
+            true,
+            200,
+            None,
+            estimate(0.25),
+            "upstream-returned",
+            Duration::from_millis(42),
+        );
+
+        assert_eq!(outcome.billing_mode, "upstream-returned");
+        assert_eq!(outcome.latency_ms, 42);
     }
 
     #[tokio::test]
@@ -2921,7 +4372,14 @@ mod tests {
             )
             .await
             .unwrap();
-        let outcome = LedgerOutcome::provider_attempt(true, 200, None, UsageEstimate::default());
+        let outcome = LedgerOutcome::provider_attempt(
+            true,
+            200,
+            None,
+            UsageEstimate::default(),
+            "local-estimate",
+            Duration::ZERO,
+        );
         ledger.finalize_attempt(&attempt, &outcome).await.unwrap();
         ledger.finalize_request(&request, &outcome).await.unwrap();
 
@@ -2973,6 +4431,27 @@ mod tests {
             .normalized()
             .is_err()
         );
+        assert!(
+            EnterpriseLedgerQuery {
+                traffic_class: Some("unbounded".to_owned()),
+                ..EnterpriseLedgerQuery::default()
+            }
+            .normalized()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn request_list_sql_uses_contiguous_bound_parameters() {
+        for index in 1..=7 {
+            assert!(REQUEST_COUNT_SQL.contains(&format!("${index}")));
+        }
+        assert!(!REQUEST_COUNT_SQL.contains("$8"));
+
+        for index in 1..=10 {
+            assert!(REQUEST_LIST_SQL.contains(&format!("${index}")));
+        }
+        assert!(!REQUEST_LIST_SQL.contains("$11"));
     }
 
     #[tokio::test]
@@ -3027,7 +4506,14 @@ mod tests {
             Err(AppError::IdempotencyConflict(message)) if message.contains("in progress")
         ));
 
-        let outcome = LedgerOutcome::provider_attempt(true, 200, None, UsageEstimate::default());
+        let outcome = LedgerOutcome::provider_attempt(
+            true,
+            200,
+            None,
+            UsageEstimate::default(),
+            "local-estimate",
+            Duration::ZERO,
+        );
         ledger.finalize_request(&request, &outcome).await.unwrap();
         let terminal = ledger
             .begin_request(
@@ -3064,7 +4550,17 @@ mod tests {
         ledger.lease_ttl = Duration::from_millis(1);
         let context = context();
         let request = ledger
-            .begin_request(&context, "gpt-test", false, None, TEST_FINGERPRINT)
+            .begin_request_with_metadata(
+                &context,
+                "gpt-test",
+                false,
+                None,
+                TEST_FINGERPRINT,
+                &LedgerRequestMetadata {
+                    tool_use_requested: true,
+                    ..LedgerRequestMetadata::default()
+                },
+            )
             .await
             .unwrap();
         ledger
@@ -3089,6 +4585,13 @@ mod tests {
             }
         );
         assert_eq!(ledger.incomplete_requests(&context.tenant).await, 0);
+        let detail = ledger
+            .request_detail(&request.ledger_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(detail.request.latency_ms >= 1);
+        assert_eq!(detail.request.tool_outcome, "upstream_or_delivery_error");
         let budget = ledger
             .budget_view(&EnterpriseBudgetScopeQuery::default())
             .await
@@ -3161,7 +4664,14 @@ mod tests {
             )
             .await
             .unwrap();
-        let outcome = LedgerOutcome::provider_attempt(true, 200, None, estimate(0.625_123));
+        let outcome = LedgerOutcome::provider_attempt(
+            true,
+            200,
+            None,
+            estimate(0.625_123),
+            "local-estimate",
+            Duration::ZERO,
+        );
 
         ledger.finalize_attempt(&attempt, &outcome).await.unwrap();
         ledger.finalize_attempt(&attempt, &outcome).await.unwrap();

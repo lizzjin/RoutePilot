@@ -10,6 +10,15 @@ HTTPS reverse proxy. Do not expose the backend directly to the public internet.
 Security fixes target the latest `main` branch and the newest published release.
 Older snapshots may not receive backports unless a release notice says so.
 
+## Dependency Audit Exceptions
+
+Rust and dashboard dependency audits fail CI. A temporary exception is allowed
+only in `security/npm-audit-exceptions.json`, with an exact advisory/package
+pair, an expiry date, and a deployment-specific exposure analysis. The audit
+fails for every unlisted advisory, expired exception, or stale exception.
+Exceptions are risk acceptance records, not claims that an affected package is
+generally safe.
+
 ## Reporting A Vulnerability
 
 Use the repository's GitHub **Security Advisories → Report a vulnerability**
@@ -32,9 +41,10 @@ Do not place exploit details, provider keys, session tokens, backups, or a full
 - Provider API keys and any local router token.
 - Dashboard session cookies and password hashes.
 - Dashboard-issued API keys; only hashes are retained after creation.
-- PostgreSQL/JSON control state, which includes identity, policy, usage, IP,
-  audit, and credential-variable metadata.
-- CLI backups, which contain password and API-key hashes and can restore state.
+- PostgreSQL state, which includes identity, policy, relational usage, IP,
+  audit, budget, and credential-variable metadata.
+- Logical CLI backups, which contain password and API-key hashes and can
+  restore auth/control definitions but not the complete operational ledger.
 - Prompts and provider responses, even though ModelPort does not intentionally
   persist complete request/response bodies in its usage log.
 
@@ -130,10 +140,11 @@ leaks; it does not remove secrets from process memory, crash/core dumps, or
 every third-party value. Keep dumps and unrestricted debug access disabled or
 tightly controlled.
 
-`MODELPORT_USAGE_LOG_LIMIT` controls retained usage records. Dashboard
-diagnostic snapshots are redacted but contain personal/usage data. CLI backups
-are complete restore artifacts and must be encrypted, access-controlled, and
-deleted under a defined retention policy.
+Relational request rows are retained until an operator-defined PostgreSQL
+retention policy removes or archives them. Dashboard diagnostic snapshots are
+redacted but contain personal/usage data. CLI backups are complete restore
+artifacts and must be encrypted, access-controlled, and deleted under a defined
+retention policy.
 
 Diagnostic snapshot export is a CSRF-protected `POST /admin/backup` operation
 and creates an audit event; no safe-method GET alias is exposed. Provider model
@@ -159,7 +170,7 @@ retain the automatically saved previous values plus a storage-native backup.
    reverse proxy.
 4. Set secure cookies, exact trusted proxies, and the expected dashboard origin.
 5. Require dashboard-issued API keys for shared data-plane traffic.
-6. Protect `.env`, PostgreSQL/JSON state, journal logs, and complete backups.
+6. Protect `.env`, PostgreSQL state, journal logs, and complete backups.
 7. Keep request/response byte limits, stream timeouts, and concurrent-stream
    permits finite.
 8. Run the acceptance checks appropriate to auth, routing, or deployment changes.
@@ -180,9 +191,9 @@ retain the automatically saved previous values plus a storage-native backup.
 - Origin validation allows non-browser requests without Origin/Referer; it is
   not an authorization mechanism.
 - Secret redaction cannot recognize every credential format.
-- Compatibility user/API-key/team quota pre-check/update is not a transactional
-  reservation under concurrency. The tenant budget ledger has a separate
-  transactional reservation and settlement path in PostgreSQL mode.
+- User/API-key/team rolling quota checks are relational preflight guards, not a
+  transactional reservation under concurrency. The tenant budget ledger has a
+  separate transactional reservation and settlement path.
 
 See [Architecture](docs/ARCHITECTURE.md),
 [Configuration](docs/CONFIGURATION.md), and

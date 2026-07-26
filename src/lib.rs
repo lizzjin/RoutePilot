@@ -27,6 +27,7 @@ mod stream_lifecycle;
 mod tool_use;
 mod types;
 mod usage;
+mod version;
 
 pub use error::AppError;
 

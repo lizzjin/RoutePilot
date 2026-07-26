@@ -71,19 +71,17 @@ unsafe provider definitions, and malformed guardrail values therefore do not
 silently enter service. Numeric environment variables are checked as unsigned
 integers and, where zero has no safe meaning, as greater than zero. In
 particular `MODELPORT_MAX_REQUEST_BODY_BYTES`,
-`MODELPORT_MAX_CONCURRENT_REQUESTS`, and `MODELPORT_USAGE_LOG_LIMIT` must be
-non-zero, as must the documented request-size, session, HTTP timeout/body, and
-SSE byte guardrails. Rate limiting has its separate explicit disable switch.
+`MODELPORT_MAX_CONCURRENT_REQUESTS`, and the documented request-size, session,
+HTTP timeout/body, and SSE byte guardrails must be non-zero. Rate limiting has
+its separate explicit disable switch.
 
-The shared deployment preflight additionally validates PostgreSQL URL schemes
-and syntax without echoing credentials, database TLS policy, pool min/max and
-acquisition-timeout bounds, enterprise lease timing, trusted-proxy IP/CIDR
-entries, and allowed-origin syntax. Enterprise mode requires the control-state
-`MODELPORT_DATABASE_URL` so auth/control state cannot silently fall back to
-files, and it permits only `verify-full`. This is a local syntax and policy
-check: it does not connect to PostgreSQL, run migrations, or verify the live
-certificate chain. Startup and authenticated `/readyz` provide those runtime
-checks.
+The shared deployment preflight requires `MODELPORT_DATABASE_URL` and validates
+PostgreSQL URL syntax without echoing credentials, database TLS policy, pool
+min/max and acquisition-timeout bounds, enterprise lease timing, trusted-proxy
+IP/CIDR entries, and allowed-origin syntax. Enterprise mode additionally
+permits only `verify-full`. This is a local syntax and policy check: it does not
+connect to PostgreSQL, run migrations, or verify the live certificate chain.
+Startup and authenticated `/readyz` provide those runtime checks.
 
 ## Provider Topology Recipes
 
@@ -220,19 +218,16 @@ direct path and cannot govern its usage or balance.
 | `MODELPORT_OIDC_USERNAME_CLAIM` | `preferred_username` | ID-token claim used as the ModelPort username. |
 | `MODELPORT_OIDC_EMAIL_CLAIM` | `email` | ID-token claim read as the ModelPort email. Initial linking/JIT requires the standard `email` claim plus `email_verified=true`; verification is not inherited by a custom claim name. |
 | `MODELPORT_OIDC_ALLOW_INSECURE_HTTP` | off | Allow HTTP only for loopback OIDC development URLs. Never enable it for a remote or production identity provider. |
-| `MODELPORT_STATE_DIR` | `.modelport` for auth | Base state directory used by the auth store. |
-| `MODELPORT_AUTH_STORE_PATH` | `<state-dir>/admin-auth.json` | File backend override for auth state. |
-| `MODELPORT_CONTROL_STORE` | `.modelport/control-plane.json` | File backend path for control state. |
-| `MODELPORT_DATABASE_URL` | unset | Store both compatibility state documents in PostgreSQL instead of files and, unless overridden, host the normalized request/attempt ledger. Compose constructs an internal default unless explicitly overridden. |
-| `MODELPORT_ENTERPRISE_DATABASE_URL` | inherits `MODELPORT_DATABASE_URL` | Optional separate PostgreSQL target for the normalized request/attempt ledger and embedded migrations. |
+| `MODELPORT_STATE_DIR` | `.modelport` | Working directory for explicit backup output. Runtime state is not stored here. |
+| `MODELPORT_DATABASE_URL` | required at runtime | PostgreSQL target for the operational ledger and low-frequency auth/control documents. Compose constructs an internal default unless explicitly overridden. |
+| `MODELPORT_ENTERPRISE_DATABASE_URL` | inherits `MODELPORT_DATABASE_URL` | Optional separate PostgreSQL target for the operational ledger and embedded migrations. `MODELPORT_DATABASE_URL` is still required. |
 | `MODELPORT_DATABASE_TLS_MODE` | `prefer`; `verify-full` in enterprise mode | SQLx PostgreSQL TLS mode: `disable`, `allow`, `prefer`, `require`, `verify-ca`, or `verify-full`. Enterprise mode rejects every value except `verify-full`. Certificate options such as `sslrootcert` can be supplied in the PostgreSQL URL. |
-| `MODELPORT_DATABASE_MAX_CONNECTIONS` | `16` | Maximum connections in the normalized ledger pool. Each compatibility-document worker independently caps its pool at one connection. |
+| `MODELPORT_DATABASE_MAX_CONNECTIONS` | `16` | Maximum connections in the normalized ledger pool. Each auth/control document worker independently caps its pool at one connection. |
 | `MODELPORT_DATABASE_MIN_CONNECTIONS` | `0` | Minimum eagerly maintained PostgreSQL connections, capped at the pool maximum. |
 | `MODELPORT_DATABASE_ACQUIRE_TIMEOUT_SECS` | `10` | Maximum wait to acquire a PostgreSQL connection. |
 | `MODELPORT_LEDGER_LEASE_TTL_SECS` | `300` | Lifetime of a request/attempt ownership lease; minimum 30 seconds. Active requests renew at one-third of this interval. |
 | `MODELPORT_LEDGER_RECONCILE_INTERVAL_SECS` | `60` | Interval for reclaiming expired `started` rows; minimum 5 seconds and strictly smaller than the lease TTL. |
 | `MODELPORT_ENTERPRISE_MODE` | off | Fail-closed production profile. Requires `MODELPORT_DATABASE_URL`; defaults database TLS to `verify-full` and rejects weaker explicit modes. |
-| `MODELPORT_USAGE_LOG_LIMIT` | `5000` | Maximum retained request-usage records in the control document; must be greater than zero. |
 
 Bootstrap variables do not overwrite existing users. Dashboard sessions are
 process-local and are invalidated by restart.
@@ -283,11 +278,17 @@ using `require` encrypts transport but does not enforce the enterprise hostname
 and certificate policy.
 
 At startup, ModelPort migrates the normalized organization/project/environment,
-gateway-request, and Provider-attempt ledger. Auth and control records remain
-in their compatibility JSON documents during the expand/migrate window. With
-no database URL, those documents use files and the request ledger uses memory;
-this mode is intended for development and tests. `/readyz` verifies all three
-stores.
+gateway-request, Provider-attempt, budget, and audit schema. Terminal request
+rows are the usage source for logs, Dashboard ranges, quota/spend checks, and
+management statistics. Auth and low-frequency control definitions may still
+use files, but a running server has no memory fallback for the operational
+ledger and requires `MODELPORT_DATABASE_URL`. `/readyz` verifies all stores.
+
+The current operational schema is a deliberate breaking boundary:
+`0005_current_operational_schema.sql` fails when older request or attempt rows
+exist. Provision a new database and keep the old database as a backup; the
+release does not infer missing identity, traffic, Tool Use, pricing, or routing
+snapshots.
 
 Each PostgreSQL request and Provider-attempt row carries an instance lease.
 ModelPort renews it throughout non-stream and streaming lifecycles. Startup and

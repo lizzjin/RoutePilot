@@ -18,10 +18,16 @@ the source of truth for behavior and operations.
   identity linking, configuration, security boundaries, and troubleshooting.
 - [Operations](OPERATIONS.md): health checks, metrics, request logs, backup,
   reload, troubleshooting, and current operational limitations.
+- [Evidence-led optimization plan](OPTIMIZATION_PLAN.md): dated workload
+  baseline, completed correctness work, local-Qwen performance loop, and the
+  near-term execution order.
 - [Data lifecycle](DATA_LIFECYCLE.md): retention ownership, append-only budget
   evidence, acceptance-test residue, and safe maintenance boundaries.
 - [Development](DEVELOPMENT.md): toolchain, local workflow, test layers, and
   documentation maintenance.
+- [Production readiness](PRODUCTION_READINESS.md): supported commercial
+  self-hosting boundary, go-live gate, operational ownership, and release
+  evidence.
 - [Enterprise gateway roadmap](ENTERPRISE_ROADMAP.md): target product,
   enterprise admission criteria, architecture direction, migration workstreams,
   and release gates. Roadmap items are proposed unless explicitly marked as
@@ -59,6 +65,7 @@ these limits are part of the design contract rather than optional caveats.
 - [Project guide](PROJECT_GUIDE.md)
 - [Architecture Decision Records](adr/README.md)
 - [Repository and release setup](GITHUB_SETUP.md)
+- [Release process](RELEASING.md)
 - [Learning and interview material](learning/README.md) — non-normative
 
 ## Documentation Contract
@@ -78,4 +85,4 @@ found. Documentation changes should keep these rules:
 5. Run the checks in [Development](DEVELOPMENT.md#documentation-checks) after
    changing links, commands, provider defaults, or configuration names.
 
-Last reviewed: 2026-07-18.
+Last reviewed: 2026-07-26.

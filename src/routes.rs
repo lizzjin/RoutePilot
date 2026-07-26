@@ -33,13 +33,13 @@ use crate::{
         ToolResponseValidation, ToolUseConfig,
     },
     control::{
-        ActivityInput, ClientIdentity, ControlStore, ProviderCredentialRecord,
-        ProviderModelOverrideRecord, ProviderOverrideRecord, UpsertQuotaInput, UpsertTeamInput,
+        ClientIdentity, ControlStore, ProviderCredentialRecord, ProviderModelOverrideRecord,
+        ProviderOverrideRecord, UpsertQuotaInput, UpsertTeamInput,
     },
     control_view::provider_credential_row,
     enterprise_ledger::{
-        EnterpriseBudgetAdjustmentInput, EnterpriseBudgetScopeQuery, EnterpriseBudgetUpdate,
-        EnterpriseLedger, EnterpriseLedgerQuery,
+        AuditEventInput, EnterpriseBudgetAdjustmentInput, EnterpriseBudgetScopeQuery,
+        EnterpriseBudgetUpdate, EnterpriseLedger, EnterpriseLedgerQuery,
     },
     error::AppError,
     http::{Header, HttpTransport},
@@ -724,7 +724,8 @@ async fn admin_oidc_callback(
         format!("user:{}", login.user.id),
         format!("用户 {} 通过 OIDC 登录控制台", login.user.username),
         "info",
-    );
+    )
+    .await;
     let session_cookie = state.auth.session_cookie(&login.session_token);
     redirect_no_store(&completed.return_to, &[clear_flow_cookie, session_cookie])
 }
@@ -793,7 +794,8 @@ async fn admin_login(
         format!("user:{}", login.user.id),
         format!("管理员 {} 登录控制台", login.user.username),
         "info",
-    );
+    )
+    .await;
     let mut response = Json(json!({
         "user": login.user,
         "expiresAt": login.expires_at_ms.to_string(),
@@ -983,7 +985,7 @@ fn ensure_api_key_access(
     }
 }
 
-fn record_admin_activity(
+async fn record_admin_activity(
     state: &AppState,
     actor: &PublicUser,
     activity_type: &str,
@@ -991,13 +993,18 @@ fn record_admin_activity(
     message: impl Into<String>,
     severity: &str,
 ) {
-    if let Err(err) = state.control.record_activity(ActivityInput {
-        activity_type: activity_type.to_owned(),
-        actor: actor.username.clone(),
-        target: target.into(),
-        message: message.into(),
-        severity: severity.to_owned(),
-    }) {
+    if let Err(err) = state
+        .ledger
+        .record_audit_event(&AuditEventInput {
+            activity_type: activity_type.to_owned(),
+            actor_id: actor.id.clone(),
+            actor_name: actor.username.clone(),
+            target: target.into(),
+            message: message.into(),
+            severity: severity.to_owned(),
+        })
+        .await
+    {
         warn!(error = %err, "failed to record admin activity");
     }
 }
@@ -1092,7 +1099,7 @@ async fn admin_dashboard(
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
     require_console_user(&state, &headers)?;
-    Ok(Json(dashboard_body(&state, &query)?))
+    Ok(Json(dashboard_body(&state, &query).await?))
 }
 
 async fn admin_aliases(
@@ -1122,7 +1129,8 @@ async fn admin_create_alias(
         format!("alias:{alias}"),
         format!("创建模型别名 {alias} -> {target}"),
         "info",
-    );
+    )
+    .await;
     let config = effective_config(&state);
     Ok(Json(alias_row(&config, alias, target)))
 }
@@ -1142,7 +1150,8 @@ async fn admin_delete_alias(
         format!("alias:{alias}"),
         format!("删除模型别名 {alias}"),
         "warning",
-    );
+    )
+    .await;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -1177,7 +1186,8 @@ async fn admin_reload_config(
             config.default_provider
         ),
         if warning_count > 0 { "warning" } else { "info" },
-    );
+    )
+    .await;
 
     Ok(Json(json!({
         "ok": true,
@@ -1227,7 +1237,8 @@ async fn admin_update_settings(
             "gateway",
             changes.join("；"),
             "info",
-        );
+        )
+        .await;
     }
 
     Ok(Json(settings_row(&state)))
@@ -1301,7 +1312,8 @@ async fn admin_test_provider(
         format!("provider:{provider_id}"),
         format!("测试供应商 {provider_id}: {message}"),
         if success { "info" } else { "warning" },
-    );
+    )
+    .await;
 
     Ok(Json(json!({
         "success": success,
@@ -1317,10 +1329,10 @@ async fn admin_audit(
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
     require_console_user(&state, &headers)?;
-    let events = state.control.activity_rows(100);
+    let (events, total) = state.ledger.audit_events(100).await?;
     Ok(Json(json!({
         "events": events,
-        "total": state.control.activity_count(),
+        "total": total,
     })))
 }
 
@@ -1336,17 +1348,24 @@ async fn admin_backup(
         "backup",
         "导出控制面诊断快照",
         "info",
-    );
+    )
+    .await;
 
+    let (audit_events, audit_total) = state.ledger.audit_events(1_000).await?;
     Ok(Json(json!({
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "service": "model-port",
+        "build": crate::version::json(),
         "generatedAt": now_millis_string(),
         "containsSecrets": false,
         "containsPersonalData": true,
         "settings": settings_row(&state),
         "users": state.auth.list_users(0),
         "control": state.control.export_snapshot(),
+        "audit": {
+            "events": audit_events,
+            "total": audit_total,
+        },
     })))
 }
 
@@ -1451,7 +1470,7 @@ async fn admin_logs(
 ) -> Result<Json<Value>, AppError> {
     require_console_user(&state, &headers)?;
     query.validate()?;
-    Ok(Json(logs_body(&state, &query)))
+    Ok(Json(logs_body(&state, &query).await?))
 }
 
 async fn admin_log_by_id(
@@ -1461,6 +1480,7 @@ async fn admin_log_by_id(
 ) -> Result<Json<Value>, AppError> {
     require_console_user(&state, &headers)?;
     log_body(&state, &log_id)
+        .await?
         .map(Json)
         .ok_or_else(|| AppError::NotFound(format!("request log {log_id}")))
 }
@@ -1470,7 +1490,7 @@ async fn admin_latency(
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
     require_console_user(&state, &headers)?;
-    Ok(Json(latency_body(&state)))
+    Ok(Json(latency_body(&state).await?))
 }
 
 async fn admin_enterprise_overview(
@@ -1504,7 +1524,8 @@ async fn admin_update_enterprise_budget(
         "enterprise-budget",
         "更新企业租户预算上限",
         "warning",
-    );
+    )
+    .await;
     Ok(Json(json!(view)))
 }
 
@@ -1522,7 +1543,8 @@ async fn admin_adjust_enterprise_budget(
         "enterprise-budget",
         "登记带证据引用的企业预算调整",
         "warning",
-    );
+    )
+    .await;
     Ok(Json(json!(view)))
 }
 
@@ -1554,7 +1576,20 @@ async fn admin_teams(
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
     require_console_user(&state, &headers)?;
-    Ok(Json(json!(state.control.list_teams())))
+    let mut teams = state.control.list_teams();
+    let usage = state.ledger.management_usage().await?;
+    for team in &mut teams {
+        let Some(team_id) = team.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(stats) = usage.teams.get(team_id) else {
+            continue;
+        };
+        team["requestsToday"] = json!(stats.requests_today);
+        team["dailySpendUsd"] = json!(stats.daily_spend_usd);
+        team["monthlySpendUsd"] = json!(stats.monthly_spend_usd);
+    }
+    Ok(Json(json!(teams)))
 }
 
 async fn admin_upsert_team(
@@ -1576,7 +1611,8 @@ async fn admin_upsert_team(
         format!("team:{team_id}"),
         format!("保存团队/项目 {team_name}"),
         "info",
-    );
+    )
+    .await;
     Ok(Json(team))
 }
 
@@ -1599,7 +1635,8 @@ async fn admin_update_team(
             team.get("name").and_then(Value::as_str).unwrap_or(&team_id)
         ),
         "info",
-    );
+    )
+    .await;
     Ok(Json(team))
 }
 
@@ -1617,7 +1654,8 @@ async fn admin_delete_team(
         format!("team:{team_id}"),
         format!("删除团队/项目 {team_id}，相关 API Key 已解除绑定"),
         "warning",
-    );
+    )
+    .await;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -1626,7 +1664,13 @@ async fn admin_quotas(
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
     require_console_user(&state, &headers)?;
-    Ok(Json(json!(state.control.list_quotas()?)))
+    let mut quotas = state.control.list_quotas()?;
+    let limits = state.control.usage_quota_limits();
+    let values = state.ledger.quota_usage_values(&limits).await?;
+    for quota in &mut quotas {
+        quota.used = values.get(&quota.id).copied().unwrap_or(0.0);
+    }
+    Ok(Json(json!(quotas)))
 }
 
 async fn admin_create_quota(
@@ -1647,7 +1691,8 @@ async fn admin_create_quota(
             quota.username, quota.quota_type, quota.limit, quota.period
         ),
         "info",
-    );
+    )
+    .await;
     Ok(Json(json!(quota)))
 }
 
@@ -1671,7 +1716,8 @@ async fn admin_update_quota(
             quota.username, quota.quota_type, quota.limit, quota.period
         ),
         "info",
-    );
+    )
+    .await;
     Ok(Json(json!(quota)))
 }
 
@@ -1689,7 +1735,8 @@ async fn admin_delete_quota(
         format!("quota:{quota_id}"),
         format!("删除配额 {quota_id}"),
         "warning",
-    );
+    )
+    .await;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -2324,7 +2371,7 @@ mod tests {
             .filter_map(|row| row.get("id").and_then(Value::as_str))
             .collect::<Vec<_>>();
 
-        assert!(ids.contains(&"mimo-v2.5-pro"));
+        assert!(!ids.contains(&"mimo-v2.5-pro"));
         assert!(ids.contains(&"mimo:mimo-v2.5-pro"));
         assert!(ids.contains(&"fast-chat"));
         assert!(!ids.contains(&"deepseek-v4-flash"));
@@ -2378,8 +2425,8 @@ mod tests {
                 .unwrap()
         };
 
-        assert_eq!(display_name("gpt-5.2"), "第三方 · OpenAI");
-        assert_eq!(display_name("mimo-v2.5-pro"), "第三方 · 小米 MiMo");
+        assert_eq!(display_name("mimo:gpt-5.2"), "第三方 · OpenAI");
+        assert_eq!(display_name("mimo:mimo-v2.5-pro"), "第三方 · 小米 MiMo");
     }
 
     #[test]
@@ -2399,6 +2446,7 @@ mod tests {
         let rows = client_api::public_model_rows(&config);
 
         assert_eq!(rows[0]["id"], "local_qwen:qwen3.5-9b-q5km");
+        assert_eq!(rows[0]["owned_by"], "local_qwen");
         assert_eq!(rows[0]["display_name"], "本地 · Qwen");
     }
 
@@ -2524,7 +2572,7 @@ mod tests {
         provider.tool_use.response_validation = ToolResponseValidation::Strict;
         provider.tool_use.repair_invalid_arguments = true;
         state.config = Arc::new(RuntimeConfig::new(config));
-        let control = state.control.clone();
+        let ledger = state.ledger.clone();
         let mut body = message_body(false);
         body["tools"] = json!([{
             "name": "weather",
@@ -2543,16 +2591,17 @@ mod tests {
         let response: Value = serde_json::from_str(&response).unwrap();
         assert_eq!(response["content"][0]["input"]["city"], "Shanghai");
         assert_eq!(calls.load(Ordering::SeqCst), 2);
-        let bodies = bodies.lock().unwrap();
-        let repair_prompt = bodies[1]["messages"]
-            .as_array()
-            .and_then(|messages| messages.last())
-            .and_then(|message| message["content"].as_str())
-            .unwrap();
-        assert!(repair_prompt.contains("JSON Schema validation"));
-        assert!(!repair_prompt.contains("do-not-copy"));
-        drop(bodies);
-        let rows = control.usage_rows();
+        {
+            let bodies = bodies.lock().unwrap();
+            let repair_prompt = bodies[1]["messages"]
+                .as_array()
+                .and_then(|messages| messages.last())
+                .and_then(|message| message["content"].as_str())
+                .unwrap();
+            assert!(repair_prompt.contains("JSON Schema validation"));
+            assert!(!repair_prompt.contains("do-not-copy"));
+        }
+        let rows = wait_for_usage_rows(&ledger, 1).await;
         assert_eq!(rows[0]["toolRepairAttempted"], true);
         assert_eq!(rows[0]["toolRepairRecovered"], true);
         assert_eq!(rows[0]["retryCount"], 1);
@@ -2588,7 +2637,7 @@ mod tests {
         )
         .await;
         let state = test_state(upstream, 1024 * 1024);
-        let control = state.control.clone();
+        let ledger = state.ledger.clone();
         let app = router(state);
 
         let (status, body) = post_message(app, message_body(true)).await;
@@ -2596,7 +2645,7 @@ mod tests {
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert!(body.contains("upstream returned HTTP 401"));
         assert!(body.contains("INVALID_API_KEY"));
-        let logs = control.usage_rows();
+        let logs = wait_for_usage_rows(&ledger, 1).await;
         assert_eq!(logs[0]["status"], "error");
         assert_eq!(logs[0]["statusCode"], 401);
     }
@@ -2629,7 +2678,7 @@ data: [DONE]
         assert!(body.contains(r#""text":"lo""#));
         assert!(!body.contains("event: error"));
 
-        let logs = control.usage_rows();
+        let logs = wait_for_usage_rows(&ledger, 1).await;
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0]["status"], "success");
         assert_eq!(logs[0]["statusCode"], 200);
@@ -2672,13 +2721,14 @@ data: [DONE]
         let state = test_state(upstream, 1024 * 1024);
         let control = state.control.clone();
         let metrics = state.metrics.clone();
+        let ledger = state.ledger.clone();
 
         let (status, body) = post_message(router(state), message_body(true)).await;
 
         assert_eq!(status, StatusCode::OK);
         assert!(body.contains("event: error"));
         assert!(body.contains("ended without [DONE] or finish_reason"));
-        let logs = control.usage_rows();
+        let logs = wait_for_usage_rows(&ledger, 1).await;
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0]["status"], "error");
         assert_eq!(logs[0]["statusCode"], 502);
@@ -2713,17 +2763,18 @@ data: [DONE]
         let state = test_state_with_flags(upstream, 1024 * 1024, true, true);
         let control = state.control.clone();
         let metrics = state.metrics.clone();
+        let ledger = state.ledger.clone();
         let permits = state.stream_permits.clone();
 
         let response = post_message_response(router(state), CLIENT_TOKEN, message_body(true)).await;
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(control.usage_rows().is_empty());
+        assert!(ledger.usage_rows().await.unwrap().is_empty());
         assert_eq!(permits.available_permits(), 15);
         drop(response);
 
         assert_eq!(permits.available_permits(), 16);
-        let logs = control.usage_rows();
+        let logs = wait_for_usage_rows(&ledger, 1).await;
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0]["status"], "error");
         assert_eq!(logs[0]["statusCode"], 499);
@@ -3453,7 +3504,7 @@ data: [DONE]
         let body = String::from_utf8(body.to_vec()).unwrap();
         assert!(body.contains(r#"modelport_route_requests_total{route="messages"} 1"#));
         assert!(body.contains(
-            r#"modelport_message_requests_total{provider="mimo",model="mimo-v2.5-pro",stream="false"} 1"#
+            r#"modelport_message_requests_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 1"#
         ));
     }
 
@@ -3758,7 +3809,7 @@ data: [DONE]
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let body = String::from_utf8(body.to_vec()).unwrap();
         assert!(body.contains(
-            r#"modelport_message_requests_total{provider="mimo",model="mimo-v2.5-pro",stream="false"} 1"#
+            r#"modelport_message_requests_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 1"#
         ));
     }
 
@@ -3951,7 +4002,7 @@ data: [DONE]
             .iter()
             .filter_map(|row| row.get("id").and_then(Value::as_str))
             .collect::<Vec<_>>();
-        assert!(ids.contains(&"mimo-v2.6-pro"));
+        assert!(ids.contains(&"mimo:mimo-v2.6-pro"));
     }
 
     #[test]
@@ -3984,7 +4035,7 @@ data: [DONE]
             .iter()
             .filter_map(|row| row.get("id").and_then(Value::as_str))
             .collect::<Vec<_>>();
-        assert!(ids.contains(&"mimo-v2.6-pro"));
+        assert!(ids.contains(&"mimo:mimo-v2.6-pro"));
         assert_eq!(config.resolve("mimo-v2.6-pro").unwrap().provider_id, "mimo");
     }
 
@@ -4342,11 +4393,9 @@ data: [DONE]
             config.resolve("qwen-local").unwrap().provider_id,
             "local_custom"
         );
-        assert!(
-            client_api::public_model_rows(&config)
-                .iter()
-                .any(|row| row.get("id").and_then(Value::as_str) == Some("qwen-local"))
-        );
+        assert!(client_api::public_model_rows(&config).iter().any(|row| {
+            row.get("id").and_then(Value::as_str) == Some("local_custom:qwen-local")
+        }));
 
         state
             .control
@@ -4569,11 +4618,11 @@ data: [DONE]
         )
         .await;
         let state = test_state(upstream, 1024 * 1024);
-        let control = state.control.clone();
+        let ledger = state.ledger.clone();
         let (status, _) = post_message(router(state), message_body(false)).await;
 
         assert_eq!(status, StatusCode::OK);
-        let rows = control.usage_rows();
+        let rows = wait_for_usage_rows(&ledger, 1).await;
         assert_eq!(rows.len(), 1);
         assert!(
             rows[0]["requestId"]
@@ -4608,7 +4657,7 @@ data: [DONE]
         )
         .await;
         let state = test_state(upstream, 1024 * 1024);
-        let control = state.control.clone();
+        let ledger = state.ledger.clone();
 
         let (status, body) = post_chat_completion(router(state), chat_body(false)).await;
 
@@ -4620,7 +4669,7 @@ data: [DONE]
             body["choices"][0]["message"]["content"],
             "hello from OpenAI"
         );
-        let rows = control.usage_rows();
+        let rows = wait_for_usage_rows(&ledger, 1).await;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["clientProtocol"], "openai-chat-completions");
         assert_eq!(rows[0]["requestPath"], "/v1/chat/completions");
@@ -4646,7 +4695,7 @@ data: [DONE]
         )
         .await;
         let state = test_state(upstream, 1024 * 1024);
-        let control = state.control.clone();
+        let ledger = state.ledger.clone();
         let app = router(state);
         let request = chat_body(false);
 
@@ -4659,13 +4708,13 @@ data: [DONE]
         assert_eq!(second_status, StatusCode::CONFLICT);
         assert!(second_body.contains("idempotency_conflict"));
         assert!(second_body.contains("response replay is not available"));
-        assert_eq!(control.usage_rows().len(), 1);
+        assert_eq!(ledger.usage_rows().await.unwrap().len(), 1);
     }
 
     #[tokio::test]
     async fn invalid_idempotency_key_is_rejected_before_provider_routing() {
         let state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
-        let control = state.control.clone();
+        let ledger = state.ledger.clone();
 
         let (status, body) =
             post_chat_completion_idempotent(router(state), chat_body(false), "contains whitespace")
@@ -4673,7 +4722,7 @@ data: [DONE]
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(body.contains("visible ASCII characters without whitespace"));
-        assert!(control.usage_rows().is_empty());
+        assert!(ledger.usage_rows().await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -4683,7 +4732,7 @@ data: [DONE]
         )
         .await;
         let state = test_state(upstream, 1024 * 1024);
-        let control = state.control.clone();
+        let ledger = state.ledger.clone();
         let app = router(state);
         let request = chat_body(false);
 
@@ -4695,7 +4744,7 @@ data: [DONE]
 
         assert!(statuses.contains(&StatusCode::OK));
         assert!(statuses.contains(&StatusCode::CONFLICT));
-        assert_eq!(control.usage_rows().len(), 1);
+        assert_eq!(ledger.usage_rows().await.unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -4717,7 +4766,7 @@ data: [DONE]
         )
         .await;
         let state = test_state_with_flags(upstream, 1024 * 1024, false, false);
-        let control = state.control.clone();
+        let ledger = state.ledger.clone();
         let mut request = chat_body(true);
         request["stream_options"] = json!({ "include_usage": true });
 
@@ -4730,7 +4779,7 @@ data: [DONE]
         assert!(body.contains(r#""choices":[]"#));
         assert!(body.contains(r#""completion_tokens":5"#));
         assert!(body.contains("data: [DONE]"));
-        let rows = control.usage_rows();
+        let rows = wait_for_usage_rows(&ledger, 1).await;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["status"], "success");
         assert_eq!(rows[0]["terminalReason"], "completed");
@@ -4757,7 +4806,7 @@ data: [DONE]
         )
         .await;
         let state = test_anthropic_state(upstream, 1024 * 1024);
-        let control = state.control.clone();
+        let ledger = state.ledger.clone();
         let request = json!({
             "model": "claude-sonnet-4-6",
             "messages": [
@@ -4777,7 +4826,7 @@ data: [DONE]
             "hello from Anthropic"
         );
         assert_eq!(body["usage"]["prompt_tokens"], 9);
-        let rows = control.usage_rows();
+        let rows = wait_for_usage_rows(&ledger, 1).await;
         assert_eq!(rows[0]["provider"], "anthropic");
         assert_eq!(rows[0]["protocol"], "anthropic");
         assert_eq!(rows[0]["clientProtocol"], "openai-chat-completions");
@@ -4810,7 +4859,7 @@ data: {"type":"message_stop"}
         )
         .await;
         let state = test_anthropic_state(upstream, 1024 * 1024);
-        let control = state.control.clone();
+        let ledger = state.ledger.clone();
         let request = json!({
             "model": "claude-sonnet-4-6",
             "stream": true,
@@ -4828,7 +4877,7 @@ data: {"type":"message_stop"}
         assert!(body.contains(r#""prompt_tokens":6"#));
         assert!(body.contains(r#""completion_tokens":2"#));
         assert!(body.contains("data: [DONE]"));
-        let rows = control.usage_rows();
+        let rows = wait_for_usage_rows(&ledger, 1).await;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["status"], "success");
         assert_eq!(rows[0]["billingMode"], "upstream-returned");
@@ -4969,6 +5018,20 @@ data: {"type":"message_stop"}
 
     async fn post_message(app: Router, body: Value) -> (StatusCode, String) {
         post_message_with_key(app, CLIENT_TOKEN, body).await
+    }
+
+    async fn wait_for_usage_rows(
+        ledger: &EnterpriseLedger,
+        expected: usize,
+    ) -> Vec<serde_json::Value> {
+        for _ in 0..100 {
+            let rows = ledger.usage_rows().await.unwrap();
+            if rows.len() >= expected {
+                return rows;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("timed out waiting for {expected} terminal usage row(s)");
     }
 
     async fn post_chat_completion(app: Router, body: Value) -> (StatusCode, String) {

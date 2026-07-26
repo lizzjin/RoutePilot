@@ -99,7 +99,8 @@ pub(super) async fn admin_create_provider(
         format!("provider:{}", record.id),
         format!("新增供应商 {}", record.id),
         "info",
-    );
+    )
+    .await;
     Ok(Json(provider_row_by_id(&state, &record.id)?))
 }
 
@@ -128,7 +129,8 @@ pub(super) async fn admin_update_provider(
         format!("provider:{}", record.id),
         format!("更新供应商 {}", record.id),
         "info",
-    );
+    )
+    .await;
     Ok(Json(provider_row_by_id(&state, &record.id)?))
 }
 
@@ -160,7 +162,8 @@ pub(super) async fn admin_set_provider_disabled(
             format!("启用供应商 {provider_id}")
         },
         if disabled { "warning" } else { "info" },
-    );
+    )
+    .await;
     Ok(Json(provider_row_by_id(&state, &provider_id)?))
 }
 
@@ -209,7 +212,8 @@ pub(super) async fn admin_delete_provider(
         format!("provider:{provider_id}"),
         format!("删除供应商 {provider_id}"),
         "warning",
-    );
+    )
+    .await;
     Ok(Json(json!({ "ok": true, "providerId": provider_id })).into_response())
 }
 
@@ -249,7 +253,8 @@ pub(super) async fn admin_provider_models(
         format!("provider:{provider_id}"),
         format!("发现供应商 {provider_id} 模型: {message}"),
         if success { "info" } else { "warning" },
-    );
+    )
+    .await;
 
     Ok(Json(json!({
         "providerId": provider_id,
@@ -290,7 +295,8 @@ pub(super) async fn admin_provider_balance(
         } else {
             "warning"
         },
-    );
+    )
+    .await;
     Ok(Json(json!({
         "providerId": provider_id,
         "isAvailable": balance.is_available,
@@ -358,7 +364,8 @@ pub(super) async fn admin_upsert_provider_model(
         } else {
             "info"
         },
-    );
+    )
+    .await;
     Ok(Json(json!({
         "ok": true,
         "providerId": provider_id,
@@ -401,7 +408,8 @@ pub(super) async fn admin_delete_provider_model(
         format!("provider:{provider_id}:model:{}", record.model),
         format!("从供应商 {provider_id} 可路由列表移除模型 {}", record.model),
         "warning",
-    );
+    )
+    .await;
     Ok(Json(json!({
         "ok": true,
         "providerId": provider_id,
@@ -438,7 +446,8 @@ pub(super) async fn admin_create_provider_credential(
         format!("provider:{provider_id}:credential:{}", record.id),
         format!("新增供应商 {provider_id} 账号 {}", record.name),
         "info",
-    );
+    )
+    .await;
     Ok(Json(json!({
         "ok": true,
         "credential": provider_credential_row(&record, false),
@@ -479,7 +488,8 @@ pub(super) async fn admin_update_provider_credential(
         format!("provider:{provider_id}:credential:{}", record.id),
         format!("更新供应商 {provider_id} 账号 {}", record.name),
         "info",
-    );
+    )
+    .await;
     Ok(Json(json!({
         "ok": true,
         "credential": provider_credential_row(&record, active_id.as_deref() == Some(record.id.as_str())),
@@ -504,7 +514,8 @@ pub(super) async fn admin_select_provider_credential(
         format!("provider:{provider_id}:credential:{}", record.id),
         format!("切换供应商 {provider_id} 当前账号为 {}", record.name),
         "info",
-    );
+    )
+    .await;
     Ok(Json(json!({
         "ok": true,
         "credential": provider_credential_row(&record, true),
@@ -530,7 +541,8 @@ pub(super) async fn admin_set_provider_credential_pool_mode(
         format!("provider:{provider_id}:credential-pool"),
         format!("更新供应商 {provider_id} 号池策略为 {mode}"),
         "info",
-    );
+    )
+    .await;
     Ok(Json(json!({
         "ok": true,
         "providerId": provider_id,
@@ -556,7 +568,8 @@ pub(super) async fn admin_delete_provider_credential(
         format!("provider:{provider_id}:credential:{}", record.id),
         format!("删除供应商 {provider_id} 账号 {}", record.name),
         "warning",
-    );
+    )
+    .await;
     Ok(Json(json!({
         "ok": true,
         "credential": provider_credential_row(&record, false),

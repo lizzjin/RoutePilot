@@ -65,6 +65,12 @@ export function billingModeLabel(value?: string): string {
   return value || '本地估算'
 }
 
+export function trafficClassLabel(value?: RequestLog['trafficClass']): string {
+  if (value === 'synthetic') return '合成测试'
+  if (value === 'diagnostic') return '诊断'
+  return '业务'
+}
+
 // ── Parsing helpers ──────────────────────────────────────────────
 
 export function parseLogDate(value: string): Date | null {
@@ -134,6 +140,7 @@ export function toLocalDateTimeInput(timestamp: number): string {
 const LOG_STATUSES = new Set<RequestStatus>(['success', 'error', 'timeout'])
 const STREAM_MODES = new Set<StreamMode>(['stream', 'non-stream'])
 const TOOL_USE_MODES = new Set<ToolUseMode>(['requested', 'not-requested'])
+const TRAFFIC_CLASSES = new Set(['business', 'synthetic', 'diagnostic'])
 const LOG_PAGE_SIZES = new Set([20, 50, 100, 200])
 
 export function logViewStateFromSearchParams(
@@ -147,6 +154,7 @@ export function logViewStateFromSearchParams(
   const status = params.get('status') as RequestStatus | null
   const stream = params.get('stream') as StreamMode | null
   const toolUse = params.get('toolUse') as ToolUseMode | null
+  const trafficClass = params.get('trafficClass')
   const page = positiveInteger(params.get('page')) ?? 1
   const requestedPageSize = positiveInteger(params.get('pageSize')) ?? 50
   const hasExplicitDateRange = params.has('dateFrom') || params.has('dateTo')
@@ -170,6 +178,9 @@ export function logViewStateFromSearchParams(
       status: status && LOG_STATUSES.has(status) ? status : undefined,
       stream: stream && STREAM_MODES.has(stream) ? stream : undefined,
       toolUse: toolUse && TOOL_USE_MODES.has(toolUse) ? toolUse : undefined,
+      trafficClass: trafficClass && TRAFFIC_CLASSES.has(trafficClass)
+        ? trafficClass as LogFilters['trafficClass']
+        : undefined,
     }),
     page,
     pageSize: LOG_PAGE_SIZES.has(requestedPageSize) ? requestedPageSize : 50,
@@ -193,6 +204,7 @@ export function logViewSearchParams(filters: LogFilters, page: number, pageSize:
   append('status', filters.status)
   append('stream', filters.stream)
   append('toolUse', filters.toolUse)
+  append('trafficClass', filters.trafficClass)
   appendDateParam(params, 'dateFrom', filters.dateFrom)
   appendDateParam(params, 'dateTo', filters.dateTo)
   if (page > 1) params.set('page', String(Math.trunc(page)))

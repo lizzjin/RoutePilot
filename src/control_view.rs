@@ -5,7 +5,6 @@ use serde_json::{Value, json};
 use crate::{
     control::{PublicApiKey, PublicQuota},
     provider_status::{provider_account_issue, provider_failure_guidance},
-    usage::{DAY_MS, UsageCostRecord, usage_cost_for_team},
 };
 
 pub(crate) trait ApiKeyViewRecord {
@@ -57,18 +56,10 @@ pub(crate) trait QuotaViewRecord {
     fn username(&self) -> &str;
     fn quota_type(&self) -> &str;
     fn limit(&self) -> f64;
-    fn used(&self) -> f64;
     fn period(&self) -> &str;
     fn period_start_ms(&self) -> u64;
     fn period_end_ms(&self) -> u64;
     fn reset_at_ms(&self) -> u64;
-}
-
-pub(crate) trait UsageTokenRecord {
-    fn input_tokens(&self) -> u64;
-    fn output_tokens(&self) -> u64;
-    fn cache_write_tokens(&self) -> u64;
-    fn cache_read_tokens(&self) -> u64;
 }
 
 pub(crate) trait ProviderHealthViewRecord {
@@ -100,25 +91,7 @@ pub(crate) trait ProviderCredentialViewRecord {
     fn updated_at_ms(&self) -> u64;
 }
 
-pub(crate) fn public_api_key<K, U>(record: &K, usage: &[U], now: u64) -> PublicApiKey
-where
-    K: ApiKeyViewRecord,
-    U: UsageCostRecord + UsageTokenRecord,
-{
-    let today_start = crate::usage::day_start(now);
-    let mut requests_today = 0u64;
-    let mut tokens_today = 0u64;
-    for usage in usage.iter().filter(|usage| {
-        usage.timestamp_ms() >= today_start && usage.api_key_id() == Some(record.id())
-    }) {
-        requests_today += 1;
-        tokens_today = tokens_today
-            .saturating_add(usage.input_tokens())
-            .saturating_add(usage.output_tokens())
-            .saturating_add(usage.cache_write_tokens())
-            .saturating_add(usage.cache_read_tokens());
-    }
-
+pub(crate) fn public_api_key<K: ApiKeyViewRecord>(record: &K) -> PublicApiKey {
     PublicApiKey {
         id: record.id().to_owned(),
         user_id: record.user_id().to_owned(),
@@ -138,8 +111,8 @@ where
         last_used_at: record.last_used_at_ms().map(|value| value.to_string()),
         expires_at: record.expires_at_ms().map(|value| value.to_string()),
         status: record.status().to_owned(),
-        requests_today,
-        tokens_today,
+        requests_today: 0,
+        tokens_today: 0,
         ip_restricted: record.ip_restricted(),
         allowed_ips: record.allowed_ips().to_vec(),
         spend_limit_usd: record.spend_limit_usd(),
@@ -151,26 +124,14 @@ where
     }
 }
 
-pub(crate) fn public_team<T, K, U>(
-    record: &T,
-    api_keys: &BTreeMap<String, K>,
-    usage: &[U],
-    now: u64,
-) -> Value
+pub(crate) fn public_team<T, K>(record: &T, api_keys: &BTreeMap<String, K>) -> Value
 where
     T: TeamViewRecord,
     K: ApiKeyViewRecord,
-    U: UsageCostRecord + UsageTokenRecord,
 {
-    let today_start = crate::usage::day_start(now);
-    let month_start = now.saturating_sub(30 * DAY_MS);
     let active_api_keys = api_keys
         .values()
         .filter(|key| key.team_id() == Some(record.id()) && key.status() == "active")
-        .count();
-    let requests_today = usage
-        .iter()
-        .filter(|event| event.team_id() == Some(record.id()) && event.timestamp_ms() >= today_start)
         .count();
 
     json!({
@@ -181,12 +142,12 @@ where
         "status": record.status(),
         "dailyLimitUsd": record.daily_limit_usd(),
         "monthlyLimitUsd": record.monthly_limit_usd(),
-        "dailySpendUsd": usage_cost_for_team(usage, record.id(), Some(today_start)),
-        "monthlySpendUsd": usage_cost_for_team(usage, record.id(), Some(month_start)),
+        "dailySpendUsd": 0.0,
+        "monthlySpendUsd": 0.0,
         "allowedModels": record.allowed_models(),
         "allowedProviders": record.allowed_providers(),
         "activeApiKeys": active_api_keys,
-        "requestsToday": requests_today,
+        "requestsToday": 0,
         "createdAt": record.created_at_ms().to_string(),
         "updatedAt": record.updated_at_ms().to_string(),
     })
@@ -199,7 +160,7 @@ pub(crate) fn public_quota<Q: QuotaViewRecord>(record: &Q) -> PublicQuota {
         username: record.username().to_owned(),
         quota_type: record.quota_type().to_owned(),
         limit: record.limit(),
-        used: record.used(),
+        used: 0.0,
         period: record.period().to_owned(),
         period_start: record.period_start_ms().to_string(),
         period_end: record.period_end_ms().to_string(),
@@ -317,104 +278,6 @@ fn health_status(in_cooldown: bool, consecutive_failures: u32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{pricing::TokenUsageBreakdown, usage::UsageCostRecord};
-
-    #[derive(Debug, Clone, Default)]
-    struct TestApiKey {
-        id: String,
-        team_id: Option<String>,
-        status: String,
-    }
-
-    impl ApiKeyViewRecord for TestApiKey {
-        fn id(&self) -> &str {
-            &self.id
-        }
-        fn user_id(&self) -> &str {
-            "user"
-        }
-        fn username(&self) -> &str {
-            "username"
-        }
-        fn name(&self) -> &str {
-            "key"
-        }
-        fn key_prefix(&self) -> &str {
-            "mp_"
-        }
-        fn key_preview(&self) -> &str {
-            "mp_***"
-        }
-        fn group(&self) -> Option<&str> {
-            None
-        }
-        fn team_id(&self) -> Option<&str> {
-            self.team_id.as_deref()
-        }
-        fn team_name(&self) -> Option<&str> {
-            None
-        }
-        fn allowed_models(&self) -> &[String] {
-            &[]
-        }
-        fn allowed_providers(&self) -> &[String] {
-            &[]
-        }
-        fn organization_id(&self) -> &str {
-            "org_local"
-        }
-        fn project_id(&self) -> &str {
-            "prj_default"
-        }
-        fn environment_id(&self) -> &str {
-            "env_default"
-        }
-        fn created_at_ms(&self) -> u64 {
-            1
-        }
-        fn last_used_at_ms(&self) -> Option<u64> {
-            Some(2)
-        }
-        fn expires_at_ms(&self) -> Option<u64> {
-            None
-        }
-        fn status(&self) -> &str {
-            &self.status
-        }
-        fn ip_restricted(&self) -> bool {
-            false
-        }
-        fn allowed_ips(&self) -> &[String] {
-            &[]
-        }
-        fn spend_limit_usd(&self) -> f64 {
-            0.0
-        }
-        fn rate_limited(&self) -> bool {
-            false
-        }
-        fn five_hour_limit_usd(&self) -> f64 {
-            0.0
-        }
-        fn daily_limit_usd(&self) -> f64 {
-            0.0
-        }
-        fn weekly_limit_usd(&self) -> f64 {
-            0.0
-        }
-        fn monthly_limit_usd(&self) -> f64 {
-            0.0
-        }
-    }
-
-    #[derive(Debug, Clone)]
-    struct TestUsage {
-        timestamp_ms: u64,
-        api_key_id: Option<String>,
-        team_id: Option<String>,
-        tokens: TokenUsageBreakdown,
-        cost_estimate: f64,
-    }
 
     #[derive(Debug, Clone, Default)]
     struct TestHealth {
@@ -513,75 +376,6 @@ mod tests {
         }
     }
 
-    impl UsageCostRecord for TestUsage {
-        fn timestamp_ms(&self) -> u64 {
-            self.timestamp_ms
-        }
-        fn api_key_id(&self) -> Option<&str> {
-            self.api_key_id.as_deref()
-        }
-        fn team_id(&self) -> Option<&str> {
-            self.team_id.as_deref()
-        }
-        fn cost_estimate(&self) -> f64 {
-            self.cost_estimate
-        }
-    }
-
-    impl UsageTokenRecord for TestUsage {
-        fn input_tokens(&self) -> u64 {
-            self.tokens.input_tokens
-        }
-        fn output_tokens(&self) -> u64 {
-            self.tokens.output_tokens
-        }
-        fn cache_write_tokens(&self) -> u64 {
-            self.tokens.cache_write_tokens
-        }
-        fn cache_read_tokens(&self) -> u64 {
-            self.tokens.cache_read_tokens
-        }
-    }
-
-    #[test]
-    fn public_api_key_counts_today_requests_and_tokens() {
-        let now = DAY_MS * 10 + 1_000;
-        let key = TestApiKey {
-            id: "key_a".to_owned(),
-            status: "active".to_owned(),
-            ..TestApiKey::default()
-        };
-        let usage = vec![
-            TestUsage {
-                timestamp_ms: DAY_MS * 10,
-                api_key_id: Some("key_a".to_owned()),
-                team_id: None,
-                tokens: TokenUsageBreakdown {
-                    input_tokens: 1,
-                    output_tokens: 2,
-                    cache_write_tokens: 3,
-                    cache_read_tokens: 4,
-                },
-                cost_estimate: 0.0,
-            },
-            TestUsage {
-                timestamp_ms: DAY_MS * 9,
-                api_key_id: Some("key_a".to_owned()),
-                team_id: None,
-                tokens: TokenUsageBreakdown {
-                    input_tokens: 100,
-                    ..TokenUsageBreakdown::default()
-                },
-                cost_estimate: 0.0,
-            },
-        ];
-
-        let row = public_api_key(&key, &usage, now);
-
-        assert_eq!(row.requests_today, 1);
-        assert_eq!(row.tokens_today, 10);
-    }
-
     #[test]
     fn public_quota_formats_millisecond_fields() {
         struct TestQuota;
@@ -600,9 +394,6 @@ mod tests {
             }
             fn limit(&self) -> f64 {
                 10.0
-            }
-            fn used(&self) -> f64 {
-                2.0
             }
             fn period(&self) -> &str {
                 "daily"

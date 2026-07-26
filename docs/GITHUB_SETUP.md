@@ -15,12 +15,15 @@ dated result in [Provider Matrix](PROVIDER_MATRIX.md).
 
 ## Branch Protection
 
-Protect `main` with:
+Protect `main` with a repository ruleset:
 
 - pull requests before merge;
-- the current **Repository checks** workflow as a required status;
+- **Repository checks**, **PostgreSQL dashboard E2E**, dependency review, and
+  CodeQL as required statuses;
 - up-to-date branches and resolved review conversations;
-- restricted force pushes and branch deletion.
+- at least one maintainer review for security/persistence/deployment changes;
+- restricted force pushes and branch deletion;
+- signed commits/tags when the maintainer signing setup is available.
 
 The current CI uses the pinned Rust 1.96.0 toolchain, Node.js 24, locked npm
 dependencies, Rust fmt/test/clippy, dashboard typecheck/lint/unit/build, shell
@@ -28,8 +31,9 @@ syntax, and configuration-example checks through `scripts/check-all.sh`.
 Playwright E2E and paid upstream tests remain separate unless a deterministic
 CI environment is added.
 
-Use least-privilege workflow permissions, pinned major actions, concurrency
-cancellation, and no persistent checkout credential where it is unnecessary.
+Workflows use least-privilege permissions, full commit-SHA Action pins,
+concurrency cancellation, and no persistent checkout credential where it is
+unnecessary.
 
 ## Issues And Pull Requests
 
@@ -55,9 +59,13 @@ Every release should include:
 - only dated real-provider results that were actually run;
 - stream, quota, DNS SSRF, persistence, and cost-estimation limits that remain.
 
-Maintain a changelog or release notes from the first public release. Version the
-backend and dashboard coherently enough that a bug report can identify the
-deployed pair.
+Maintain `CHANGELOG.md` from the first public release. Backend and dashboard
+share one version, and runtime diagnostics expose the version, revision, and
+source state. Follow [the release process](RELEASING.md).
+
+Enable private vulnerability reporting, Dependabot alerts/security updates,
+immutable releases where available, tag protection, and artifact attestations
+in repository settings. Workflow files cannot enable those external controls.
 
 ## CI Secret Policy
 

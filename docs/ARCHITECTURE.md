@@ -29,7 +29,8 @@ Claude Code / OpenAI SDK / API client
 
 React dashboard -> local password or OIDC Authorization Code + PKCE
                 -> /admin/* ModelPort cookie-session control plane
-PostgreSQL or JSON files -> auth and control documents
+PostgreSQL -> request, attempt, usage, quota/spend, budget, and audit facts
+JSON/PostgreSQL document -> low-frequency auth and control configuration
 ```
 
 The first typed Exchange IR covers text roles, function tools, tool calls and
@@ -49,9 +50,9 @@ operator must still account for.
 | --- | --- | --- |
 | Protocol adaptation | Anthropic Messages and the scoped OpenAI Chat Completions contract parse into a typed Exchange IR and share routing/governance. Anthropic/OpenAI Provider adapters render native non-stream and SSE responses in the original client protocol. Parsers enforce frame/stream limits, require terminal signals, preserve reported usage, and reject unsupported semantics. | The IR does not yet cover Responses, multimodal content, reasoning items, or every OpenAI/Anthropic extension. Configured adapters and models are not proof of real-upstream compatibility. |
 | Model routing and fallback | Resolution covers `provider:model`, recursive aliases with a depth guard, exact model matches, prefixes, and the default Provider. The attempt plan skips cooling Providers while an eligible alternative exists and only retries transport/protocol failures, 429, and 5xx against a Provider that accepts the requested or resolved model. | If no non-cooling route remains, the primary is retained as a final attempt. Fallback does not promise semantic model equivalence. Once local live-stream headers are sent, a later failure cannot replay on another Provider. |
-| Identity, policy, and budget | Human console sign-in supports local Argon2 credentials and an optional single-host OIDC Authorization Code + PKCE preview. A verified OIDC issuer/subject is bound to a local user, and both methods issue the same first-party console session. The data plane separately accepts a control-plane API key or the explicitly allowed legacy token. API-key model/Provider/IP policy, user quota, API-key/team rolling spend, credential availability, capability gates, and Provider/model limits are checked before an attempt is sent. The enterprise ledger then atomically reserves a tenant budget before egress and settles or releases it with the attempt terminal state. Only a sent attempt is chargeable. | OIDC authorization state and console sessions are process-local and do not provide multi-instance SSO continuity. OIDC does not authenticate `/v1/*` clients. Compatibility quotas/spend windows remain preflight guards. PostgreSQL tenant budgets are distributed hard admission control; memory-mode budgets, rate limits, and stream permits are process-local. |
+| Identity, policy, and budget | Human console sign-in supports local Argon2 credentials and an optional single-host OIDC Authorization Code + PKCE preview. A verified OIDC issuer/subject is bound to a local user, and both methods issue the same first-party console session. The data plane separately accepts a control-plane API key or the explicitly allowed shared token. API-key model/Provider/IP policy is configured in the control store; user quota and API-key/team spend consumption are calculated from terminal relational request rows before an attempt is sent. The enterprise ledger atomically reserves a tenant budget before egress and settles or releases it with the attempt terminal state. Only a sent attempt is chargeable. | OIDC authorization state and console sessions are process-local and do not provide multi-instance SSO continuity. OIDC does not authenticate `/v1/*` clients. Quota/spend checks are preflight guards; PostgreSQL tenant budgets are distributed hard admission control. Rate limits and stream permits remain process-local. |
 | Credential and Provider lifecycle | Provider credentials are environment-backed. Pool selection supports manual, failover, and round-robin behavior; outcomes feed credential/Provider health and cooldown state; unusable managed pools fail closed. | Health is operational state, not an external SLA. A configured credential or successful synthetic test does not establish every model, Tool Use, or stream path as verified. |
-| Persistence and ledger | Base environment/TOML configuration is combined with persisted routing overrides. Auth and control state retain the same two compatibility documents. SQLx/rustls, bounded pools, embedded migrations, composite tenant foreign keys, normalized request/attempt rows, hashed idempotency claims, instance leases, heartbeats, an expired-lease reconciler, and administrator-only indexed ledger queries form the enterprise relational slice. Request and attempt rows are created before upstream egress and terminalized after normal, streaming, or abandoned completion. | Identity, policy, quota reservation, exact usage settlement, and the legacy dashboard usage-log queries have not yet moved out of the compatibility documents. Response replay is not implemented, and an expired lease proves missing terminal evidence rather than whether the Provider accepted work; reconciled rows therefore remain explicitly unbilled. |
+| Persistence and ledger | A running server requires PostgreSQL. SQLx/rustls, bounded pools, embedded migrations, composite tenant foreign keys, normalized request/attempt rows, hashed idempotency claims, instance leases, heartbeats, and an expired-lease reconciler form the operational ledger. Terminal request rows are the only source for logs, Dashboard ranges, API-key/team usage, quota/spend checks, and price snapshots. Audit events are append-only relational rows. | Low-frequency auth, API-key/team definitions, Provider overrides, and credential-pool configuration still use control documents. Response replay is not implemented, and an expired lease proves missing terminal evidence rather than whether the Provider accepted work; reconciled rows remain explicitly unbilled. |
 | Security and observability | Browser writes require a ModelPort session and CSRF token, with Origin/Referer checks when present. The OIDC preview validates discovery metadata, signed ID-token claims, state, nonce, and PKCE before issuing that session. Trusted-proxy parsing, remote-Provider HTTPS defaults, URL guards, disabled redirects, bounded bodies/SSE, request/attempt IDs, terminal stream finalization, lease-expiry evidence, Prometheus metrics, retained logs, and source-labelled dashboard aggregation provide operational evidence. | OIDC is console authentication, not Provider or data-plane credential delegation, and its pending state is lost on restart. URL guards do not pin or revalidate DNS answers. `upstream-returned` identifies usage provenance, not invoice accuracy; `local-estimate` is heuristic, ordinary live streams may lack final Provider usage, and `unreconciled` requires external evidence before any financial adjustment. |
 
 The detailed lifecycle and failure semantics below are normative. Provider and
@@ -73,9 +74,9 @@ Tool Use verification evidence is maintained separately in the
   explicit tenant/request context boundary.
 - `src/database.rs`: SQLx PostgreSQL URL/TLS policy, pool bounds, acquisition
   timeout, and credential-safe location rendering.
-- `src/enterprise_ledger.rs`: mandatory-tenant request/attempt lifecycle and
-  redacted administrator query repository with PostgreSQL and in-memory
-  development backends.
+- `src/enterprise_ledger.rs`: mandatory-tenant request/attempt lifecycle,
+  operational log, usage-policy aggregation, budget, and append-only audit
+  repository. PostgreSQL is required at runtime; memory is test-only.
 - `src/exchange.rs`: typed client-protocol parsing, capability/fidelity checks,
   Provider rendering, and cross-protocol response mapping.
 - `src/stream_lifecycle.rs`: shared upstream terminal state and normalized
@@ -89,8 +90,9 @@ Tool Use verification evidence is maintained separately in the
 - `src/auth.rs`: dashboard users, Argon2 password hashes, per-username login
   lockout, OIDC issuer/subject bindings and local-user resolution,
   timing-mitigation work, in-memory sessions, and session cookies.
-- `src/control.rs`: API keys, teams, policies, quotas, usage logs, provider
-  overrides, credential pools, health, tests, and audit events.
+- `src/control.rs`: API keys, teams, policy/quota definitions, Provider
+  overrides, credential pools, health, and tests. It does not store request
+  usage or audit history.
 - `src/storage.rs`: compatibility JSON-file or SQLx/PostgreSQL persistence for
   the two auth/control documents.
 - `src/metrics.rs`: process-local Prometheus counters.
@@ -185,14 +187,13 @@ There are two logical JSON documents:
 | Namespace | Contents |
 | --- | --- |
 | `auth` | Users, password hashes, and OIDC issuer/subject bindings. Sessions, pending OIDC authorization state, and failed-login counters are process-local. |
-| `control` | Teams, API-key hashes, policy, quota, usage, audit, routing overrides, credentials metadata, and provider health. |
+| `control` | Teams, API-key hashes, policy and quota definitions, routing overrides, credentials metadata, and provider health. |
 
-With `MODELPORT_DATABASE_URL`, the compatibility documents are stored as two
-`jsonb` rows in `modelport_state`. Without it, they are JSON files. Writes still
-replace the complete logical document; file mode uses a temporary file plus
-rename to avoid exposing a partially written JSON file. The compatibility API
-is synchronous, but its PostgreSQL worker now runs SQLx on Tokio with rustls and
-a one-connection pool rather than a plaintext synchronous driver.
+`MODELPORT_DATABASE_URL` is mandatory. These low-frequency documents are stored
+as two `jsonb` rows in `modelport_state`; there is no runtime file fallback or
+automatic JSON import. Writes replace the complete logical document. The
+synchronous store boundary uses a dedicated SQLx/Tokio worker with rustls and a
+one-connection pool.
 
 The async normalized ledger uses `MODELPORT_ENTERPRISE_DATABASE_URL` or falls
 back to `MODELPORT_DATABASE_URL`. Embedded migrations create explicit
@@ -200,23 +201,25 @@ organization, project, and environment parents plus gateway-request and
 Provider-attempt children, budget accounts, per-attempt reservations, and an
 append-only evidence event stream. Composite keys make the tenant part of every parent
 relationship, and repository writes repeat that tenant scope in the query.
-Without a database, the ledger is process-memory for development only.
+PostgreSQL is the only runtime ledger implementation.
 
 The relational slice removes request/attempt write amplification, makes
 incomplete work discoverable, and serializes competing budget reservations in
 PostgreSQL. Attempt creation plus reservation, terminal settlement, and
-expired-lease release each commit atomically. The Enterprise Operations page reads indexed
-request rows, ordered Provider attempts, and recent budget evidence from this repository. The older
-request-log page, its summaries, and its pagination are still computed in
-memory from the compatibility control document rather than this ledger.
+expired-lease release each commit atomically. Dashboard ranges, request logs,
+quota/spend checks, management statistics, audit history, and Enterprise
+Operations all read indexed relational rows—including identity, client path,
+traffic class, Tool Use outcome, pricing provenance, latency/TTFT, repair,
+retry, fallback, ordered Provider attempts, and recent budget evidence.
 
 Low-frequency identity, policy, quota, routing, Provider, and credential
 mutations snapshot the in-memory document before writing. A failed write
 restores that snapshot, returns an error, and makes readiness fail closed until
 a later complete write succeeds; an HTTP 5xx therefore cannot leave a routing
-or authorization change active only in the current process. Request usage and
-other post-upstream telemetry remain best effort so a persistence failure does
-not replace a response already paid for and received from an upstream.
+or authorization change active only in the current process. Request
+finalization after response headers is asynchronous so a persistence failure
+cannot replace a response already paid for and received from an upstream;
+readiness and ledger diagnostics expose such failures.
 
 CLI backup load validates both document schemas and critical auth invariants
 before restore. Restore saves the previous values but replaces auth and control
@@ -247,14 +250,12 @@ create or restore keys or edit team/model/provider/IP/expiry/spend policy.
 User quota records use UTC calendar periods: a day begins at 00:00 UTC, a week
 at Monday 00:00 UTC, and a month on its first day at 00:00 UTC. API-key and team
 spend policy is separate and uses rolling 5-hour, 24-hour, 7-day, and 30-day
-windows. The persisted `rateLimited` name is retained for compatibility, but it
-enables periodic spend limits rather than request-rate limiting.
+windows. The `rateLimited` name enables periodic spend limits rather than
+request-rate limiting.
 
-Rolling spend is kept in hourly buckets. The oldest bucket that intersects a
-window is included in full, so the check is intentionally conservative near the
-boundary and can include almost one extra hour. User quota checks and spend
-checks are preflight guards rather than transactional reservations; concurrent
-requests can still overshoot a tight cap.
+Rolling spend is summed from terminal relational request rows. User quota
+checks and spend checks are preflight guards rather than transactional
+reservations; concurrent requests can still overshoot a tight cap.
 
 A team cannot be deleted while any API key references it. This dependency
 check prevents deletion from silently broadening access by removing team
@@ -267,12 +268,9 @@ usage set in the requested window, not over the current paginated logs page.
 The response includes request/error and token buckets, model usage, and a range
 summary. Ranges are bounded to 90 days.
 
-The backend marks the source as `persisted-usage`,
-`process-metrics-estimate`, or `empty`, and separately exposes whether the
-result is estimated and whether the usage store has reached
-`MODELPORT_USAGE_LOG_LIMIT`. Reaching the retention limit means older rows may
-have been evicted; “full window” therefore means the full retained set, not
-unbounded historical storage.
+The backend marks the source as `relational-ledger` or `empty`. It never
+substitutes process-lifetime counters for historical charts. The query reads
+only the selected trend window plus the current UTC day.
 
 ## Streaming Boundary
 

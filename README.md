@@ -1,6 +1,9 @@
 # ModelPort
 
 [![CI](https://github.com/tiammomo/ModelPort/actions/workflows/ci.yml/badge.svg)](https://github.com/tiammomo/ModelPort/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/tiammomo/ModelPort/actions/workflows/codeql.yml/badge.svg)](https://github.com/tiammomo/ModelPort/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/tiammomo/ModelPort/badge)](https://scorecard.dev/viewer/?uri=github.com/tiammomo/ModelPort)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -14,6 +17,11 @@ The product direction is a governed, multi-protocol enterprise model gateway.
 The current release has not reached that target; see the
 [Enterprise Gateway Roadmap](docs/ENTERPRISE_ROADMAP.md) for the architecture,
 migration workstreams, and evidence-based release gates.
+
+Commercial use is permitted by the MIT License. The repository provides
+community support without an SLA; see [support](SUPPORT.md),
+[production readiness](docs/PRODUCTION_READINESS.md), [security](SECURITY.md),
+and [privacy](PRIVACY.md) before offering ModelPort to customers.
 
 ![ModelPort architecture overview](docs/assets/modelport-overview.svg)
 
@@ -43,10 +51,10 @@ binding and cannot select another tenant. See
   logs, health, audit, enterprise request/attempt evidence, redacted diagnostic
   snapshots, and an administrator-only live read of the official DeepSeek
   balance. Recharge and authoritative billing remain in the DeepSeek console.
-- Versioned PostgreSQL request/attempt ledger with tenant foreign keys, SQLx
-  pooling, rustls, transactional budget reservation/settlement, and immutable
-  evidence events; compatibility JSON-file/PostgreSQL control state; Docker
-  Compose and systemd templates.
+- Versioned PostgreSQL operational ledger with tenant foreign keys, SQLx
+  pooling, rustls, complete request/attempt snapshots, relational usage and
+  quota/spend aggregation, transactional budget reservation/settlement, and
+  append-only audit/evidence events; Docker Compose and systemd templates.
 
 Provider entries are configuration support, not proof of real-upstream
 compatibility. Dated verification belongs in the
@@ -68,7 +76,7 @@ compatibility. Dated verification belongs in the
   run before routing. API-key policy, user quota, API-key/team spend, Provider
   credentials, capability gates, and Provider/model limits are then checked for
   each attempt. Preflight rejection is not charged; only an attempt that was
-  actually sent records quota/spend consumption. PostgreSQL mode also atomically
+  actually sent records quota/spend consumption. PostgreSQL also atomically
   reserves tenant budget before egress and settles or releases it at terminal state.
 - **Retry and crash safety:** optional tenant-scoped `Idempotency-Key` claims
   prevent duplicate Provider egress, while request/attempt leases stay alive
@@ -79,12 +87,12 @@ compatibility. Dated verification belongs in the
   Providers require HTTPS by default; and live stream permits remain held until
   the response body completes or is dropped.
 - **One control-plane truth:** environment/TOML configuration is combined with
-  persisted dashboard overrides. JSON-file and PostgreSQL modes store the same
-  logical auth/control documents during the migration window. A normalized
-  PostgreSQL ledger records tenant-scoped requests and Provider attempts before
-  upstream egress, while the dashboard remains a client of the backend rather
-  than a second routing authority.
-- **Evidence-aware observability:** request IDs, retained usage logs,
+  persisted dashboard overrides. Low-frequency auth/control definitions remain
+  documents, while PostgreSQL is the only runtime source for request/attempt
+  lifecycle, usage, quota/spend consumption, budgets, and audit history. The
+  dashboard remains a client of the backend rather than a second routing
+  authority.
+- **Evidence-aware observability:** request IDs, relational request logs,
   Prometheus process metrics, health/cooldown state, and dashboard aggregation
   preserve whether usage came from the upstream or a local estimate. Stream
   logs and health are finalized when the response body completes, fails, or is
@@ -95,9 +103,9 @@ compatibility. Dated verification belongs in the
   and diagnostic calls without retaining request content.
 
 These mechanisms are implemented. PostgreSQL tenant budgets are distributed
-hard admission control, but Provider invoices remain authoritative and the
-compatibility user quota/spend windows are still preflight guards rather than
-an exact billing system. Provider configuration is
+hard admission control, but Provider invoices remain authoritative and user
+quota/spend windows are still preflight guards rather than an exact billing
+system. Provider configuration is
 not real-upstream verification, and a live stream can still fail after HTTP 200
 without cross-Provider replay. Idempotency currently prevents a second call but
 does not replay the original response. See the [technical core and its
@@ -106,6 +114,12 @@ boundaries](docs/ARCHITECTURE.md#technical-core).
 ## Quick Start With Docker Compose
 
 Requirements: Docker with Compose v2 and credentials for at least one provider.
+
+This release requires a new PostgreSQL database. Migration
+`0005_current_operational_schema.sql` deliberately rejects databases that
+already contain request/attempt rows; old operational history is not imported
+or assigned guessed dimensions. Keep the old database as a backup and cut over
+to a clean database.
 
 Choose the upstream topology before copying a template:
 
@@ -158,11 +172,9 @@ docker compose ps
 docker compose logs -f modelport
 ```
 
-The default stack enables PostgreSQL and is the recommended enterprise mode.
-To explicitly choose the compatibility file deployment, run
-`docker compose -f docker-compose.yml -f docker-compose.files.yml up -d --build`;
-auth/control state is persisted, but the enterprise request and budget ledger
-is process-memory only.
+The current release requires PostgreSQL for auth, control, request, budget,
+usage, and audit state. `docker compose up -d` supplies that database. There is
+no runtime file or in-memory fallback and no automatic import of old JSON state.
 
 Open:
 
@@ -321,7 +333,8 @@ For shared use:
    `MODELPORT_REQUIRE_CONTROL_API_KEYS=1`.
 2. Configure exact trusted proxy CIDRs and allowed browser origins.
 3. Set `MODELPORT_ADMIN_COOKIE_SECURE=1` behind HTTPS.
-4. Protect PostgreSQL/JSON state and CLI backup files as credential material.
+4. Protect PostgreSQL state and logical CLI backup files as credential
+   material.
 
 Persistent usage, ledger, and Provider-health errors are category-only: raw
 Provider bodies, Tool validation paths, request values, URLs, and storage
@@ -376,6 +389,12 @@ The complete toolchain and test matrix are in
 - [Provider compatibility](docs/PROVIDER_MATRIX.md)
 - [Tool Use compatibility](docs/TOOL_USE_COMPATIBILITY.md)
 - [Production acceptance](docs/ACCEPTANCE.md)
+- [Production readiness](docs/PRODUCTION_READINESS.md)
+- [Release process](docs/RELEASING.md)
+- [Support](SUPPORT.md)
+- [Privacy](PRIVACY.md)
+- [Governance](GOVERNANCE.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 

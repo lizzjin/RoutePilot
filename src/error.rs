@@ -62,6 +62,29 @@ impl AppError {
         status_code(self)
     }
 
+    /// Stable, bounded telemetry code. This intentionally carries less detail
+    /// than the client error or audit message so it is safe as a metric label.
+    pub(crate) fn telemetry_code(&self) -> &'static str {
+        match self {
+            Self::Auth => "auth",
+            Self::Config(_) => "config",
+            Self::Database(_) => "database",
+            Self::Forbidden(_) => "forbidden",
+            Self::IdempotencyConflict(_) => "idempotency_conflict",
+            Self::QuotaExceeded(_) => "quota_exceeded",
+            Self::RateLimited { .. } => "rate_limited",
+            Self::InvalidRequest(_) | Self::Json(_) => "invalid_request",
+            Self::MissingSecret(_) => "missing_secret",
+            Self::NotReady(_) => "not_ready",
+            Self::NotFound(_) => "not_found",
+            Self::ProviderNotFound(_) => "provider_not_found",
+            Self::Transport(_) | Self::Io(_) => "transport",
+            Self::Upstream { .. } => "upstream_http",
+            Self::UpstreamProtocol(_) => "upstream_protocol",
+            Self::ToolArgumentsInvalid { .. } => "tool_arguments_invalid",
+        }
+    }
+
     pub(crate) fn with_tool_argument_usage(self, usage: Option<TokenUsageBreakdown>) -> Self {
         match self {
             Self::ToolArgumentsInvalid {
@@ -378,6 +401,22 @@ mod tests {
         let body = response_json(response).await;
         assert_eq!(body["error"]["type"], "rate_limit_error");
         assert_eq!(body["error"]["code"], "rate_limited");
+    }
+
+    #[test]
+    fn telemetry_codes_are_bounded_and_redacted() {
+        assert_eq!(
+            AppError::InvalidRequest("secret request value".to_owned()).telemetry_code(),
+            "invalid_request"
+        );
+        assert_eq!(
+            AppError::Upstream {
+                status: 500,
+                body: "secret provider body".to_owned(),
+            }
+            .telemetry_code(),
+            "upstream_http"
+        );
     }
 
     #[tokio::test]

@@ -1,5 +1,9 @@
 # syntax=docker/dockerfile:1
 
+ARG MODELPORT_VERSION=0.1.0
+ARG MODELPORT_SOURCE_REVISION=unknown
+ARG MODELPORT_SOURCE_STATE=unknown
+ARG MODELPORT_BUILD_DATE=unknown
 FROM node:24-bookworm-slim AS builder
 
 WORKDIR /app
@@ -11,7 +15,20 @@ ARG VITE_API_BASE_URL=
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 RUN npm run build
 
-FROM nginx:1.27-alpine AS runtime
+FROM nginx:1.30.4-alpine AS runtime
+
+ARG MODELPORT_VERSION
+ARG MODELPORT_SOURCE_REVISION
+ARG MODELPORT_SOURCE_STATE
+ARG MODELPORT_BUILD_DATE
+LABEL org.opencontainers.image.title="ModelPort Dashboard" \
+      org.opencontainers.image.description="Same-origin administration dashboard for ModelPort" \
+      org.opencontainers.image.source="https://github.com/tiammomo/ModelPort" \
+      org.opencontainers.image.revision="$MODELPORT_SOURCE_REVISION" \
+      org.opencontainers.image.version="$MODELPORT_VERSION" \
+      org.opencontainers.image.created="$MODELPORT_BUILD_DATE" \
+      org.opencontainers.image.licenses="MIT" \
+      io.modelport.source-state="$MODELPORT_SOURCE_STATE"
 
 COPY deploy/docker/dashboard.nginx-main.conf /etc/nginx/nginx.conf
 COPY deploy/docker/dashboard.nginx.conf /etc/nginx/conf.d/default.conf

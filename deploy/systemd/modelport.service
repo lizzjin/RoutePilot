@@ -9,7 +9,6 @@ Type=simple
 EnvironmentFile=/etc/modelport/modelport.env
 Environment=RUST_LOG=model_port=info,tower_http=info
 Environment=MODELPORT_STATE_DIR=/var/lib/modelport
-Environment=MODELPORT_CONTROL_STORE=/var/lib/modelport/control-plane.json
 ExecStart=/usr/local/bin/model-port
 WorkingDirectory=/var/lib/modelport
 Restart=always

@@ -200,6 +200,20 @@ export function EnterprisePage() {
                 ['anthropic-messages', 'Anthropic'],
               ]}
             />
+            <FilterSelect
+              label="流量类型"
+              value={filters.trafficClass || ALL}
+              onValueChange={(value) => updateFilter(
+                'trafficClass',
+                value === ALL ? undefined : value as EnterpriseRequestFilters['trafficClass'],
+              )}
+              options={[
+                [ALL, '全部流量'],
+                ['business', '业务'],
+                ['synthetic', '合成测试'],
+                ['diagnostic', '诊断'],
+              ]}
+            />
             <Input
               value={filters.environmentId || ''}
               onChange={(event) => updateFilter('environmentId', event.target.value)}
@@ -582,7 +596,7 @@ function EnterpriseRequestRow({ request, onSelect }: { request: EnterpriseReques
       </TableCell>
       <TableCell>
         <p className="max-w-48 truncate text-xs font-medium">{request.requestedModel}</p>
-        <p className="mt-1 text-[11px] text-muted-foreground">{protocolLabel(request.clientProtocol)} · {request.stream ? 'SSE' : 'JSON'}</p>
+        <p className="mt-1 text-[11px] text-muted-foreground">{protocolLabel(request.clientProtocol)} · {request.stream ? 'SSE' : 'JSON'} · {trafficClassLabel(request.trafficClass)}</p>
       </TableCell>
       <TableCell>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -644,6 +658,8 @@ function RequestDetailContent({ request, attempts }: { request: EnterpriseReques
         <StateBadge state={request.state} />
         <Badge variant="outline">{protocolLabel(request.clientProtocol)}</Badge>
         <Badge variant="outline">{request.stream ? '流式 SSE' : '非流式 JSON'}</Badge>
+        <Badge variant="outline">{trafficClassLabel(request.trafficClass)}</Badge>
+        {request.toolUseRequested && <Badge variant="outline">Tool Use</Badge>}
         {request.hasIdempotencyKey && <Badge variant="outline" className="gap-1"><KeyRound className="h-3 w-3" />幂等保护</Badge>}
       </div>
 
@@ -656,9 +672,14 @@ function RequestDetailContent({ request, attempts }: { request: EnterpriseReques
 
       <DetailSection title="生命周期" icon={Clock3}>
         <DetailRow label="请求模型" value={request.requestedModel} />
+        <DetailRow label="请求路径" value={request.requestPath} />
         <DetailRow label="状态 / HTTP" value={`${stateLabel(request.state)} / ${request.statusCode ?? '—'}`} />
         <DetailRow label="终止原因" value={request.terminalReason || '执行中'} />
         <DetailRow label="计费模式" value={`${request.billingMode || '未结算'} · ${request.chargeable ? '可计费' : '不可计费'}`} />
+        <DetailRow label="请求延迟" value={`${request.latencyMs}ms${request.firstByteLatencyMs === null ? '' : ` · TTFT ${request.firstByteLatencyMs}ms`}`} />
+        <DetailRow label="Tool 终态" value={request.toolOutcome} />
+        <DetailRow label="Tool 修复" value={request.toolRepairAttempted ? (request.toolRepairRecovered ? '已恢复' : '未恢复') : '未触发'} />
+        <DetailRow label="重试 / Fallback" value={`${request.retryCount} / ${request.fallbackFromProvider || '无'}`} />
         <DetailRow label="创建时间" value={formatDateTime(request.createdAtMs)} />
         <DetailRow label="完成时间" value={request.completedAtMs ? formatDateTime(request.completedAtMs) : '—'} />
         <DetailRow label="租约" value={`${leaseLabel(request)} · ${shortId(request.leaseOwner)} · ${formatDateTime(request.leaseExpiresAtMs)}`} />
@@ -698,6 +719,7 @@ function RequestDetailContent({ request, attempts }: { request: EnterpriseReques
                     <span>HTTP <b className="font-mono font-medium text-foreground">{attempt.statusCode ?? '—'}</b></span>
                     <span>Tokens <b className="font-mono font-medium text-foreground">{(attempt.inputTokens + attempt.outputTokens + attempt.cacheWriteTokens + attempt.cacheReadTokens).toLocaleString('zh-CN')}</b></span>
                     <span>成本 <b className="font-mono font-medium text-foreground">{formatMoney(attempt.costAmountMicrounits)}</b></span>
+                    <span>耗时 <b className="font-mono font-medium text-foreground">{attempt.latencyMs}ms{attempt.firstByteLatencyMs === null ? '' : ` · TTFT ${attempt.firstByteLatencyMs}ms`}</b></span>
                   </div>
                   {(attempt.terminalReason || attempt.errorMessage) && (
                     <p className="mt-3 break-words border-l-2 border-muted pl-3 text-xs text-muted-foreground">{attempt.terminalReason}{attempt.errorMessage ? ` · ${attempt.errorMessage}` : ''}</p>
@@ -763,6 +785,12 @@ function stateTone(state: EnterpriseRequestState) {
 
 function protocolLabel(protocol: EnterpriseClientProtocol) {
   return protocol === 'openai-chat-completions' ? 'OpenAI Chat' : 'Anthropic Messages'
+}
+
+function trafficClassLabel(trafficClass: EnterpriseRequest['trafficClass']) {
+  if (trafficClass === 'synthetic') return '合成测试'
+  if (trafficClass === 'diagnostic') return '诊断'
+  return '业务'
 }
 
 function leaseLabel(request: EnterpriseRequest) {

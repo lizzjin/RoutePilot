@@ -61,16 +61,6 @@ pub(crate) fn should_rotate_provider_credential(failure_kind: &str) -> bool {
     matches!(failure_kind, "account" | "rate_limit" | "config")
 }
 
-pub(crate) fn provider_failure_reason_label(failure_kind: &str) -> &'static str {
-    match failure_kind {
-        "account" => "账号异常，检查 API Key 或余额",
-        "rate_limit" => "上游限流",
-        "config" => "凭证配置异常",
-        "upstream_unavailable" => "上游不可用",
-        _ => "请求失败",
-    }
-}
-
 pub(crate) fn cooldown_seconds(consecutive_failures: u32) -> u64 {
     match consecutive_failures {
         0 | 1 => 30,

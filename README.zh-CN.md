@@ -1,6 +1,9 @@
 # ModelPort
 
 [![CI](https://github.com/tiammomo/ModelPort/actions/workflows/ci.yml/badge.svg)](https://github.com/tiammomo/ModelPort/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/tiammomo/ModelPort/actions/workflows/codeql.yml/badge.svg)](https://github.com/tiammomo/ModelPort/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/tiammomo/ModelPort/badge)](https://scorecard.dev/viewer/?uri=github.com/tiammomo/ModelPort)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [English](README.md) | **简体中文**
 
@@ -9,6 +12,10 @@ ModelPort 是面向 Claude Code、VS Code Claude、OpenAI-compatible SDK 和 API
 `/v1/chat/completions` 入口复用同一套鉴权、策略、配额、路由、用量结算和
 Provider 健康链路，并连接 Anthropic-compatible 与 OpenAI-compatible
 Provider。
+
+MIT 许可证允许商业使用。仓库提供不带 SLA 的社区支持；面向客户部署前，请阅读
+[支持政策](SUPPORT.md)、[生产就绪清单](docs/PRODUCTION_READINESS.md)、
+[安全策略](SECURITY.md)和[隐私说明](PRIVACY.md)。
 
 项目的目标方向已调整为具备完整治理能力的多协议企业级模型网关。当前版本尚未
 达到这一目标；目标架构、迁移工作流和基于证据的发布门槛见
@@ -37,8 +44,9 @@ ModelPort 面向单台可信主机或小型可信网络，不是公网多租户�
 - 覆盖用户、密钥、团队、配额、Provider、模型、别名、日志、健康、审计、
   企业请求/尝试账本和脱敏诊断快照的 React 控制台；官方 DeepSeek provider
   支持管理员实时只读查询线上余额，充值和账单仍以 DeepSeek 控制台为准。
-- 带租户外键、SQLx 连接池、rustls、事务预算预留/结算和不可变证据流水的 PostgreSQL 请求/尝试账本；
-  兼容期 JSON 文件/PostgreSQL 控制面存储；Docker Compose 和 systemd 模板。
+- 版本化 PostgreSQL 运行账本，包含租户外键、SQLx 连接池、rustls、完整请求/尝试快照、
+  关系型用量和配额/费用聚合、事务预算预留/结算，以及只追加的审计/证据事件；
+  Docker Compose 和 systemd 模板。
 
 仓库内存在 Provider 配置，不等于已通过真实上游验证。带日期的验证结果应记录在
 [Provider 兼容矩阵](docs/PROVIDER_MATRIX.md)。
@@ -64,9 +72,9 @@ ModelPort 面向单台可信主机或小型可信网络，不是公网多租户�
   并发设置边界；远程 Provider 默认要求 HTTPS；live stream permit 会一直持有到
   response body 完成或被丢弃。
 - **单一控制面事实源：** 环境变量/TOML 基础配置与持久化控制台 override 合成
-  实际运行配置；迁移期内 JSON 文件与 PostgreSQL 仍保存相同的 auth/control 逻辑
-  文档，同时规范化 PostgreSQL 账本会在上游调用前记录带租户作用域的请求与
-  Provider 尝试。控制台只是后端客户端，不是第二套路由事实源。
+  实际运行配置。低频 auth/control 定义仍是 PostgreSQL 文档；请求/尝试生命周期、
+  用量、配额/费用消耗、预算和审计历史只以关系型 PostgreSQL 数据为运行时事实源。
+  控制台只是后端客户端，不是第二套路由事实源。
 - **保留证据来源的可观测性：** request ID、保留期内 usage log、Prometheus
   进程指标、健康/冷却状态和控制台聚合，会区分上游返回 usage 与本地估算；流式
   日志与健康状态在 response body 完成、失败或被丢弃时结算，而不是在初始 HTTP
@@ -76,7 +84,7 @@ ModelPort 面向单台可信主机或小型可信网络，不是公网多租户�
   有界 `x-modelport-traffic-class` 可区分业务、合成和诊断调用，不保留请求正文。
 
 这些机制已经实现；PostgreSQL 租户预算已是分布式硬准入控制，但 Provider 最终账单
-仍是计费权威，兼容期用户配额/费用窗口也仍是 preflight guard，而非精确计费系统。
+仍是计费权威，用户配额/费用窗口也仍是 preflight guard，而非精确计费系统。
 Provider 配置不等于真实上游验证；live stream 也可能在 HTTP 200 后失败，且无法
 跨 Provider 重放。当前幂等声明会阻止第二次调用，但不会重放首次响应。详见
 [技术核心及其边界](docs/ARCHITECTURE.md#technical-core)。
@@ -128,9 +136,8 @@ docker compose ps
 docker compose logs -f modelport
 ```
 
-默认部署会启用 PostgreSQL，这也是当前推荐的企业模式。若部署时明确选择轻量文件模式，
-使用 `docker compose -f docker-compose.yml -f docker-compose.files.yml up -d --build`；
-该模式的 auth/control 数据会落盘，但企业请求与预算账本只保存在进程内存中。
+当前版本强制使用 PostgreSQL 保存 auth、control、请求、预算、用量与审计数据。
+`docker compose up -d` 会提供所需数据库；不再提供运行时文件/内存回退，也不会自动导入旧 JSON 状态。
 
 访问：
 
@@ -273,7 +280,7 @@ Cookie、浏览器会话或订阅，这些也不是 OpenAI API 凭证。数据�
    `MODELPORT_REQUIRE_CONTROL_API_KEYS=1`。
 2. 配置精确的可信代理 CIDR 和浏览器 Origin。
 3. HTTPS 后设置 `MODELPORT_ADMIN_COOKIE_SECURE=1`。
-4. 像保护凭证一样保护 PostgreSQL/JSON 状态和 CLI 备份。
+4. 像保护凭证一样保护 PostgreSQL 状态和逻辑 CLI 备份。
 
 持久化 usage、ledger 和 Provider 健康错误只保留错误类别；Provider 原始正文、
 Tool 校验路径、请求值、URL 与存储诊断会在进入持久化遥测前被剔除。
@@ -323,6 +330,12 @@ scripts/backup-compose.sh drill backups/modelport-<UTC>.tar.gz
 - [Provider 兼容矩阵](docs/PROVIDER_MATRIX.md)
 - [Tool Use 兼容性](docs/TOOL_USE_COMPATIBILITY.md)
 - [投产验收](docs/ACCEPTANCE.md)
+- [生产就绪清单](docs/PRODUCTION_READINESS.md)
+- [发布流程](docs/RELEASING.md)
+- [支持政策](SUPPORT.md)
+- [隐私说明](PRIVACY.md)
+- [项目治理](GOVERNANCE.md)
+- [变更日志](CHANGELOG.md)
 
 ## 许可证
 

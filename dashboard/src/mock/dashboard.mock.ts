@@ -57,7 +57,7 @@ export const mockDashboardStats: DashboardStats = {
     rpm: 39.4,
     tpm: 37_500,
   },
-  rangeDataSource: 'persisted-usage',
+  rangeDataSource: 'relational-ledger',
   rangeDataEstimated: false,
   rangeDataAtRetentionLimit: false,
   providerHealth: [

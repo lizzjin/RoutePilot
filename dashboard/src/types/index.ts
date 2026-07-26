@@ -25,7 +25,7 @@ export type {
 } from './model.types'
 export type { UserRole, User, CreateUserInput, UpdateUserInput, ApiKey, Team, UpsertTeamInput } from './user.types'
 export type { QuotaType, QuotaPeriod, Quota, UsageRecord, TimeSeriesPoint, UsageSummary } from './quota.types'
-export type { RequestStatus, StreamMode, ToolUseMode, RequestLog, LogFilters, LogSummary, LatencyStats } from './log.types'
+export type { RequestStatus, StreamMode, ToolUseMode, TrafficClass, RequestLog, LogFilters, LogSummary, LatencyStats } from './log.types'
 export type {
   EnterpriseRequestState,
   EnterpriseClientProtocol,

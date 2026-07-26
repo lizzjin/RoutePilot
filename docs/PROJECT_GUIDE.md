@@ -46,7 +46,7 @@ Implemented:
 - model/provider routing, aliases, control-plane overrides, credential pools,
   cooldown and bounded fallback;
 - users, API keys, teams, quotas, provider/model management, logs, health,
-  audit, redacted diagnostic snapshots, PostgreSQL/JSON state;
+  audit, redacted diagnostic snapshots, and PostgreSQL-backed operational state;
 - an optional single-host [OIDC console sign-in preview](OIDC.md) using
   Authorization Code flow, PKCE, durable issuer/subject identity bindings, and
   the same first-party console session and local roles as password login;
@@ -67,10 +67,10 @@ Configured but not yet evidenced by a committed real-upstream ledger:
 Proposed, not implemented:
 
 - the OpenAI Responses API and a complete multimodal/item-oriented Exchange IR;
-- organization/project tenancy, service accounts, SCIM, enterprise identity
-  lifecycle, and resource-level RBAC;
+- complete service-account/SCIM identity lifecycle and resource-level RBAC;
 - distributed rate limits, sessions, quotas, and health;
-- transactional/event-oriented usage persistence;
+- reservation-based enforcement for every hard quota and invoice-grade
+  accounting reconciliation;
 - high-availability deployment roles, Redis coordination, OTLP export, secret
   manager integrations, and enterprise release evidence.
 

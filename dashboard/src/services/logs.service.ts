@@ -9,7 +9,7 @@ const latencyValues = mockLogs.map((log) => log.latencyMs).sort((a, b) => a - b)
 
 function percentile(values: number[], p: number) {
   if (values.length === 0) return 0
-  const index = Math.min(values.length - 1, Math.floor(values.length * p))
+  const index = Math.min(values.length - 1, Math.max(0, Math.ceil(values.length * p) - 1))
   return values[index]
 }
 
@@ -56,6 +56,11 @@ function summarizeLogs(logs: RequestLog[]): LogSummary {
   const minutes = timestamps.length > 1
     ? Math.max((timestamps[timestamps.length - 1] - timestamps[0]) / 60000, 1)
     : 1
+  const latencies = logs.map((log) => log.latencyMs).sort((a, b) => a - b)
+  const firstByteLatencies = logs
+    .map((log) => log.firstByteLatencyMs)
+    .filter((value): value is number => value !== undefined)
+    .sort((a, b) => a - b)
 
   return {
     totalRequests: logs.length,
@@ -68,6 +73,10 @@ function summarizeLogs(logs: RequestLog[]): LogSummary {
     totalCacheReadTokens,
     totalTokens,
     totalCostEstimate,
+    latencyP95Ms: percentile(latencies, 0.95),
+    latencySampleCount: latencies.length,
+    firstByteLatencyP95Ms: percentile(firstByteLatencies, 0.95),
+    firstByteLatencySampleCount: firstByteLatencies.length,
     rpm: logs.length / minutes,
     tpm: totalTokens / minutes,
   }
@@ -78,9 +87,22 @@ function appendFilter(params: URLSearchParams, name: string, value?: string) {
   if (normalized) params.set(name, normalized)
 }
 
-function appendEpochMillis(params: URLSearchParams, name: string, value?: string) {
-  if (!value) return
+function logDateMillis(value: string, includeWholeMinute = false) {
   const timestamp = new Date(value).getTime()
+  if (!Number.isFinite(timestamp)) return Number.NaN
+  return includeWholeMinute && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)
+    ? timestamp + 60_000 - 1
+    : timestamp
+}
+
+function appendEpochMillis(
+  params: URLSearchParams,
+  name: string,
+  value?: string,
+  includeWholeMinute = false,
+) {
+  if (!value) return
+  const timestamp = logDateMillis(value, includeWholeMinute)
   if (Number.isFinite(timestamp)) params.set(name, String(timestamp))
 }
 
@@ -94,12 +116,13 @@ function logsPath(filters: LogFilters | undefined, page: number, pageSize: numbe
   appendFilter(params, 'userId', filters?.userId)
   appendFilter(params, 'apiKeyId', filters?.apiKeyId)
   appendEpochMillis(params, 'dateFrom', filters?.dateFrom)
-  appendEpochMillis(params, 'dateTo', filters?.dateTo)
+  appendEpochMillis(params, 'dateTo', filters?.dateTo, true)
   appendFilter(params, 'search', filters?.search)
   appendFilter(params, 'username', filters?.username)
   appendFilter(params, 'group', filters?.group)
   appendFilter(params, 'stream', filters?.stream)
   appendFilter(params, 'toolUse', filters?.toolUse)
+  appendFilter(params, 'trafficClass', filters?.trafficClass)
   return `/admin/logs?${params.toString()}`
 }
 
@@ -124,7 +147,7 @@ export const logsService = {
       )
     }
     if (filters?.provider) filtered = filtered.filter((log) => log.provider === filters.provider)
-    if (filters?.group) filtered = filtered.filter((log) => (log.group || log.apiKeyGroup || '').includes(filters.group!))
+    if (filters?.group) filtered = filtered.filter((log) => (log.apiKeyGroup || '').includes(filters.group!))
     if (filters?.username) filtered = filtered.filter((log) => log.username.includes(filters.username!))
     if (filters?.status) filtered = filtered.filter((log) => log.status === filters.status)
     if (filters?.stream) filtered = filtered.filter((log) => log.stream === filters.stream)
@@ -132,12 +155,15 @@ export const logsService = {
       const requested = filters.toolUse === 'requested'
       filtered = filtered.filter((log) => Boolean(log.toolUseRequested) === requested)
     }
+    if (filters?.trafficClass) {
+      filtered = filtered.filter((log) => (log.trafficClass || 'business') === filters.trafficClass)
+    }
     if (filters?.dateFrom) {
       const from = new Date(filters.dateFrom).getTime()
       if (Number.isFinite(from)) filtered = filtered.filter((log) => logTime(log) >= from)
     }
     if (filters?.dateTo) {
-      const to = new Date(filters.dateTo).getTime()
+      const to = logDateMillis(filters.dateTo, true)
       if (Number.isFinite(to)) filtered = filtered.filter((log) => logTime(log) <= to)
     }
     if (filters?.search) {
@@ -153,9 +179,8 @@ export const logsService = {
           log.provider.toLowerCase().includes(search) ||
           (log.apiKeyId || '').toLowerCase().includes(search) ||
           (log.apiKeyName || '').toLowerCase().includes(search) ||
-          (log.group || log.apiKeyGroup || '').toLowerCase().includes(search) ||
-          (log.errorMessage || '').toLowerCase().includes(search) ||
-          (log.detail || '').toLowerCase().includes(search)
+          (log.apiKeyGroup || '').toLowerCase().includes(search) ||
+          (log.errorMessage || '').toLowerCase().includes(search)
       )
     }
 

@@ -18,7 +18,6 @@ import type { RequestLog } from '@/types'
 import {
   billingModeLabel,
   clientProtocolLabel,
-  compactDetail,
   formatCompactTokenCount,
   formatInteger,
   formatMoney,
@@ -28,6 +27,7 @@ import {
   providerTone,
   rowTone,
   shortId,
+  trafficClassLabel,
 } from './log-utils'
 
 const ROW_HEIGHT = 108
@@ -62,25 +62,21 @@ function TimeStatusCell({ log }: { log: RequestLog }) {
         <Badge variant="outline" className="rounded-md px-2 font-mono text-[11px]">
           {log.statusCode}
         </Badge>
+        {log.trafficClass && log.trafficClass !== 'business' && (
+          <Badge variant="outline" className="rounded-md px-2 text-[11px]">
+            {trafficClassLabel(log.trafficClass)}
+          </Badge>
+        )}
       </div>
     </div>
   )
 }
 
 function RouteCell({ log }: { log: RequestLog }) {
-  const channelName = log.channelName || log.provider
-  const channelId = log.channelId || log.provider
-  const showChannelId = channelId !== channelName
-
   return (
     <div className="min-w-0 space-y-1.5">
       <ProviderBadge log={log} />
       <div className="min-w-0 space-y-0.5 text-xs text-muted-foreground">
-        {showChannelId && (
-          <div className="truncate font-mono" title={channelId}>
-            {channelId}
-          </div>
-        )}
         <div title={`客户端 ${clientProtocolLabel(log.clientProtocol)}`}>
           {protocolLabel(log.protocol)}
         </div>
@@ -90,8 +86,8 @@ function RouteCell({ log }: { log: RequestLog }) {
 }
 
 function IdentityCell({ log }: { log: RequestLog }) {
-  const tokenName = log.tokenName || log.apiKeyName || 'legacy'
-  const groupName = log.group || log.apiKeyGroup || 'default'
+  const tokenName = log.apiKeyName || '未绑定 API Key'
+  const groupName = log.apiKeyGroup || '默认'
 
   return (
     <div className="min-w-0 space-y-1.5">
@@ -191,10 +187,10 @@ function ProviderBadge({ log }: { log: RequestLog }) {
     <Badge
       variant="outline"
       className={cn('max-w-full gap-1.5 bg-background px-2 py-1 shadow-none', providerTone(log.provider))}
-      title={log.channelName || log.provider}
+      title={log.provider}
     >
       <Server className="h-3.5 w-3.5 shrink-0" />
-      <span className="truncate">{log.channelName || log.provider}</span>
+      <span className="truncate">{log.provider}</span>
     </Badge>
   )
 }
@@ -342,12 +338,12 @@ function MobileLogCard({ log, onSelect }: { log: RequestLog; onSelect: (log: Req
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-        <span className="truncate">{log.username} · {log.group || log.apiKeyGroup || '默认标签'}</span>
+        <span className="truncate">{log.username} · {log.apiKeyGroup || '默认分组'}</span>
         <span className="shrink-0 font-mono">{log.requestId ? shortId(log.requestId) : shortId(log.id)}</span>
       </div>
-      {(log.errorMessage || log.detail) && (
-        <p className={cn('mt-2 line-clamp-2 text-xs leading-5', log.errorMessage ? 'text-destructive' : 'text-muted-foreground')}>
-          {log.errorMessage || log.detail || compactDetail(log)}
+      {log.errorMessage && (
+        <p className="mt-2 line-clamp-2 text-xs leading-5 text-destructive">
+          {log.errorMessage}
         </p>
       )}
     </button>

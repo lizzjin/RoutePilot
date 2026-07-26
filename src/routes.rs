@@ -42,6 +42,7 @@ use crate::{
         EnterpriseBudgetUpdate, EnterpriseLedger, EnterpriseLedgerQuery,
     },
     error::AppError,
+    finalization::FinalizationTracker,
     http::{Header, HttpTransport},
     metrics::Metrics,
     oidc::{OIDC_FLOW_COOKIE, OidcService},
@@ -87,6 +88,7 @@ pub struct AppState {
     pub transport: HttpTransport,
     pub metrics: Arc<Metrics>,
     pub(crate) ledger: Arc<EnterpriseLedger>,
+    pub(crate) finalizers: Arc<FinalizationTracker>,
 }
 
 #[derive(Debug, Clone)]
@@ -2609,6 +2611,51 @@ mod tests {
         assert_eq!(rows[0]["inputTokens"], 22);
         assert_eq!(rows[0]["outputTokens"], 5);
         assert_eq!(rows[0]["billingMode"], "upstream-returned+tool-repair");
+    }
+
+    #[tokio::test]
+    async fn fallback_accounts_every_sent_provider_attempt() {
+        let primary = spawn_openai_upstream(
+            StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"error":{"message":"temporarily unavailable"}}"#,
+            "application/json",
+        )
+        .await;
+        let fallback = spawn_openai_upstream(
+            StatusCode::OK,
+            r#"{
+                "id":"chatcmpl-fallback",
+                "choices":[{
+                    "message":{"role":"assistant","content":"ok"},
+                    "finish_reason":"stop"
+                }],
+                "usage":{"prompt_tokens":3,"completion_tokens":1}
+            }"#,
+            "application/json",
+        )
+        .await;
+        let mut state = test_state(primary, 1024 * 1024);
+        let mut config = state.config.snapshot();
+        let mut fallback_provider = config.providers["mimo"].clone();
+        fallback_provider.display_name = "Fallback".to_owned();
+        fallback_provider.base_url = fallback;
+        config.provider_order = vec!["mimo".to_owned(), "fallback".to_owned()];
+        config
+            .providers
+            .insert("fallback".to_owned(), fallback_provider);
+        state.config = Arc::new(RuntimeConfig::new(config));
+        let ledger = state.ledger.clone();
+
+        let (status, response) = post_message(router(state), message_body(false)).await;
+
+        assert_eq!(status, StatusCode::OK, "{response}");
+        let rows = wait_for_usage_rows(&ledger, 1).await;
+        assert_eq!(rows[0]["provider"], "fallback");
+        assert_eq!(rows[0]["retryCount"], 1);
+        assert_eq!(rows[0]["fallbackFromProvider"], "mimo");
+        assert_eq!(rows[0]["billingMode"], "mixed-attempts");
+        assert!(rows[0]["inputTokens"].as_u64().unwrap() > 3);
+        assert!(rows[0]["outputTokens"].as_u64().unwrap() > 1);
     }
 
     #[tokio::test]
@@ -5310,6 +5357,7 @@ data: {"type":"message_stop"}
             transport: HttpTransport::new().unwrap(),
             metrics: Arc::new(Metrics::new()),
             ledger: Arc::new(EnterpriseLedger::memory()),
+            finalizers: Arc::new(FinalizationTracker::default()),
         }
     }
 
@@ -5365,6 +5413,7 @@ data: {"type":"message_stop"}
             transport: HttpTransport::new().unwrap(),
             metrics: Arc::new(Metrics::new()),
             ledger: Arc::new(EnterpriseLedger::memory()),
+            finalizers: Arc::new(FinalizationTracker::default()),
         }
     }
 

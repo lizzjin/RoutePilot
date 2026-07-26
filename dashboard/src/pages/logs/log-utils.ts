@@ -61,6 +61,9 @@ export function clientProtocolLabel(value?: RequestLog['clientProtocol']): strin
 
 export function billingModeLabel(value?: string): string {
   if (value === 'upstream-returned') return '上游返回'
+  if (value === 'upstream-returned+tool-repair') return '上游返回（含工具修复）'
+  if (value === 'mixed-attempts') return '多次尝试（上游用量与本地估算）'
+  if (value === 'local-estimate+retry') return '多次尝试（本地估算）'
   if (value === 'metrics-fallback') return '进程指标回退'
   return value || '本地估算'
 }

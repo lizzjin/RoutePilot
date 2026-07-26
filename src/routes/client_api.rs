@@ -551,7 +551,7 @@ async fn handle_inference(
     let mut last_sent = None::<SentAttempt>;
     let mut tool_repair_attempted = false;
     let mut tool_repair_recovered = false;
-    let mut prior_invalid_tool_usage = UsageEstimate::default();
+    let mut prior_attempt_usage = UsageEstimate::default();
 
     while let Some((mut attempt, repair)) = attempts.pop_front() {
         let attempt_id = AttemptId::new();
@@ -669,6 +669,7 @@ async fn handle_inference(
             .map(|response| response.status().as_u16())
             .unwrap_or_else(|error| error.http_status().as_u16());
         let attempt_error = attempt_result.as_ref().err().map(AppError::audit_message);
+        let mut finalized_attempt_estimate = None;
         if !(stream && attempt_success) {
             if let Err(err) = state.control.record_provider_outcome_for_credential(
                 &provider_id,
@@ -707,6 +708,7 @@ async fn handle_inference(
                 "local-estimate"
             };
             let attempt_estimate = provider_usage.or(rejected_tool_usage).unwrap_or(estimate);
+            finalized_attempt_estimate = Some(attempt_estimate);
             let ledger_outcome = LedgerOutcome::provider_attempt(
                 attempt_success,
                 attempt_status,
@@ -744,11 +746,9 @@ async fn handle_inference(
         };
         if let Some(repair_candidate) = repair_candidate {
             tool_repair_attempted = true;
-            accumulate_invalid_tool_usage(
-                &mut prior_invalid_tool_usage,
-                result.as_ref().err(),
-                &upstream_model,
-                repair_template.provider.pricing,
+            prior_attempt_usage = merge_usage_estimates(
+                prior_attempt_usage,
+                finalized_attempt_estimate.unwrap_or(estimate),
             );
             attempts.push_front((repair_template, Some(repair_candidate)));
             continue;
@@ -757,11 +757,9 @@ async fn handle_inference(
         if !is_retryable_message_error(result.as_ref().err()) || attempts.is_empty() {
             break;
         }
-        accumulate_invalid_tool_usage(
-            &mut prior_invalid_tool_usage,
-            result.as_ref().err(),
-            &upstream_model,
-            repair_template.provider.pricing,
+        prior_attempt_usage = merge_usage_estimates(
+            prior_attempt_usage,
+            finalized_attempt_estimate.unwrap_or(estimate),
         );
     }
     let success = result.is_ok();
@@ -790,7 +788,7 @@ async fn handle_inference(
         .unwrap_or_default();
     let applied_pricing = last_sent.as_ref().and_then(|sent| sent.pricing);
     let actual_estimate = merge_usage_estimates(
-        prior_invalid_tool_usage,
+        prior_attempt_usage,
         upstream_usage
             .map(|charge| UsageEstimate {
                 input_tokens: charge.input_tokens,
@@ -803,6 +801,10 @@ async fn handle_inference(
     );
     let billing_mode = if tool_repair_attempted && upstream_usage.is_some() {
         "upstream-returned+tool-repair"
+    } else if retry_count > 0 && upstream_usage.is_some() {
+        "mixed-attempts"
+    } else if retry_count > 0 {
+        "local-estimate+retry"
     } else if upstream_usage.is_some() {
         "upstream-returned"
     } else {
@@ -880,6 +882,7 @@ async fn handle_inference(
                 ledger_request,
                 ledger_attempt: sent.ledger_attempt,
                 attempt_started: sent.started,
+                prior_attempt_usage,
                 _ledger_lease: ledger_lease,
                 started,
                 route_name,
@@ -1140,21 +1143,6 @@ fn merge_usage_estimates(left: UsageEstimate, right: UsageEstimate) -> UsageEsti
     }
 }
 
-fn accumulate_invalid_tool_usage(
-    aggregate: &mut UsageEstimate,
-    error: Option<&AppError>,
-    model: &str,
-    pricing: Option<ModelPricing>,
-) {
-    let Some(usage) = error.and_then(AppError::tool_argument_usage) else {
-        return;
-    };
-    let estimate = usage_estimate_from_charge(pricing::charge_for_model_with_pricing(
-        model, usage, pricing,
-    ));
-    *aggregate = merge_usage_estimates(*aggregate, estimate);
-}
-
 fn request_idempotency_key(headers: &HeaderMap) -> Result<Option<String>, AppError> {
     let Some(value) = headers.get(&IDEMPOTENCY_KEY) else {
         return Ok(None);
@@ -1204,6 +1192,7 @@ struct StreamFinalizationContext {
     ledger_request: LedgerRequest,
     ledger_attempt: LedgerAttempt,
     attempt_started: Instant,
+    prior_attempt_usage: UsageEstimate,
     _ledger_lease: LedgerLease,
     started: Instant,
     route_name: &'static str,
@@ -1218,14 +1207,21 @@ impl StreamFinalizationContext {
                 usage,
                 self.pricing,
             );
-            self.usage.estimate = UsageEstimate {
-                input_tokens: charge.input_tokens,
-                output_tokens: charge.output_tokens,
-                cache_write_tokens: charge.cache_write_tokens,
-                cache_read_tokens: charge.cache_read_tokens,
-                cost_estimate: charge.cost_estimate,
+            self.usage.estimate = merge_usage_estimates(
+                self.prior_attempt_usage,
+                UsageEstimate {
+                    input_tokens: charge.input_tokens,
+                    output_tokens: charge.output_tokens,
+                    cache_write_tokens: charge.cache_write_tokens,
+                    cache_read_tokens: charge.cache_read_tokens,
+                    cost_estimate: charge.cost_estimate,
+                },
+            );
+            self.usage.billing_mode = if self.usage.retry_count > 0 {
+                "mixed-attempts".to_owned()
+            } else {
+                "upstream-returned".to_owned()
             };
-            self.usage.billing_mode = "upstream-returned".to_owned();
         }
         self.usage.success = outcome.success();
         self.usage.timed_out = outcome.timed_out();
@@ -1294,29 +1290,36 @@ impl StreamFinalizationContext {
         let ledger_attempt = self.ledger_attempt;
         let request_id = self.usage.request_id.clone();
         let request_usage = self.usage;
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            runtime.spawn(async move {
-                if let Err(err) = ledger
-                    .finalize_attempt(&ledger_attempt, &attempt_ledger_outcome)
-                    .await
-                {
-                    error!(
-                        error = %err,
-                        request_id = request_id.as_deref().unwrap_or("unknown"),
-                        "failed to finalize streaming attempt ledger row"
-                    );
-                }
-                if let Err(err) = ledger
-                    .finalize_request_usage(&ledger_request, &request_usage)
-                    .await
-                {
-                    error!(
-                        error = %err,
-                        request_id = request_id.as_deref().unwrap_or("unknown"),
-                        "failed to finalize streaming request ledger row"
-                    );
-                }
-            });
+        let ledger_lease = self._ledger_lease;
+        let finalizers = self.state.finalizers.clone();
+        let finalizer_request_id = request_id.clone();
+        if !finalizers.spawn(async move {
+            if let Err(err) = ledger
+                .finalize_attempt(&ledger_attempt, &attempt_ledger_outcome)
+                .await
+            {
+                error!(
+                    error = %err,
+                    request_id = request_id.as_deref().unwrap_or("unknown"),
+                    "failed to finalize streaming attempt ledger row"
+                );
+            }
+            if let Err(err) = ledger
+                .finalize_request_usage(&ledger_request, &request_usage)
+                .await
+            {
+                error!(
+                    error = %err,
+                    request_id = request_id.as_deref().unwrap_or("unknown"),
+                    "failed to finalize streaming request ledger row"
+                );
+            }
+            drop(ledger_lease);
+        }) {
+            error!(
+                request_id = finalizer_request_id.as_deref().unwrap_or("unknown"),
+                "streaming ledger finalizer could not start outside a Tokio runtime"
+            );
         }
     }
 }

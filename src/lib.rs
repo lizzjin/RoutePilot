@@ -12,6 +12,7 @@ mod enterprise_ledger;
 mod error;
 mod exchange;
 mod fidelity;
+mod finalization;
 mod http;
 mod metrics;
 mod oidc;

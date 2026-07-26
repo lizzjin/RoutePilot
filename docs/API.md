@@ -546,6 +546,13 @@ uses `billingMode=upstream-returned+tool-repair`; its request-level token and
 cost totals include both Provider responses, while each attempt remains visible
 independently in the enterprise ledger.
 
+When an ordinary retry or cross-Provider fallback sends more than one attempt,
+the request-level token and cost totals include every sent attempt. A request
+that combines Provider-reported final usage with an earlier local estimate uses
+`billingMode=mixed-attempts`; a request for which every attempt uses the local
+estimate uses `billingMode=local-estimate+retry`. Attempt rows retain their own
+usage provenance independently.
+
 `errorMessage` is durable audit telemetry, not a copy of the client error
 response. It retains only a coarse category (for example timeout, rate limit,
 authentication, Tool protocol, or generic failure) plus an explicit redaction

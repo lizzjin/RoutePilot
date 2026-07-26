@@ -1,25 +1,14 @@
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM modelport_gateway_requests LIMIT 1)
-        OR EXISTS (SELECT 1 FROM modelport_provider_attempts LIMIT 1)
-    THEN
-        RAISE EXCEPTION
-            'ModelPort current operational schema requires a new database; legacy request and attempt rows are not migrated';
-    END IF;
-END
-$$;
-
 ALTER TABLE modelport_gateway_requests
-    ADD COLUMN username TEXT NOT NULL,
+    ADD COLUMN username TEXT,
     ADD COLUMN api_key_id TEXT,
     ADD COLUMN api_key_name TEXT,
     ADD COLUMN api_key_group TEXT,
     ADD COLUMN team_id TEXT,
     ADD COLUMN team_name TEXT,
     ADD COLUMN client_ip INET,
-    ADD COLUMN request_path TEXT NOT NULL,
-    ADD COLUMN traffic_class TEXT NOT NULL,
-    ADD COLUMN tool_use_requested BOOLEAN NOT NULL,
+    ADD COLUMN request_path TEXT,
+    ADD COLUMN traffic_class TEXT,
+    ADD COLUMN tool_use_requested BOOLEAN,
     ADD COLUMN provider_id TEXT,
     ADD COLUMN resolved_model TEXT,
     ADD COLUMN provider_protocol TEXT,
@@ -33,7 +22,70 @@ ALTER TABLE modelport_gateway_requests
     ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0,
     ADD COLUMN fallback_from_provider TEXT;
 
+UPDATE modelport_gateway_requests
+SET username = principal_id,
+    request_path = CASE client_protocol
+        WHEN 'anthropic-messages' THEN '/v1/messages'
+        ELSE '/v1/chat/completions'
+    END,
+    traffic_class = 'business',
+    tool_use_requested = false,
+    latency_ms = GREATEST(
+        0,
+        FLOOR(
+            EXTRACT(
+                EPOCH FROM (COALESCE(completed_at, updated_at) - created_at)
+            ) * 1000
+        )::bigint
+    );
+
+WITH attempt_rollup AS (
+    SELECT
+        organization_id,
+        project_id,
+        environment_id,
+        request_ledger_id,
+        count(*)::integer AS attempt_count,
+        (array_agg(attempt_id ORDER BY created_at DESC, attempt_id DESC))[1]
+            AS last_attempt_id,
+        (array_agg(provider_id ORDER BY created_at DESC, attempt_id DESC))[1]
+            AS last_provider_id,
+        (array_agg(resolved_model ORDER BY created_at DESC, attempt_id DESC))[1]
+            AS last_resolved_model,
+        (array_agg(provider_protocol ORDER BY created_at DESC, attempt_id DESC))[1]
+            AS last_provider_protocol,
+        (array_agg(provider_id ORDER BY created_at, attempt_id))[1]
+            AS first_provider_id
+    FROM modelport_provider_attempts
+    GROUP BY
+        organization_id,
+        project_id,
+        environment_id,
+        request_ledger_id
+)
+UPDATE modelport_gateway_requests AS request
+SET provider_id = rollup.last_provider_id,
+    resolved_model = rollup.last_resolved_model,
+    provider_protocol = rollup.last_provider_protocol,
+    last_attempt_id = rollup.last_attempt_id,
+    retry_count = GREATEST(rollup.attempt_count - 1, 0),
+    fallback_from_provider = CASE
+        WHEN rollup.attempt_count > 1
+         AND rollup.first_provider_id <> rollup.last_provider_id
+            THEN rollup.first_provider_id
+        ELSE NULL
+    END
+FROM attempt_rollup AS rollup
+WHERE request.organization_id = rollup.organization_id
+  AND request.project_id = rollup.project_id
+  AND request.environment_id = rollup.environment_id
+  AND request.ledger_id = rollup.request_ledger_id;
+
 ALTER TABLE modelport_gateway_requests
+    ALTER COLUMN username SET NOT NULL,
+    ALTER COLUMN request_path SET NOT NULL,
+    ALTER COLUMN traffic_class SET NOT NULL,
+    ALTER COLUMN tool_use_requested SET NOT NULL,
     ADD CONSTRAINT modelport_gateway_requests_path_check
         CHECK (request_path IN ('/v1/messages', '/v1/chat/completions')),
     ADD CONSTRAINT modelport_gateway_requests_traffic_class_check
@@ -79,7 +131,58 @@ ALTER TABLE modelport_provider_attempts
     ADD COLUMN tool_repair_attempted BOOLEAN NOT NULL DEFAULT false,
     ADD COLUMN tool_repair_recovered BOOLEAN NOT NULL DEFAULT false,
     ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0,
-    ADD COLUMN fallback_from_provider TEXT,
+    ADD COLUMN fallback_from_provider TEXT;
+
+UPDATE modelport_provider_attempts
+SET latency_ms = GREATEST(
+    0,
+    FLOOR(
+        EXTRACT(
+            EPOCH FROM (COALESCE(completed_at, updated_at) - created_at)
+        ) * 1000
+    )::bigint
+);
+
+WITH ranked_attempts AS (
+    SELECT
+        organization_id,
+        project_id,
+        environment_id,
+        attempt_id,
+        provider_id,
+        row_number() OVER (
+            PARTITION BY
+                organization_id,
+                project_id,
+                environment_id,
+                request_ledger_id
+            ORDER BY created_at, attempt_id
+        ) - 1 AS retry_count,
+        first_value(provider_id) OVER (
+            PARTITION BY
+                organization_id,
+                project_id,
+                environment_id,
+                request_ledger_id
+            ORDER BY created_at, attempt_id
+        ) AS first_provider_id
+    FROM modelport_provider_attempts
+)
+UPDATE modelport_provider_attempts AS attempt
+SET retry_count = ranked.retry_count::integer,
+    fallback_from_provider = CASE
+        WHEN ranked.retry_count > 0
+         AND ranked.provider_id <> ranked.first_provider_id
+            THEN ranked.first_provider_id
+        ELSE NULL
+    END
+FROM ranked_attempts AS ranked
+WHERE attempt.organization_id = ranked.organization_id
+  AND attempt.project_id = ranked.project_id
+  AND attempt.environment_id = ranked.environment_id
+  AND attempt.attempt_id = ranked.attempt_id;
+
+ALTER TABLE modelport_provider_attempts
     ADD CONSTRAINT modelport_provider_attempts_latency_check
         CHECK (
             latency_ms >= 0

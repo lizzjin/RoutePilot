@@ -25,6 +25,7 @@ use crate::{
         redact_database_url,
     },
     domain::{AttemptId, RequestContext, TenantScope},
+    metrics::Metrics,
     policy::enforce_spend_limit,
     pricing::{self, ModelPricing},
     usage::{current_period, quota_increment},
@@ -1323,7 +1324,11 @@ impl EnterpriseLedger {
         }
     }
 
-    pub(crate) fn maintain_lease(&self, request: &LedgerRequest) -> LedgerLease {
+    pub(crate) fn maintain_lease(
+        &self,
+        request: &LedgerRequest,
+        metrics: Arc<Metrics>,
+    ) -> LedgerLease {
         if matches!(self.backend.as_ref(), LedgerBackend::Memory(_)) {
             return LedgerLease { stop: None };
         }
@@ -1339,7 +1344,9 @@ impl EnterpriseLedger {
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {
-                        if let Err(err) = ledger.renew_lease(&request).await {
+                        let renewal = ledger.renew_lease(&request).await;
+                        metrics.record_ledger_operation("lease_renewal", renewal.is_ok());
+                        if let Err(err) = renewal {
                             warn!(
                                 error = %err,
                                 ledger_id = request.ledger_id.as_str(),
@@ -2954,7 +2961,7 @@ impl EnterpriseLedger {
         }
     }
 
-    pub(crate) fn spawn_reconciler(&self) {
+    pub(crate) fn spawn_reconciler(&self, metrics: Arc<Metrics>) {
         if matches!(self.backend.as_ref(), LedgerBackend::Memory(_)) {
             return;
         }
@@ -2966,13 +2973,21 @@ impl EnterpriseLedger {
             loop {
                 ticker.tick().await;
                 match ledger.reconcile_expired().await {
-                    Ok(result) if result.requests > 0 || result.attempts > 0 => info!(
-                        requests = result.requests,
-                        attempts = result.attempts,
-                        "reconciled expired inference ledger leases"
-                    ),
-                    Ok(_) => {}
-                    Err(err) => error!(error = %err, "failed to reconcile expired ledger leases"),
+                    Ok(result) => {
+                        metrics.record_ledger_operation("lease_reconciliation", true);
+                        metrics.record_reconciliation(result.requests, result.attempts);
+                        if result.requests > 0 || result.attempts > 0 {
+                            info!(
+                                requests = result.requests,
+                                attempts = result.attempts,
+                                "reconciled expired inference ledger leases"
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        metrics.record_ledger_operation("lease_reconciliation", false);
+                        error!(error = %err, "failed to reconcile expired ledger leases");
+                    }
                 }
             }
         });
@@ -4767,7 +4782,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn postgres_operational_queries_use_database_aggregation() {
+    async fn postgres_critical_paths_use_database_transactions_and_aggregation() {
         let Ok(database_url) = std::env::var("MODELPORT_TEST_DATABASE_URL") else {
             return;
         };
@@ -4901,6 +4916,77 @@ mod tests {
             .unwrap();
         assert_eq!(latency["sampleCount"], 1);
         assert_eq!(latency["p95"], 120);
+
+        sqlx::query(
+            "TRUNCATE TABLE
+                modelport_budget_events,
+                modelport_budget_reservations,
+                modelport_provider_attempts,
+                modelport_gateway_requests",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        set_local_budget(&ledger, 1_000_000).await;
+
+        let budget_request_a = ledger
+            .begin_request(&context, "gpt-test", false, None, TEST_FINGERPRINT)
+            .await
+            .unwrap();
+        let budget_request_b = ledger
+            .begin_request(&context, "gpt-test", false, None, TEST_FINGERPRINT)
+            .await
+            .unwrap();
+        let budget_attempt_a =
+            AttemptId::from_string(format!("att_postgres_budget_a_{}", Uuid::new_v4().simple()));
+        let budget_attempt_b =
+            AttemptId::from_string(format!("att_postgres_budget_b_{}", Uuid::new_v4().simple()));
+        let (budget_a, budget_b) = tokio::join!(
+            ledger.begin_attempt(
+                &budget_request_a,
+                &budget_attempt_a,
+                "openai",
+                "gpt-test",
+                "openai-compatible",
+                estimate(0.75),
+            ),
+            ledger.begin_attempt(
+                &budget_request_b,
+                &budget_attempt_b,
+                "openai",
+                "gpt-test",
+                "openai-compatible",
+                estimate(0.75),
+            )
+        );
+        assert_eq!(
+            usize::from(budget_a.is_ok()) + usize::from(budget_b.is_ok()),
+            1,
+            "the PostgreSQL budget row lock must prevent concurrent overspend"
+        );
+
+        let idempotency_key = format!("postgres-idempotency-{}", Uuid::new_v4().simple());
+        let (idempotent_a, idempotent_b) = tokio::join!(
+            ledger.begin_request(
+                &context,
+                "gpt-test",
+                false,
+                Some(&idempotency_key),
+                TEST_FINGERPRINT,
+            ),
+            ledger.begin_request(
+                &context,
+                "gpt-test",
+                false,
+                Some(&idempotency_key),
+                TEST_FINGERPRINT,
+            )
+        );
+        assert_eq!(
+            usize::from(idempotent_a.is_ok()) + usize::from(idempotent_b.is_ok()),
+            1,
+            "the PostgreSQL idempotency constraint must admit exactly one request"
+        );
 
         sqlx::query(
             "TRUNCATE TABLE

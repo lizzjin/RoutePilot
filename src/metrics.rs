@@ -50,6 +50,9 @@ struct MetricsInner {
     routes: BTreeMap<String, CounterSet>,
     messages: BTreeMap<MessageKey, MessageCounterSet>,
     rejections: BTreeMap<RejectionKey, u64>,
+    ledger_operations: BTreeMap<String, LedgerOperationMetrics>,
+    reconciled_requests_total: u64,
+    reconciled_attempts_total: u64,
 }
 
 #[derive(Debug, Default)]
@@ -73,6 +76,12 @@ struct UsageCounterSet {
     cache_write_tokens_total: u64,
     cache_read_tokens_total: u64,
     cost_estimate_usd_total: f64,
+}
+
+#[derive(Debug, Default)]
+struct LedgerOperationMetrics {
+    failures_total: u64,
+    degraded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -166,6 +175,35 @@ impl Metrics {
             .record(success, duration, usage);
     }
 
+    pub fn record_ledger_operation(&self, operation: &'static str, success: bool) {
+        let mut inner = self.inner.lock().expect("metrics lock poisoned");
+        let metrics = inner
+            .ledger_operations
+            .entry(operation.to_owned())
+            .or_default();
+        metrics.degraded = !success;
+        if !success {
+            metrics.failures_total = metrics.failures_total.saturating_add(1);
+        }
+    }
+
+    pub fn record_reconciliation(&self, requests: u64, attempts: u64) {
+        let mut inner = self.inner.lock().expect("metrics lock poisoned");
+        inner.reconciled_requests_total = inner.reconciled_requests_total.saturating_add(requests);
+        inner.reconciled_attempts_total = inner.reconciled_attempts_total.saturating_add(attempts);
+    }
+
+    pub fn degraded_ledger_operations(&self) -> Vec<String> {
+        self.inner
+            .lock()
+            .expect("metrics lock poisoned")
+            .ledger_operations
+            .iter()
+            .filter(|(_, metrics)| metrics.degraded)
+            .map(|(operation, _)| operation.clone())
+            .collect()
+    }
+
     pub fn render_prometheus(&self) -> String {
         let inner = self.inner.lock().expect("metrics lock poisoned");
         let mut output = String::new();
@@ -246,6 +284,43 @@ impl Metrics {
             );
             push_message_counter_set(&mut output, &labels, counters);
         }
+        output.push('\n');
+
+        output.push_str(
+            "# HELP modelport_ledger_operation_failures_total Ledger operation failures by bounded operation.\n",
+        );
+        output.push_str("# TYPE modelport_ledger_operation_failures_total counter\n");
+        output.push_str(
+            "# HELP modelport_ledger_operation_degraded Whether the latest ledger operation failed.\n",
+        );
+        output.push_str("# TYPE modelport_ledger_operation_degraded gauge\n");
+        for (operation, metrics) in &inner.ledger_operations {
+            let operation = escape_label_value(operation);
+            output.push_str(&format!(
+                "modelport_ledger_operation_failures_total{{operation=\"{operation}\"}} {}\n",
+                metrics.failures_total
+            ));
+            output.push_str(&format!(
+                "modelport_ledger_operation_degraded{{operation=\"{operation}\"}} {}\n",
+                u8::from(metrics.degraded)
+            ));
+        }
+        output.push_str(
+            "# HELP modelport_ledger_reconciled_requests_total Expired request leases reconciled by this process.\n",
+        );
+        output.push_str("# TYPE modelport_ledger_reconciled_requests_total counter\n");
+        output.push_str(&format!(
+            "modelport_ledger_reconciled_requests_total {}\n",
+            inner.reconciled_requests_total
+        ));
+        output.push_str(
+            "# HELP modelport_ledger_reconciled_attempts_total Expired attempt leases reconciled by this process.\n",
+        );
+        output.push_str("# TYPE modelport_ledger_reconciled_attempts_total counter\n");
+        output.push_str(&format!(
+            "modelport_ledger_reconciled_attempts_total {}\n",
+            inner.reconciled_attempts_total
+        ));
 
         output
     }
@@ -378,6 +453,8 @@ mod tests {
         let metrics = Metrics::new();
         metrics.record_route("messages", true, Duration::from_millis(12));
         metrics.record_rejection("messages", "validation", "invalid_request");
+        metrics.record_ledger_operation("request_finalization", false);
+        metrics.record_reconciliation(2, 3);
         metrics.record_message(
             MessageMetricLabels {
                 provider: "mimo",
@@ -425,6 +502,18 @@ mod tests {
         assert!(rendered.contains(
             r#"modelport_inference_rejections_total{route="messages",phase="validation",reason="invalid_request"} 1"#
         ));
+        assert!(rendered.contains(
+            r#"modelport_ledger_operation_failures_total{operation="request_finalization"} 1"#
+        ));
+        assert!(rendered.contains(
+            r#"modelport_ledger_operation_degraded{operation="request_finalization"} 1"#
+        ));
+        assert!(rendered.contains("modelport_ledger_reconciled_requests_total 2"));
+        assert!(rendered.contains("modelport_ledger_reconciled_attempts_total 3"));
+        assert_eq!(
+            metrics.degraded_ledger_operations(),
+            vec!["request_finalization"]
+        );
     }
 
     #[test]

@@ -40,6 +40,13 @@ pub(super) async fn readyz(
             .health_check()
             .await
             .map_err(|error| AppError::NotReady(format!("enterprise ledger: {error}")))?;
+        let degraded_operations = state.metrics.degraded_ledger_operations();
+        if !degraded_operations.is_empty() {
+            return Err(AppError::NotReady(format!(
+                "enterprise ledger operations degraded: {}",
+                degraded_operations.join(", ")
+            )));
+        }
         Ok(Json(detailed_health_body(&state)))
     }
     .await;
@@ -84,6 +91,8 @@ fn detailed_health_body(state: &AppState) -> serde_json::Value {
             "control": state.control.data_path(),
             "enterpriseLedger": state.ledger.location(),
             "status": "ready",
+            "pendingFinalizers": state.finalizers.active(),
+            "degradedLedgerOperations": state.metrics.degraded_ledger_operations(),
         },
         "providerHealth": provider_health,
     })
@@ -105,8 +114,14 @@ pub(super) async fn metrics(
     state
         .metrics
         .record_route("metrics", true, started.elapsed());
-    Ok((
-        [(CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)],
-        state.metrics.render_prometheus(),
-    ))
+    let mut metrics = state.metrics.render_prometheus();
+    metrics.push_str(
+        "\n# HELP modelport_ledger_pending_finalizers Streaming ledger finalizers pending database commit.\n",
+    );
+    metrics.push_str("# TYPE modelport_ledger_pending_finalizers gauge\n");
+    metrics.push_str(&format!(
+        "modelport_ledger_pending_finalizers {}\n",
+        state.finalizers.active()
+    ));
+    Ok(([(CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)], metrics))
 }

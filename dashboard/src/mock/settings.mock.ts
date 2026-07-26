@@ -31,6 +31,14 @@ export const mockSettings: SystemSettings = {
       'custom',
     ],
   },
+  smartRouting: {
+    mode: 'shadow',
+    defaultProfile: 'balanced',
+    policyVersion: 'builtin-v1',
+    activationPercent: 0,
+    groupCount: 1,
+    candidateCount: 2,
+  },
   rateLimits: {
     maxConcurrentRequests: 64,
     maxRequestBodyBytes: 33554432,

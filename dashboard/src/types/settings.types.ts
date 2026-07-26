@@ -2,6 +2,7 @@ export interface SystemSettings {
   server: ServerSettings
   auth: AuthSettings
   gateway: GatewaySettings
+  smartRouting: SmartRoutingSettings
   rateLimits: RateLimitSettings
   runtime?: RuntimeSettings
   setup?: SetupStatus
@@ -22,6 +23,42 @@ export interface AuthSettings {
 export interface GatewaySettings {
   defaultProvider: string
   providerOrder: string[]
+}
+
+export interface SmartRoutingSettings {
+  mode: 'off' | 'shadow' | 'active'
+  defaultProfile: 'quality' | 'balanced' | 'economy' | 'latency'
+  policyVersion: string
+  activationPercent: number
+  groupCount: number
+  candidateCount: number
+}
+
+export interface SmartRouterStatus {
+  mode: SmartRoutingSettings['mode']
+  defaultProfile: SmartRoutingSettings['defaultProfile']
+  policyVersion: string
+  activationPercent: number
+  groups: Array<{
+    id: string
+    aliases: string[]
+    defaultProfile: SmartRoutingSettings['defaultProfile']
+    candidateCount: number
+  }>
+  decisionsTotal: number
+  activeDecisionsTotal: number
+  shadowDecisionsTotal: number
+  staticDecisionsTotal: number
+  shadowDisagreementsTotal: number
+  selectedByCandidate: Record<string, number>
+  recommendedByCandidate: Record<string, number>
+  outcomes: Array<{
+    candidate: string
+    attempts: number
+    successes: number
+    successRate: number
+    latencyEwmaMs: number
+  }>
 }
 
 export interface RateLimitSettings {

@@ -42,5 +42,5 @@ export type {
   EnterpriseBudgetUpdate,
   EnterpriseBudgetAdjustment,
 } from './enterprise.types'
-export type { SystemSettings, ServerSettings, AuthSettings, GatewaySettings, RateLimitSettings, RuntimeSettings, SetupStatus, SetupCheck, ConfigReloadResult, AuditEvent, AuditEventsResponse, BackupExport } from './settings.types'
+export type { SystemSettings, ServerSettings, AuthSettings, GatewaySettings, SmartRoutingSettings, SmartRouterStatus, RateLimitSettings, RuntimeSettings, SetupStatus, SetupCheck, ConfigReloadResult, AuditEvent, AuditEventsResponse, BackupExport } from './settings.types'
 export type { DashboardStats } from './dashboard.types'

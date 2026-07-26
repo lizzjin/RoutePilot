@@ -28,6 +28,7 @@ use crate::{
     metrics::Metrics,
     policy::enforce_spend_limit,
     pricing::{self, ModelPricing},
+    smart_router::RoutingDecisionEvidence,
     usage::{current_period, quota_increment},
 };
 
@@ -140,6 +141,7 @@ struct MemoryRequestRecord {
     last_attempt_id: Option<String>,
     model_pricing: Option<serde_json::Value>,
     stream: bool,
+    routing_decision: Option<RoutingDecisionEvidence>,
     idempotency_key_hash: Option<String>,
     request_fingerprint: String,
 }
@@ -170,6 +172,7 @@ pub(crate) struct LedgerRequestMetadata {
     pub(crate) team_id: Option<String>,
     pub(crate) team_name: Option<String>,
     pub(crate) client_ip: Option<String>,
+    pub(crate) routing_decision: Option<RoutingDecisionEvidence>,
 }
 
 #[derive(Debug, Clone)]
@@ -215,6 +218,7 @@ impl Default for LedgerRequestMetadata {
             team_id: None,
             team_name: None,
             client_ip: None,
+            routing_decision: None,
         }
     }
 }
@@ -321,6 +325,7 @@ pub(crate) struct EnterpriseRequestRow {
     tool_repair_recovered: bool,
     retry_count: i32,
     fallback_from_provider: Option<String>,
+    routing_decision: Option<RoutingDecisionEvidence>,
     has_idempotency_key: bool,
     lease_owner: String,
     lease_expires_at_ms: i64,
@@ -823,6 +828,7 @@ impl EnterpriseLedger {
                         last_attempt_id: None,
                         model_pricing: None,
                         stream,
+                        routing_decision: metadata.routing_decision.clone(),
                         idempotency_key_hash,
                         request_fingerprint: request_fingerprint.to_owned(),
                     },
@@ -903,6 +909,44 @@ impl EnterpriseLedger {
                         existing.0 == request_fingerprint,
                         existing.1 != "started",
                     ));
+                }
+                if let Some(decision) = &metadata.routing_decision {
+                    sqlx::query(
+                        "INSERT INTO modelport_routing_decisions (
+                            decision_id, request_ledger_id,
+                            organization_id, project_id, environment_id,
+                            route_group_id, routing_profile, routing_mode, policy_version,
+                            selected_provider_id, selected_model,
+                            recommended_provider_id, recommended_model,
+                            candidate_count, selected_score, recommended_score, reason_codes,
+                            session_affinity, shadow_disagreement
+                        ) VALUES (
+                            $1, $2, $3, $4, $5, $6, $7, $8,
+                            $9, $10, $11, $12, $13, $14, $15, $16,
+                            $17, $18, $19
+                        )",
+                    )
+                    .bind(&decision.decision_id)
+                    .bind(&request.ledger_id)
+                    .bind(&request.tenant.organization_id)
+                    .bind(&request.tenant.project_id)
+                    .bind(&request.tenant.environment_id)
+                    .bind(decision.group_id.as_deref())
+                    .bind(&decision.profile)
+                    .bind(&decision.mode)
+                    .bind(&decision.policy_version)
+                    .bind(&decision.selected_provider)
+                    .bind(&decision.selected_model)
+                    .bind(&decision.recommended_provider)
+                    .bind(&decision.recommended_model)
+                    .bind(i32::try_from(decision.candidate_count).unwrap_or(i32::MAX))
+                    .bind(decision.selected_score)
+                    .bind(decision.recommended_score)
+                    .bind(&decision.reason_codes)
+                    .bind(decision.session_affinity)
+                    .bind(decision.shadow_disagreement)
+                    .execute(&mut *transaction)
+                    .await?;
                 }
                 transaction.commit().await?;
             }
@@ -3629,6 +3673,21 @@ const REQUEST_LIST_SQL: &str = "SELECT
         r.latency_ms, r.first_byte_latency_ms,
         r.tool_outcome, r.tool_repair_attempted, r.tool_repair_recovered,
         r.retry_count, r.fallback_from_provider,
+        d.decision_id AS routing_decision_id,
+        d.route_group_id AS routing_group_id,
+        d.routing_profile,
+        d.routing_mode,
+        d.policy_version AS routing_policy_version,
+        d.selected_provider_id AS routing_selected_provider,
+        d.selected_model AS routing_selected_model,
+        d.recommended_provider_id AS routing_recommended_provider,
+        d.recommended_model AS routing_recommended_model,
+        d.candidate_count AS routing_candidate_count,
+        d.selected_score AS routing_selected_score,
+        d.recommended_score AS routing_recommended_score,
+        d.reason_codes AS routing_reason_codes,
+        d.session_affinity AS routing_session_affinity,
+        d.shadow_disagreement AS routing_shadow_disagreement,
         (r.idempotency_key_hash IS NOT NULL) AS has_idempotency_key,
         r.lease_owner,
         (EXTRACT(EPOCH FROM r.lease_expires_at) * 1000)::bigint AS lease_expires_at_ms,
@@ -3641,6 +3700,11 @@ const REQUEST_LIST_SQL: &str = "SELECT
            AND a.project_id = r.project_id
            AND a.environment_id = r.environment_id)::bigint AS attempt_count
     FROM modelport_gateway_requests r
+    LEFT JOIN modelport_routing_decisions d
+      ON d.request_ledger_id = r.ledger_id
+     AND d.organization_id = r.organization_id
+     AND d.project_id = r.project_id
+     AND d.environment_id = r.environment_id
     WHERE
         ($1::text IS NULL OR r.state = $1)
         AND ($2::text IS NULL OR r.client_protocol = $2)
@@ -3683,6 +3747,21 @@ const OPERATIONAL_LOG_SELECT_SQL: &str = "SELECT
         r.latency_ms, r.first_byte_latency_ms,
         r.tool_outcome, r.tool_repair_attempted, r.tool_repair_recovered,
         r.retry_count, r.fallback_from_provider,
+        d.decision_id AS routing_decision_id,
+        d.route_group_id AS routing_group_id,
+        d.routing_profile,
+        d.routing_mode,
+        d.policy_version AS routing_policy_version,
+        d.selected_provider_id AS routing_selected_provider,
+        d.selected_model AS routing_selected_model,
+        d.recommended_provider_id AS routing_recommended_provider,
+        d.recommended_model AS routing_recommended_model,
+        d.candidate_count AS routing_candidate_count,
+        d.selected_score AS routing_selected_score,
+        d.recommended_score AS routing_recommended_score,
+        d.reason_codes AS routing_reason_codes,
+        d.session_affinity AS routing_session_affinity,
+        d.shadow_disagreement AS routing_shadow_disagreement,
         (r.idempotency_key_hash IS NOT NULL) AS has_idempotency_key,
         r.lease_owner,
         (EXTRACT(EPOCH FROM r.lease_expires_at) * 1000)::bigint AS lease_expires_at_ms,
@@ -3690,7 +3769,12 @@ const OPERATIONAL_LOG_SELECT_SQL: &str = "SELECT
         (EXTRACT(EPOCH FROM r.updated_at) * 1000)::bigint AS updated_at_ms,
         (EXTRACT(EPOCH FROM r.completed_at) * 1000)::bigint AS completed_at_ms,
         0::bigint AS attempt_count
-    FROM modelport_gateway_requests r";
+    FROM modelport_gateway_requests r
+    LEFT JOIN modelport_routing_decisions d
+      ON d.request_ledger_id = r.ledger_id
+     AND d.organization_id = r.organization_id
+     AND d.project_id = r.project_id
+     AND d.environment_id = r.environment_id";
 
 const REQUEST_DETAIL_SQL: &str = "SELECT
         r.ledger_id, r.request_id,
@@ -3708,6 +3792,21 @@ const REQUEST_DETAIL_SQL: &str = "SELECT
         r.latency_ms, r.first_byte_latency_ms,
         r.tool_outcome, r.tool_repair_attempted, r.tool_repair_recovered,
         r.retry_count, r.fallback_from_provider,
+        d.decision_id AS routing_decision_id,
+        d.route_group_id AS routing_group_id,
+        d.routing_profile,
+        d.routing_mode,
+        d.policy_version AS routing_policy_version,
+        d.selected_provider_id AS routing_selected_provider,
+        d.selected_model AS routing_selected_model,
+        d.recommended_provider_id AS routing_recommended_provider,
+        d.recommended_model AS routing_recommended_model,
+        d.candidate_count AS routing_candidate_count,
+        d.selected_score AS routing_selected_score,
+        d.recommended_score AS routing_recommended_score,
+        d.reason_codes AS routing_reason_codes,
+        d.session_affinity AS routing_session_affinity,
+        d.shadow_disagreement AS routing_shadow_disagreement,
         (r.idempotency_key_hash IS NOT NULL) AS has_idempotency_key,
         r.lease_owner,
         (EXTRACT(EPOCH FROM r.lease_expires_at) * 1000)::bigint AS lease_expires_at_ms,
@@ -3720,6 +3819,11 @@ const REQUEST_DETAIL_SQL: &str = "SELECT
            AND a.project_id = r.project_id
            AND a.environment_id = r.environment_id)::bigint AS attempt_count
     FROM modelport_gateway_requests r
+    LEFT JOIN modelport_routing_decisions d
+      ON d.request_ledger_id = r.ledger_id
+     AND d.organization_id = r.organization_id
+     AND d.project_id = r.project_id
+     AND d.environment_id = r.environment_id
     WHERE r.ledger_id = $1";
 
 const ATTEMPT_LIST_SQL: &str = "SELECT
@@ -4167,6 +4271,44 @@ fn validate_request_metadata(metadata: &LedgerRequestMetadata) -> Result<(), App
             "client IP metadata must be an IPv4 or IPv6 address".to_owned(),
         ));
     }
+    if let Some(decision) = &metadata.routing_decision {
+        for (field, value, max_len) in [
+            ("decisionId", decision.decision_id.as_str(), 80),
+            ("routingProfile", decision.profile.as_str(), 32),
+            ("routingMode", decision.mode.as_str(), 32),
+            ("policyVersion", decision.policy_version.as_str(), 64),
+            ("selectedProvider", decision.selected_provider.as_str(), 80),
+            ("selectedModel", decision.selected_model.as_str(), 240),
+            (
+                "recommendedProvider",
+                decision.recommended_provider.as_str(),
+                80,
+            ),
+            ("recommendedModel", decision.recommended_model.as_str(), 240),
+        ] {
+            if value.is_empty() || value.len() > max_len || value.chars().any(char::is_control) {
+                return Err(AppError::InvalidRequest(format!(
+                    "routing {field} must contain 1-{max_len} non-control bytes"
+                )));
+            }
+        }
+        if decision.group_id.as_deref().is_some_and(|value| {
+            value.is_empty() || value.len() > 80 || value.chars().any(char::is_control)
+        }) || !(1..=256).contains(&decision.candidate_count)
+            || !decision.selected_score.is_finite()
+            || !(0.0..=2.0).contains(&decision.selected_score)
+            || !decision.recommended_score.is_finite()
+            || !(0.0..=2.0).contains(&decision.recommended_score)
+            || decision.reason_codes.len() > 16
+            || decision.reason_codes.iter().any(|reason| {
+                reason.is_empty() || reason.len() > 80 || reason.chars().any(char::is_control)
+            })
+        {
+            return Err(AppError::InvalidRequest(
+                "routing decision evidence is outside supported bounds".to_owned(),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -4260,6 +4402,7 @@ fn memory_request_row(
         tool_repair_recovered: record.tool_repair_recovered,
         retry_count: record.retry_count,
         fallback_from_provider: record.fallback_from_provider.clone(),
+        routing_decision: request.routing_decision.clone(),
         has_idempotency_key: request.idempotency_key_hash.is_some(),
         lease_owner: record.lease_owner.clone(),
         lease_expires_at_ms: record.lease_expires_at_ms,
@@ -4347,6 +4490,7 @@ fn request_row_from_pg(row: &PgRow) -> Result<EnterpriseRequestRow, sqlx::Error>
         tool_repair_recovered: row.try_get("tool_repair_recovered")?,
         retry_count: row.try_get("retry_count")?,
         fallback_from_provider: row.try_get("fallback_from_provider")?,
+        routing_decision: routing_decision_from_pg(row)?,
         has_idempotency_key: row.try_get("has_idempotency_key")?,
         lease_owner: row.try_get("lease_owner")?,
         lease_expires_at_ms: row.try_get("lease_expires_at_ms")?,
@@ -4387,6 +4531,30 @@ fn attempt_row_from_pg(row: &PgRow) -> Result<EnterpriseAttemptRow, sqlx::Error>
         updated_at_ms: row.try_get("updated_at_ms")?,
         completed_at_ms: row.try_get("completed_at_ms")?,
     })
+}
+
+fn routing_decision_from_pg(row: &PgRow) -> Result<Option<RoutingDecisionEvidence>, sqlx::Error> {
+    let Some(decision_id) = row.try_get::<Option<String>, _>("routing_decision_id")? else {
+        return Ok(None);
+    };
+    Ok(Some(RoutingDecisionEvidence {
+        decision_id,
+        group_id: row.try_get("routing_group_id")?,
+        profile: row.try_get("routing_profile")?,
+        policy_version: row.try_get("routing_policy_version")?,
+        mode: row.try_get("routing_mode")?,
+        candidate_count: usize::try_from(row.try_get::<i32, _>("routing_candidate_count")?)
+            .unwrap_or_default(),
+        selected_provider: row.try_get("routing_selected_provider")?,
+        selected_model: row.try_get("routing_selected_model")?,
+        recommended_provider: row.try_get("routing_recommended_provider")?,
+        recommended_model: row.try_get("routing_recommended_model")?,
+        selected_score: row.try_get("routing_selected_score")?,
+        recommended_score: row.try_get("routing_recommended_score")?,
+        reason_codes: row.try_get("routing_reason_codes")?,
+        session_affinity: row.try_get("routing_session_affinity")?,
+        shadow_disagreement: row.try_get("routing_shadow_disagreement")?,
+    }))
 }
 
 fn operational_log_row(request: &EnterpriseRequestRow) -> Value {
@@ -4447,6 +4615,7 @@ fn operational_log_row(request: &EnterpriseRequestRow) -> Value {
         "toolUseRequested": request.tool_use_requested,
         "toolOutcome": request.tool_outcome,
         "trafficClass": request.traffic_class,
+        "routingDecision": request.routing_decision,
         "toolRepairAttempted": request.tool_repair_attempted,
         "toolRepairRecovered": request.tool_repair_recovered,
         "stream": if request.stream { "stream" } else { "non-stream" },
@@ -4796,6 +4965,8 @@ mod tests {
             "TRUNCATE TABLE
                 modelport_budget_events,
                 modelport_budget_reservations,
+                modelport_routing_feedback,
+                modelport_routing_decisions,
                 modelport_provider_attempts,
                 modelport_gateway_requests",
         )
@@ -4825,6 +4996,23 @@ mod tests {
                 &LedgerRequestMetadata {
                     username: "database-test".to_owned(),
                     traffic_class: "business".to_owned(),
+                    routing_decision: Some(RoutingDecisionEvidence {
+                        decision_id: format!("rtd_{}", Uuid::new_v4().simple()),
+                        group_id: Some("general".to_owned()),
+                        profile: "balanced".to_owned(),
+                        policy_version: "test-v1".to_owned(),
+                        mode: "shadow".to_owned(),
+                        candidate_count: 2,
+                        selected_provider: "openai".to_owned(),
+                        selected_model: "gpt-test".to_owned(),
+                        recommended_provider: "openai".to_owned(),
+                        recommended_model: "gpt-test".to_owned(),
+                        selected_score: 0.75,
+                        recommended_score: 0.80,
+                        reason_codes: vec!["profile_balanced".to_owned()],
+                        session_affinity: false,
+                        shadow_disagreement: false,
+                    }),
                     ..LedgerRequestMetadata::default()
                 },
             )
@@ -4888,6 +5076,8 @@ mod tests {
             .unwrap();
         assert_eq!(logs.total, 1);
         assert_eq!(logs.logs[0]["provider"], "openai");
+        assert_eq!(logs.logs[0]["routingDecision"]["mode"], "shadow");
+        assert_eq!(logs.logs[0]["routingDecision"]["policyVersion"], "test-v1");
         assert_eq!(logs.summary["totalRequests"], 1);
         assert_eq!(logs.summary["totalTokens"], 120);
         assert_eq!(logs.summary["latencyP95Ms"], 120);
@@ -4921,6 +5111,8 @@ mod tests {
             "TRUNCATE TABLE
                 modelport_budget_events,
                 modelport_budget_reservations,
+                modelport_routing_feedback,
+                modelport_routing_decisions,
                 modelport_provider_attempts,
                 modelport_gateway_requests",
         )
@@ -4992,6 +5184,8 @@ mod tests {
             "TRUNCATE TABLE
                 modelport_budget_events,
                 modelport_budget_reservations,
+                modelport_routing_feedback,
+                modelport_routing_decisions,
                 modelport_provider_attempts,
                 modelport_gateway_requests",
         )

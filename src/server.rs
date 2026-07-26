@@ -15,6 +15,7 @@ use crate::{
     metrics::Metrics,
     oidc::OidcService,
     routes::{self, AppState, GatewaySecurityPolicy, RateLimiter, TrustedProxyConfig},
+    smart_router::SmartRouter,
     version,
 };
 
@@ -68,6 +69,7 @@ pub(crate) async fn serve() -> Result<(), AppError> {
         trusted_proxies: Arc::new(TrustedProxyConfig::from_env()?),
         transport: HttpTransport::new()?,
         metrics,
+        smart_router: Arc::new(SmartRouter::new()),
         ledger,
         finalizers: finalizers.clone(),
     };

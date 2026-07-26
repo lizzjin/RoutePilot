@@ -75,7 +75,7 @@ export function UsageGuidePage() {
   const openAiEnv = `OPENAI_BASE_URL=${gatewayOrigin}/v1\nOPENAI_API_KEY=<你的 ModelPort API Key>\nOPENAI_MODEL=${EXAMPLE_MODEL}`
 
   return (
-    <div className="mx-auto max-w-7xl">
+    <div className="w-full">
       <div className="border-b pb-6">
         <PageHeader
           title="用户使用说明"

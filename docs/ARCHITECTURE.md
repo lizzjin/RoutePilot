@@ -163,7 +163,10 @@ Completed paths that expose Provider usage are labelled
 `billingMode="upstream-returned"`; paths that use the request heuristic are
 `billingMode="local-estimate"`. This is provenance, not an invoice guarantee:
 cost still comes from the local pricing table, and ordinary live streams may
-not expose their final Provider usage.
+not expose their final Provider usage. Request totals include every sent retry
+or fallback attempt; mixed Provider-reported and locally estimated attempts use
+`billingMode="mixed-attempts"`, while fully estimated retries use
+`billingMode="local-estimate+retry"`.
 
 ## Configuration And Runtime Overrides
 

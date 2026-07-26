@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 use crate::{
     control::{ProviderUsageStats, UsageSummary},
+    enterprise_ledger::DashboardLedgerSnapshot,
     error::AppError,
 };
 
@@ -61,14 +62,53 @@ pub(super) async fn dashboard_body(
         .count();
     let active_users = state.auth.active_user_count();
     let today_start = (now_millis() / DAY_MS) * DAY_MS;
-    let usage_rows = state
+    let relational_snapshot = state
         .ledger
-        .usage_rows_since(Some(trend_window.start_ms.min(today_start)))
+        .dashboard_snapshot(
+            trend_window.start_ms,
+            trend_window.end_ms,
+            trend_window.bucket_ms,
+            today_start,
+            state.control.api_key_counts(),
+        )
         .await?;
-    let usage_summary = dashboard_today_summary(&usage_rows, state.control.api_key_counts());
+    let (usage_summary, range_usage, persisted_provider_usage) =
+        if let Some(DashboardLedgerSnapshot {
+            usage_summary,
+            provider_usage,
+            matched_requests,
+            request_time_series,
+            error_time_series,
+            token_time_series,
+            model_usage,
+            summary,
+        }) = relational_snapshot
+        {
+            (
+                usage_summary,
+                DashboardRangeUsage {
+                    matched_requests,
+                    request_time_series,
+                    error_time_series,
+                    token_time_series,
+                    model_usage,
+                    summary,
+                },
+                provider_usage,
+            )
+        } else {
+            let usage_rows = state
+                .ledger
+                .usage_rows_since(Some(trend_window.start_ms.min(today_start)))
+                .await?;
+            (
+                dashboard_today_summary(&usage_rows, state.control.api_key_counts()),
+                dashboard_range_usage(&usage_rows, &trend_window),
+                provider_usage_today(&usage_rows),
+            )
+        };
     let total_requests = usage_summary.total_requests;
     let total_successes = usage_summary.total_successes;
-    let range_usage = dashboard_range_usage(&usage_rows, &trend_window);
     let mut persisted_top_models = range_usage
         .model_usage
         .iter()
@@ -81,7 +121,6 @@ pub(super) async fn dashboard_body(
         })
         .collect::<Vec<_>>();
     sort_and_limit_top_models(&mut persisted_top_models);
-    let persisted_provider_usage = provider_usage_today(&usage_rows);
     let (recent_activity, _) = state.ledger.audit_events(8).await?;
     let config = effective_config(state);
 

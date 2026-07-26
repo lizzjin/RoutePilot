@@ -117,6 +117,7 @@ impl std::fmt::Debug for ControlStore {
 struct ControlInner {
     teams: BTreeMap<String, TeamRecord>,
     api_keys: BTreeMap<String, ApiKeyRecord>,
+    api_key_hash_index: HashMap<String, String>,
     quotas: BTreeMap<String, QuotaRecord>,
     route_config: RouteConfigRecord,
     provider_tests: BTreeMap<String, ProviderTestRecord>,
@@ -1013,6 +1014,15 @@ impl ControlStore {
                 .or_default()
                 .insert(record.credential_id.clone(), record);
         }
+        let api_keys = file
+            .api_keys
+            .into_iter()
+            .map(|record| (record.id.clone(), record))
+            .collect::<BTreeMap<_, _>>();
+        let api_key_hash_index = api_keys
+            .iter()
+            .map(|(id, record)| (record.key_hash.clone(), id.clone()))
+            .collect();
         Ok(Self {
             store: Some(store),
             inner: Mutex::new(ControlInner {
@@ -1021,11 +1031,8 @@ impl ControlStore {
                     .into_iter()
                     .map(|record| (record.id.clone(), record))
                     .collect(),
-                api_keys: file
-                    .api_keys
-                    .into_iter()
-                    .map(|record| (record.id.clone(), record))
-                    .collect(),
+                api_keys,
+                api_key_hash_index,
                 quotas: file
                     .quotas
                     .into_iter()
@@ -1870,12 +1877,7 @@ impl ControlStore {
         let mut inner = self.inner.lock().expect("control lock poisoned");
         reset_expired_quotas_locked(&mut inner, now);
 
-        let Some(api_key_id) = inner
-            .api_keys
-            .iter()
-            .find(|(_, record)| constant_time_eq(record.key_hash.as_bytes(), token_hash.as_bytes()))
-            .map(|(id, _)| id.clone())
-        else {
+        let Some(api_key_id) = inner.api_key_hash_index.get(&token_hash).cloned() else {
             return Ok(None);
         };
         let Some(record_snapshot) = inner.api_keys.get(&api_key_id).cloned() else {
@@ -2388,6 +2390,7 @@ impl ControlStore {
         inner: &mut ControlInner,
         previous: ControlInner,
     ) -> Result<(), AppError> {
+        rebuild_api_key_hash_index(inner);
         if let Err(error) = self.save_locked(inner) {
             *inner = previous;
             return Err(error);
@@ -2975,14 +2978,12 @@ fn hex_bytes(bytes: &[u8]) -> String {
     output
 }
 
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    let mut diff = left.len() ^ right.len();
-    for index in 0..left.len().max(right.len()) {
-        let a = left.get(index).copied().unwrap_or(0);
-        let b = right.get(index).copied().unwrap_or(0);
-        diff |= usize::from(a ^ b);
-    }
-    diff == 0
+fn rebuild_api_key_hash_index(inner: &mut ControlInner) {
+    inner.api_key_hash_index = inner
+        .api_keys
+        .iter()
+        .map(|(id, record)| (record.key_hash.clone(), id.clone()))
+        .collect();
 }
 
 fn now_millis() -> u64 {

@@ -25,6 +25,7 @@ pub struct AppConfig {
     pub provider_order: Vec<String>,
     pub providers: HashMap<String, ProviderConfig>,
     pub aliases: HashMap<String, String>,
+    pub smart_routing: SmartRoutingConfig,
 }
 
 pub struct RuntimeConfig {
@@ -60,6 +61,317 @@ pub struct ProviderConfig {
 pub enum ProviderProtocol {
     Anthropic,
     OpenaiCompat,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SmartRoutingMode {
+    #[default]
+    Off,
+    Shadow,
+    Active,
+}
+
+impl SmartRoutingMode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Shadow => "shadow",
+            Self::Active => "active",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingProfile {
+    Quality,
+    #[default]
+    Balanced,
+    Economy,
+    Latency,
+}
+
+impl RoutingProfile {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Quality => "quality",
+            Self::Balanced => "balanced",
+            Self::Economy => "economy",
+            Self::Latency => "latency",
+        }
+    }
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "quality" => Some(Self::Quality),
+            "balanced" => Some(Self::Balanced),
+            "economy" => Some(Self::Economy),
+            "latency" => Some(Self::Latency),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SmartRoutingConfig {
+    #[serde(default)]
+    pub mode: SmartRoutingMode,
+    #[serde(default)]
+    pub default_profile: RoutingProfile,
+    #[serde(default = "default_routing_policy_version")]
+    pub policy_version: String,
+    #[serde(default = "default_routing_activation_percent")]
+    pub activation_percent: u8,
+    #[serde(default)]
+    pub groups: HashMap<String, RouteGroupConfig>,
+}
+
+impl Default for SmartRoutingConfig {
+    fn default() -> Self {
+        Self {
+            mode: SmartRoutingMode::Off,
+            default_profile: RoutingProfile::Balanced,
+            policy_version: default_routing_policy_version(),
+            activation_percent: default_routing_activation_percent(),
+            groups: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RouteGroupConfig {
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub default_profile: Option<RoutingProfile>,
+    #[serde(default)]
+    pub candidates: Vec<RouteCandidateConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RouteCandidateConfig {
+    pub provider: String,
+    pub model: String,
+    #[serde(default = "default_route_quality")]
+    pub quality: f64,
+    #[serde(default = "default_route_latency_ms")]
+    pub latency_hint_ms: u64,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_routing_policy_version() -> String {
+    "builtin-v1".to_owned()
+}
+
+fn default_route_quality() -> f64 {
+    0.8
+}
+
+fn default_route_latency_ms() -> u64 {
+    1_000
+}
+
+fn default_routing_activation_percent() -> u8 {
+    0
+}
+
+fn apply_smart_routing_env_override(config: &mut SmartRoutingConfig) -> Result<(), AppError> {
+    if let Some(value) = env_value("MODELPORT_SMART_ROUTING_MODE") {
+        config.mode = match value.trim().to_ascii_lowercase().as_str() {
+            "off" => SmartRoutingMode::Off,
+            "shadow" => SmartRoutingMode::Shadow,
+            "active" => SmartRoutingMode::Active,
+            _ => {
+                return Err(AppError::Config(
+                    "MODELPORT_SMART_ROUTING_MODE must be off, shadow, or active".to_owned(),
+                ));
+            }
+        };
+    }
+    if let Some(value) = env_value("MODELPORT_SMART_ROUTING_PROFILE") {
+        config.default_profile = match value.trim().to_ascii_lowercase().as_str() {
+            "quality" => RoutingProfile::Quality,
+            "balanced" => RoutingProfile::Balanced,
+            "economy" => RoutingProfile::Economy,
+            "latency" => RoutingProfile::Latency,
+            _ => {
+                return Err(AppError::Config(
+                    "MODELPORT_SMART_ROUTING_PROFILE must be quality, balanced, economy, or latency"
+                        .to_owned(),
+                ));
+            }
+        };
+    }
+    if let Some(value) = env_value("MODELPORT_SMART_ROUTING_ACTIVATION_PERCENT") {
+        config.activation_percent = value.parse::<u8>().map_err(|_| {
+            AppError::Config(
+                "MODELPORT_SMART_ROUTING_ACTIVATION_PERCENT must be an integer from 0 to 100"
+                    .to_owned(),
+            )
+        })?;
+        if config.activation_percent > 100 {
+            return Err(AppError::Config(
+                "MODELPORT_SMART_ROUTING_ACTIVATION_PERCENT must be from 0 to 100".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_smart_routing(config: &AppConfig, issues: &mut Vec<ConfigIssue>) {
+    let routing = &config.smart_routing;
+    if routing.groups.len() > 128 {
+        issues.push(ConfigIssue::error(
+            "smart routing supports at most 128 routing groups",
+        ));
+    }
+    if routing.policy_version.trim().is_empty()
+        || routing.policy_version.len() > 64
+        || routing.policy_version.chars().any(char::is_control)
+    {
+        issues.push(ConfigIssue::error(
+            "routing.policy_version must contain 1-64 non-control bytes",
+        ));
+    }
+    if routing.mode != SmartRoutingMode::Off && routing.groups.is_empty() {
+        issues.push(ConfigIssue::error(
+            "smart routing shadow/active mode requires at least one routing group",
+        ));
+    }
+    if routing.activation_percent > 100 {
+        issues.push(ConfigIssue::error(
+            "routing.activation_percent must be from 0 to 100",
+        ));
+    }
+    if routing.mode == SmartRoutingMode::Active && routing.activation_percent == 0 {
+        issues.push(ConfigIssue::warning(
+            "smart routing active mode has activation_percent=0; requests remain on the configured baseline order",
+        ));
+    }
+    let mut aliases = BTreeSet::new();
+    let mut total_aliases = 0usize;
+    let mut total_candidates = 0usize;
+    for (group_id, group) in &routing.groups {
+        if group_id.trim().is_empty()
+            || group_id.len() > 80
+            || group_id.chars().any(char::is_control)
+        {
+            issues.push(ConfigIssue::error(
+                "routing group IDs must contain 1-80 non-control bytes",
+            ));
+        }
+        if group.aliases.is_empty() {
+            issues.push(ConfigIssue::error(format!(
+                "routing group `{group_id}` requires at least one alias"
+            )));
+        }
+        if group.aliases.len() > 64 {
+            issues.push(ConfigIssue::error(format!(
+                "routing group `{group_id}` supports at most 64 aliases"
+            )));
+        }
+        total_aliases = total_aliases.saturating_add(group.aliases.len());
+        for alias in &group.aliases {
+            if alias.trim().is_empty()
+                || alias.len() > 160
+                || alias.contains(':')
+                || alias.chars().any(char::is_control)
+            {
+                issues.push(ConfigIssue::error(format!(
+                    "routing group `{group_id}` contains an invalid alias"
+                )));
+            } else if !aliases.insert(alias.clone()) {
+                issues.push(ConfigIssue::error(format!(
+                    "smart routing alias `{alias}` is assigned more than once"
+                )));
+            } else if config.aliases.contains_key(alias) {
+                issues.push(ConfigIssue::error(format!(
+                    "smart routing alias `{alias}` conflicts with a static model alias"
+                )));
+            } else if config
+                .providers
+                .values()
+                .any(|provider| provider.models.iter().any(|model| model == alias))
+            {
+                issues.push(ConfigIssue::error(format!(
+                    "smart routing alias `{alias}` conflicts with a configured Provider model"
+                )));
+            }
+        }
+
+        let mut candidates = BTreeSet::new();
+        let mut enabled_candidates = 0usize;
+        total_candidates = total_candidates.saturating_add(group.candidates.len());
+        if group.candidates.len() > 256 {
+            issues.push(ConfigIssue::error(format!(
+                "routing group `{group_id}` supports at most 256 candidates"
+            )));
+        }
+        for candidate in &group.candidates {
+            if !candidates.insert((candidate.provider.clone(), candidate.model.clone())) {
+                issues.push(ConfigIssue::error(format!(
+                    "routing group `{group_id}` repeats candidate `{}:{}`",
+                    candidate.provider, candidate.model
+                )));
+            }
+            let Some(provider) = config.providers.get(&candidate.provider) else {
+                issues.push(ConfigIssue::error(format!(
+                    "routing group `{group_id}` references missing provider `{}`",
+                    candidate.provider
+                )));
+                continue;
+            };
+            if candidate.model.trim().is_empty() || candidate.model.len() > 240 {
+                issues.push(ConfigIssue::error(format!(
+                    "routing group `{group_id}` contains an invalid model"
+                )));
+            } else if !provider
+                .models
+                .iter()
+                .any(|model| model == &candidate.model)
+                && !provider
+                    .model_prefixes
+                    .iter()
+                    .any(|prefix| candidate.model.starts_with(prefix))
+                && !provider.passthrough_unknown_models
+            {
+                issues.push(ConfigIssue::error(format!(
+                    "routing candidate `{}:{}` is not accepted by its provider",
+                    candidate.provider, candidate.model
+                )));
+            }
+            if !candidate.quality.is_finite() || !(0.0..=1.0).contains(&candidate.quality) {
+                issues.push(ConfigIssue::error(format!(
+                    "routing candidate `{}:{}` quality must be between 0 and 1",
+                    candidate.provider, candidate.model
+                )));
+            }
+            if !(1..=600_000).contains(&candidate.latency_hint_ms) {
+                issues.push(ConfigIssue::error(format!(
+                    "routing candidate `{}:{}` latency_hint_ms must be between 1 and 600000",
+                    candidate.provider, candidate.model
+                )));
+            }
+            enabled_candidates += usize::from(candidate.enabled);
+        }
+        if enabled_candidates == 0 {
+            issues.push(ConfigIssue::error(format!(
+                "routing group `{group_id}` requires at least one enabled candidate"
+            )));
+        }
+    }
+    if total_aliases > 1_024 {
+        issues.push(ConfigIssue::error(
+            "smart routing supports at most 1024 aliases in total",
+        ));
+    }
+    if total_candidates > 1_024 {
+        issues.push(ConfigIssue::error(
+            "smart routing supports at most 1024 candidates in total",
+        ));
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -225,6 +537,11 @@ impl fmt::Debug for AppConfig {
             .field("auth_enabled", &self.auth_token.is_some())
             .field("default_provider", &self.default_provider)
             .field("provider_order", &self.provider_order)
+            .field("smart_routing_mode", &self.smart_routing.mode)
+            .field(
+                "smart_routing_groups",
+                &self.smart_routing.groups.keys().collect::<Vec<_>>(),
+            )
             .field("providers", &self.providers)
             .field("aliases", &self.aliases)
             .finish()
@@ -308,6 +625,7 @@ struct FileConfig {
     provider_order: Option<Vec<String>>,
     providers: Option<HashMap<String, ProviderSection>>,
     aliases: Option<HashMap<String, String>>,
+    routing: Option<SmartRoutingConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -434,6 +752,22 @@ impl AppConfig {
             }
         }
 
+        if self.smart_routing.mode != SmartRoutingMode::Off {
+            let mut routing_aliases = self
+                .smart_routing
+                .groups
+                .values()
+                .flat_map(|group| group.aliases.iter())
+                .cloned()
+                .collect::<Vec<_>>();
+            routing_aliases.sort();
+            for alias in routing_aliases {
+                if seen.insert(alias.clone()) {
+                    models.push((alias, "ModelPort Smart Router".to_owned()));
+                }
+            }
+        }
+
         models
     }
 
@@ -485,6 +819,10 @@ impl AppConfig {
         if self.provider_order.is_empty() {
             issues.push(ConfigIssue::error(
                 "provider_order is empty; at least one provider must be routable",
+            ));
+        } else if self.provider_order.len() > 256 {
+            issues.push(ConfigIssue::error(
+                "provider_order supports at most 256 routable providers",
             ));
         }
 
@@ -545,8 +883,21 @@ impl AppConfig {
                 )));
             }
         }
+        validate_smart_routing(self, &mut issues);
 
         issues
+    }
+
+    pub(crate) fn smart_route_group(
+        &self,
+        requested_model: &str,
+    ) -> Option<(&str, &RouteGroupConfig)> {
+        let requested_model = requested_model.trim();
+        self.smart_routing
+            .groups
+            .iter()
+            .find(|(_, group)| group.aliases.iter().any(|alias| alias == requested_model))
+            .map(|(id, group)| (id.as_str(), group))
     }
 
     fn resolve_inner(
@@ -845,6 +1196,8 @@ impl AppConfig {
             .default_provider
             .or_else(|| provider_order.first().cloned())
             .ok_or_else(|| AppError::Config("at least one provider is required".to_owned()))?;
+        let mut smart_routing = file.routing.unwrap_or_default();
+        apply_smart_routing_env_override(&mut smart_routing)?;
 
         Ok(Self {
             bind_addr,
@@ -855,6 +1208,7 @@ impl AppConfig {
             provider_order,
             providers,
             aliases: file.aliases.unwrap_or_default(),
+            smart_routing,
         })
     }
 
@@ -892,6 +1246,8 @@ impl AppConfig {
         let aliases = default_aliases();
         let default_provider =
             env_value("MODELPORT_DEFAULT_PROVIDER").unwrap_or_else(|| "deepseek".to_owned());
+        let mut smart_routing = SmartRoutingConfig::default();
+        apply_smart_routing_env_override(&mut smart_routing)?;
 
         Ok(Self {
             bind_addr,
@@ -902,6 +1258,7 @@ impl AppConfig {
             provider_order,
             providers,
             aliases,
+            smart_routing,
         })
     }
 }
@@ -2482,6 +2839,7 @@ mod tests {
                 "sonnet-via-router".to_owned(),
                 "openrouter:anthropic/claude-sonnet-4".to_owned(),
             )]),
+            smart_routing: SmartRoutingConfig::default(),
         }
     }
 
@@ -2824,6 +3182,70 @@ mod tests {
                 .all(|issue| issue.severity != ConfigIssueSeverity::Error),
             "{issues:?}"
         );
+    }
+
+    #[test]
+    fn smart_routing_groups_are_validated_and_advertised_in_shadow_mode() {
+        let mut config = test_config();
+        config.auth_token = Some("long-local-client-token".to_owned());
+        config.smart_routing = SmartRoutingConfig {
+            mode: SmartRoutingMode::Shadow,
+            default_profile: RoutingProfile::Balanced,
+            policy_version: "test-v1".to_owned(),
+            activation_percent: 0,
+            groups: HashMap::from([(
+                "general".to_owned(),
+                RouteGroupConfig {
+                    aliases: vec!["modelport-auto".to_owned()],
+                    default_profile: Some(RoutingProfile::Economy),
+                    candidates: vec![
+                        RouteCandidateConfig {
+                            provider: "mimo".to_owned(),
+                            model: "mimo-v2.5-pro".to_owned(),
+                            quality: 0.9,
+                            latency_hint_ms: 900,
+                            enabled: true,
+                        },
+                        RouteCandidateConfig {
+                            provider: "openrouter".to_owned(),
+                            model: "openrouter/auto".to_owned(),
+                            quality: 0.8,
+                            latency_hint_ms: 700,
+                            enabled: true,
+                        },
+                    ],
+                },
+            )]),
+        };
+
+        let issues = config.validation_issues();
+        assert!(
+            issues
+                .iter()
+                .all(|issue| issue.severity != ConfigIssueSeverity::Error),
+            "{issues:?}"
+        );
+        assert!(
+            config
+                .model_list()
+                .iter()
+                .any(|(model, _)| model == "modelport-auto")
+        );
+        let (group_id, group) = config.smart_route_group("modelport-auto").unwrap();
+        assert_eq!(group_id, "general");
+        assert_eq!(group.candidates.len(), 2);
+    }
+
+    #[test]
+    fn active_routing_defaults_to_a_zero_percent_canary() {
+        let mut config = test_config();
+        config.smart_routing.mode = SmartRoutingMode::Active;
+
+        assert_eq!(config.smart_routing.activation_percent, 0);
+        assert!(config.validation_issues().iter().any(|issue| {
+            issue.severity == ConfigIssueSeverity::Warning
+                && issue.message.contains("activation_percent=0")
+        }));
     }
 
     #[test]

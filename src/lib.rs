@@ -23,6 +23,7 @@ mod provider_status;
 mod providers;
 mod routes;
 mod server;
+mod smart_router;
 mod storage;
 mod stream_lifecycle;
 mod tool_use;

@@ -46,6 +46,7 @@ use crate::{
     http::{Header, HttpTransport},
     metrics::Metrics,
     oidc::{OIDC_FLOW_COOKIE, OidcService},
+    smart_router::SmartRouter,
 };
 
 mod admin_api_keys;
@@ -66,6 +67,10 @@ use settings_view::{alias_row, alias_rows, config_issues_json, settings_row};
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 const IDEMPOTENCY_KEY: HeaderName = HeaderName::from_static("idempotency-key");
 const TRAFFIC_CLASS: HeaderName = HeaderName::from_static("x-modelport-traffic-class");
+const ROUTING_PROFILE: HeaderName = HeaderName::from_static("x-modelport-routing-profile");
+const ROUTING_SESSION_ID: HeaderName = HeaderName::from_static("x-modelport-session-id");
+const ROUTING_DECISION_ID: HeaderName = HeaderName::from_static("x-modelport-routing-decision-id");
+const ROUTING_MODE: HeaderName = HeaderName::from_static("x-modelport-routing-mode");
 const ORGANIZATION_ID: HeaderName = HeaderName::from_static("x-modelport-organization-id");
 const PROJECT_ID: HeaderName = HeaderName::from_static("x-modelport-project-id");
 const ENVIRONMENT_ID: HeaderName = HeaderName::from_static("x-modelport-environment-id");
@@ -87,6 +92,7 @@ pub struct AppState {
     pub trusted_proxies: Arc<TrustedProxyConfig>,
     pub transport: HttpTransport,
     pub metrics: Arc<Metrics>,
+    pub(crate) smart_router: Arc<SmartRouter>,
     pub(crate) ledger: Arc<EnterpriseLedger>,
     pub(crate) finalizers: Arc<FinalizationTracker>,
 }
@@ -520,6 +526,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/logs", get(admin_logs))
         .route("/admin/logs/{log_id}", get(admin_log_by_id))
         .route("/admin/latency", get(admin_latency))
+        .route("/admin/router/status", get(admin_router_status))
         .route("/admin/enterprise/overview", get(admin_enterprise_overview))
         .route(
             "/admin/enterprise/budget",
@@ -1102,6 +1109,15 @@ async fn admin_dashboard(
 ) -> Result<Json<Value>, AppError> {
     require_console_user(&state, &headers)?;
     Ok(Json(dashboard_body(&state, &query).await?))
+}
+
+async fn admin_router_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AppError> {
+    require_console_user(&state, &headers)?;
+    let config = effective_config(&state);
+    Ok(Json(state.smart_router.status(&config)))
 }
 
 async fn admin_aliases(
@@ -2189,7 +2205,8 @@ mod tests {
         auth::{AuthStore, CreateUserInput},
         config::{
             FidelityMode, MaxTokensField, ProviderConfig, ReasoningConfig, ReasoningMode,
-            TokenCountingConfig, TokenCountingMode,
+            RouteCandidateConfig, RouteGroupConfig, RoutingProfile, SmartRoutingConfig,
+            SmartRoutingMode, TokenCountingConfig, TokenCountingMode,
         },
         control::{BindApiKeyScopeInput, CreateApiKeyInput},
         metrics::Metrics,
@@ -2365,6 +2382,7 @@ mod tests {
                     "deepseek:deepseek-v4-flash".to_owned(),
                 ),
             ]),
+            smart_routing: Default::default(),
         };
 
         let rows = client_api::public_model_rows(&config);
@@ -2417,6 +2435,7 @@ mod tests {
             provider_order: vec!["mimo".to_owned()],
             providers: HashMap::from([("mimo".to_owned(), provider)]),
             aliases: HashMap::new(),
+            smart_routing: Default::default(),
         };
 
         let rows = client_api::public_model_rows(&config);
@@ -2508,7 +2527,22 @@ mod tests {
         let ledger = state.ledger.clone();
         let app = router(state);
 
-        let (status, body) = post_message(app, message_body(false)).await;
+        let response = post_message_response(app, CLIENT_TOKEN, message_body(false)).await;
+        let status = response.status();
+        let decision_id = response
+            .headers()
+            .get(&ROUTING_DECISION_ID)
+            .and_then(|value| value.to_str().ok())
+            .unwrap();
+        assert!(decision_id.starts_with("rtd_"));
+        assert_eq!(
+            response
+                .headers()
+                .get(&ROUTING_MODE)
+                .and_then(|value| value.to_str().ok()),
+            Some("static")
+        );
+        let body = response_body(response).await;
 
         assert_eq!(status, StatusCode::OK);
         let body: Value = serde_json::from_str(&body).unwrap();
@@ -2521,6 +2555,78 @@ mod tests {
                 .await,
             0
         );
+    }
+
+    #[tokio::test]
+    async fn smart_alias_shadow_route_returns_and_persists_decision_evidence() {
+        let upstream = spawn_openai_upstream(
+            StatusCode::OK,
+            r#"{
+                "id": "chatcmpl_smart_route",
+                "choices": [{
+                    "message": {"role": "assistant", "content": "smart route"},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 2}
+            }"#,
+            "application/json",
+        )
+        .await;
+        let mut state = test_state(upstream, 1024 * 1024);
+        let mut config = state.config.snapshot();
+        config.smart_routing = SmartRoutingConfig {
+            mode: SmartRoutingMode::Shadow,
+            default_profile: RoutingProfile::Balanced,
+            policy_version: "integration-v1".to_owned(),
+            activation_percent: 0,
+            groups: HashMap::from([(
+                "general".to_owned(),
+                RouteGroupConfig {
+                    aliases: vec!["modelport-auto".to_owned()],
+                    default_profile: None,
+                    candidates: vec![RouteCandidateConfig {
+                        provider: "mimo".to_owned(),
+                        model: "mimo-v2.5-pro".to_owned(),
+                        quality: 0.8,
+                        latency_hint_ms: 800,
+                        enabled: true,
+                    }],
+                },
+            )]),
+        };
+        state.config = Arc::new(RuntimeConfig::new(config));
+        let ledger = state.ledger.clone();
+        let mut request = message_body(false);
+        request["model"] = json!("modelport-auto");
+
+        let response = post_message_response(router(state), CLIENT_TOKEN, request).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(&ROUTING_MODE)
+                .and_then(|value| value.to_str().ok()),
+            Some("shadow")
+        );
+        let decision_id = response
+            .headers()
+            .get(&ROUTING_DECISION_ID)
+            .and_then(|value| value.to_str().ok())
+            .unwrap()
+            .to_owned();
+        let _ = response_body(response).await;
+        let rows = wait_for_usage_rows(&ledger, 1).await;
+        assert_eq!(
+            rows[0]["routingDecision"]["decisionId"],
+            decision_id.as_str()
+        );
+        assert_eq!(rows[0]["routingDecision"]["groupId"], "general");
+        assert_eq!(
+            rows[0]["routingDecision"]["policyVersion"],
+            "integration-v1"
+        );
+        assert_eq!(rows[0]["routingDecision"]["mode"], "shadow");
     }
 
     #[tokio::test]
@@ -2816,6 +2922,20 @@ data: [DONE]
         let response = post_message_response(router(state), CLIENT_TOKEN, message_body(true)).await;
 
         assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response
+                .headers()
+                .get(&ROUTING_DECISION_ID)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.starts_with("rtd_"))
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(&ROUTING_MODE)
+                .and_then(|value| value.to_str().ok()),
+            Some("static")
+        );
         assert!(ledger.usage_rows().await.unwrap().is_empty());
         assert_eq!(permits.available_permits(), 15);
         drop(response);
@@ -5346,6 +5466,7 @@ data: {"type":"message_stop"}
                 provider_order: vec!["mimo".to_owned()],
                 providers: HashMap::from([("mimo".to_owned(), provider)]),
                 aliases: HashMap::new(),
+                smart_routing: Default::default(),
             })),
             auth: Arc::new(AuthStore::for_tests()),
             oidc: Arc::new(OidcService::disabled()),
@@ -5356,6 +5477,7 @@ data: {"type":"message_stop"}
             trusted_proxies: Arc::new(TrustedProxyConfig::for_tests()),
             transport: HttpTransport::new().unwrap(),
             metrics: Arc::new(Metrics::new()),
+            smart_router: Arc::new(SmartRouter::new()),
             ledger: Arc::new(EnterpriseLedger::memory()),
             finalizers: Arc::new(FinalizationTracker::default()),
         }
@@ -5402,6 +5524,7 @@ data: {"type":"message_stop"}
                 provider_order: vec!["anthropic".to_owned()],
                 providers: HashMap::from([("anthropic".to_owned(), provider)]),
                 aliases: HashMap::new(),
+                smart_routing: Default::default(),
             })),
             auth: Arc::new(AuthStore::for_tests()),
             oidc: Arc::new(OidcService::disabled()),
@@ -5412,6 +5535,7 @@ data: {"type":"message_stop"}
             trusted_proxies: Arc::new(TrustedProxyConfig::for_tests()),
             transport: HttpTransport::new().unwrap(),
             metrics: Arc::new(Metrics::new()),
+            smart_router: Arc::new(SmartRouter::new()),
             ledger: Arc::new(EnterpriseLedger::memory()),
             finalizers: Arc::new(FinalizationTracker::default()),
         }

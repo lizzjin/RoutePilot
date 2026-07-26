@@ -36,6 +36,8 @@ JSON/PostgreSQL document -> low-frequency auth and control configuration
 Operational logs, latency percentiles, and Dashboard ranges are filtered,
 aggregated, bucketed, ordered, and paginated in PostgreSQL. Runtime routes do
 not materialize complete request windows in process memory.
+Client API-key authentication uses an in-memory SHA-256 hash index, so request
+authentication does not scan the configured key set.
 
 The first typed Exchange IR covers text roles, function tools, tool calls and
 results, generation controls, finish reasons, normalized usage, and terminal

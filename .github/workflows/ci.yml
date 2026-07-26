@@ -100,6 +100,7 @@ jobs:
       CARGO_TERM_COLOR: always
       MODELPORT_BIND: 127.0.0.1:38082
       MODELPORT_DATABASE_URL: postgres://modelport:ci-postgres-password@127.0.0.1:5432/modelport
+      MODELPORT_TEST_DATABASE_URL: postgres://modelport:ci-postgres-password@127.0.0.1:5432/modelport
       MODELPORT_DATABASE_TLS_MODE: disable
       MODELPORT_AUTH_TOKEN: ci-router-token-with-sufficient-entropy
       MODELPORT_ADMIN_USERNAME: admin
@@ -142,6 +143,7 @@ jobs:
 
       - name: Build and start PostgreSQL-backed ModelPort
         run: |
+          cargo test --locked postgres_operational_queries_use_database_aggregation
           cargo build --locked --bin model-port
           export MODELPORT_CONFIG="${RUNNER_TEMP}/modelport-no-config.toml"
           export MODELPORT_ENV_FILE="${RUNNER_TEMP}/modelport-no-env"

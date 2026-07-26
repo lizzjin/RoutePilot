@@ -3,12 +3,14 @@ use std::{cmp::Reverse, collections::BTreeMap};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use crate::error::AppError;
+use crate::{enterprise_ledger::OperationalLogQuery, error::AppError};
 
 use super::{AppState, now_millis};
 
 const DEFAULT_LOG_PAGE_SIZE: usize = 20;
 const MAX_LOG_PAGE_SIZE: usize = 500;
+const DEFAULT_LOG_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
+const MAX_LOG_WINDOW_MS: u64 = 31 * 24 * 60 * 60 * 1_000;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -103,14 +105,69 @@ impl LogsQuery {
                 "dateFrom must not be later than dateTo".to_owned(),
             ));
         }
+        let effective_to = self.date_to.unwrap_or_else(now_millis);
+        let effective_from = self
+            .date_from
+            .unwrap_or_else(|| effective_to.saturating_sub(DEFAULT_LOG_WINDOW_MS));
+        if effective_to.saturating_sub(effective_from) > MAX_LOG_WINDOW_MS {
+            return Err(AppError::InvalidRequest(
+                "request log windows must not exceed 31 days".to_owned(),
+            ));
+        }
         Ok(())
+    }
+
+    fn with_effective_window(&self) -> Self {
+        let mut query = self.clone();
+        let effective_to = query.date_to.unwrap_or_else(now_millis);
+        query.date_from = Some(
+            query
+                .date_from
+                .unwrap_or_else(|| effective_to.saturating_sub(DEFAULT_LOG_WINDOW_MS)),
+        );
+        query
+    }
+
+    fn operational_query(&self) -> OperationalLogQuery {
+        OperationalLogQuery {
+            page: self.page.unwrap_or(1).max(1),
+            page_size: self
+                .page_size
+                .unwrap_or(DEFAULT_LOG_PAGE_SIZE)
+                .clamp(1, MAX_LOG_PAGE_SIZE),
+            status: self.status.clone(),
+            provider: self.provider.clone(),
+            model: self.model.clone(),
+            user_id: self.user_id.clone(),
+            api_key_id: self.api_key_id.clone(),
+            date_from: self.date_from,
+            date_to: self.date_to,
+            search: self.search.clone(),
+            username: self.username.clone(),
+            group: self.group.clone(),
+            stream: self.stream.as_deref().map(|value| value == "stream"),
+            tool_use_requested: self.tool_use.as_deref().map(|value| value == "requested"),
+            traffic_class: self.traffic_class.clone(),
+        }
     }
 }
 
 pub(super) async fn logs_body(state: &AppState, query: &LogsQuery) -> Result<Value, AppError> {
+    let query = query.with_effective_window();
+    if let Some(page) = state
+        .ledger
+        .operational_logs(&query.operational_query())
+        .await?
+    {
+        return Ok(json!({
+            "logs": page.logs,
+            "total": page.total,
+            "summary": page.summary,
+        }));
+    }
     Ok(logs_body_from_rows(
         state.ledger.usage_rows_since(query.date_from).await?,
-        query,
+        &query,
     ))
 }
 
@@ -350,6 +407,9 @@ fn field_u64(row: &Value, field: &str) -> u64 {
 
 pub(super) async fn latency_body(state: &AppState) -> Result<Value, AppError> {
     let since = now_millis().saturating_sub(24 * 60 * 60 * 1_000);
+    if let Some(stats) = state.ledger.latency_stats_since(since).await? {
+        return Ok(stats);
+    }
     Ok(latency_body_from_usage(
         &state.ledger.usage_rows_since(Some(since)).await?,
     ))
@@ -653,6 +713,29 @@ mod tests {
         ] {
             assert!(matches!(query.validate(), Err(AppError::InvalidRequest(_))));
         }
+    }
+
+    #[test]
+    fn logs_query_defaults_to_one_day_and_rejects_unbounded_windows() {
+        let upper = 90 * 24 * 60 * 60 * 1_000;
+        let defaulted = LogsQuery {
+            date_to: Some(upper),
+            ..LogsQuery::default()
+        }
+        .with_effective_window();
+        assert_eq!(
+            defaulted.date_from,
+            Some(upper.saturating_sub(DEFAULT_LOG_WINDOW_MS))
+        );
+        assert!(
+            LogsQuery {
+                date_from: Some(1),
+                date_to: Some(1 + MAX_LOG_WINDOW_MS + 1),
+                ..LogsQuery::default()
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]

@@ -497,7 +497,7 @@ are camelCase:
 | `status` | Exact `success`, `error`, or `timeout`. |
 | `provider`, `userId`, `apiKeyId` | Exact match. |
 | `model` | Case-insensitive substring across requested and resolved model. |
-| `dateFrom`, `dateTo` | Inclusive Unix epoch milliseconds. |
+| `dateFrom`, `dateTo` | Inclusive Unix epoch milliseconds. Omission of `dateFrom` selects the 24 hours ending at `dateTo` or now; a window cannot exceed 31 days. |
 | `search` | Case-insensitive substring across log/request/attempt IDs, Provider, model, user/API-key/group/team labels, terminal reason, error, request path, and protocol fields. |
 | `username`, `group` | Case-insensitive substring; `group` checks `apiKeyGroup`. |
 | `stream` | Exact `stream` or `non-stream`. |
@@ -510,7 +510,9 @@ Each textual filter other than `search` is limited to 256 characters;
 Results are ordered by timestamp descending. The response is
 `{ logs, total, summary }`: `total` is the filtered count before pagination,
 and `summary` is calculated over that complete filtered set rather than the
-current page. Summary fields are `totalRequests`, `successRequests`, the four
+current page. PostgreSQL performs filtering, aggregation, percentile calculation,
+ordering, and pagination; the application never materializes the complete
+window. Summary fields are `totalRequests`, `successRequests`, the four
 token classes, `totalTokens`, `totalCostEstimate`, `rpm`, `tpm`,
 `latencyP95Ms`, `latencySampleCount`, `firstByteLatencyP95Ms`, and
 `firstByteLatencySampleCount`. Latency statistics cover the complete filtered

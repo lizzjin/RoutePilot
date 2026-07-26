@@ -521,7 +521,9 @@ async fn handle_inference(
             ));
         }
     };
-    let ledger_lease = state.ledger.maintain_lease(&ledger_request);
+    let ledger_lease = state
+        .ledger
+        .maintain_lease(&ledger_request, state.metrics.clone());
     info!(
         request_id = request_context.request_id.as_str(),
         organization_id = request_context.tenant.organization_id.as_str(),
@@ -717,11 +719,14 @@ async fn handle_inference(
                 billing_mode,
                 attempt_started.elapsed(),
             );
-            if let Err(err) = state
+            let finalization = state
                 .ledger
                 .finalize_attempt(&ledger_attempt, &ledger_outcome)
-                .await
-            {
+                .await;
+            state
+                .metrics
+                .record_ledger_operation("attempt_finalization", finalization.is_ok());
+            if let Err(err) = finalization {
                 error!(
                     error = %err,
                     request_id = request_context.request_id.as_str(),
@@ -902,11 +907,14 @@ async fn handle_inference(
         duration,
         actual_estimate,
     );
-    if let Err(err) = state
+    let finalization = state
         .ledger
         .finalize_request_usage(&ledger_request, &usage)
-        .await
-    {
+        .await;
+    state
+        .metrics
+        .record_ledger_operation("request_finalization", finalization.is_ok());
+    if let Err(err) = finalization {
         error!(
             error = %err,
             request_id = request_context.request_id.as_str(),
@@ -1292,22 +1300,25 @@ impl StreamFinalizationContext {
         let request_usage = self.usage;
         let ledger_lease = self._ledger_lease;
         let finalizers = self.state.finalizers.clone();
+        let metrics = self.state.metrics.clone();
         let finalizer_request_id = request_id.clone();
         if !finalizers.spawn(async move {
-            if let Err(err) = ledger
+            let attempt_finalization = ledger
                 .finalize_attempt(&ledger_attempt, &attempt_ledger_outcome)
-                .await
-            {
+                .await;
+            metrics.record_ledger_operation("attempt_finalization", attempt_finalization.is_ok());
+            if let Err(err) = attempt_finalization {
                 error!(
                     error = %err,
                     request_id = request_id.as_deref().unwrap_or("unknown"),
                     "failed to finalize streaming attempt ledger row"
                 );
             }
-            if let Err(err) = ledger
+            let request_finalization = ledger
                 .finalize_request_usage(&ledger_request, &request_usage)
-                .await
-            {
+                .await;
+            metrics.record_ledger_operation("request_finalization", request_finalization.is_ok());
+            if let Err(err) = request_finalization {
                 error!(
                     error = %err,
                     request_id = request_id.as_deref().unwrap_or("unknown"),
@@ -1316,10 +1327,17 @@ impl StreamFinalizationContext {
             }
             drop(ledger_lease);
         }) {
+            self.state
+                .metrics
+                .record_ledger_operation("finalizer_spawn", false);
             error!(
                 request_id = finalizer_request_id.as_deref().unwrap_or("unknown"),
                 "streaming ledger finalizer could not start outside a Tokio runtime"
             );
+        } else {
+            self.state
+                .metrics
+                .record_ledger_operation("finalizer_spawn", true);
         }
     }
 }

@@ -215,6 +215,10 @@ Metrics are process-local and reset on restart:
 - `modelport_message_{requests,successes,failures,duration_ms}_total`
 - `modelport_message_{input,output,cache_write,cache_read}_tokens_total`
 - `modelport_message_cost_estimate_usd_total`
+- `modelport_ledger_operation_failures_total`
+- `modelport_ledger_operation_degraded`
+- `modelport_ledger_reconciled_{requests,attempts}_total`
+- `modelport_ledger_pending_finalizers`
 
 Message series have `provider`, `model`, `traffic_class`, and `stream` labels.
 Model names are operator-controlled and can create high cardinality when
@@ -223,6 +227,14 @@ traffic class. Rejection series use fixed route, phase, and category labels and
 never retain the client/provider error body. Stream duration covers the
 complete response-body lifecycle, while `firstByteLatencyMs` measures the first
 semantic text or Tool Call event.
+
+Ledger operation labels are bounded to gateway-owned operations such as request
+and attempt finalization, lease renewal/reconciliation, and finalizer spawning.
+The degraded gauge records whether the most recent operation of that type
+failed. A degraded operation also makes `/readyz` fail until a later successful
+operation proves recovery. `modelport_ledger_pending_finalizers` should normally
+return to zero promptly and is drained for up to
+`MODELPORT_FINALIZATION_DRAIN_TIMEOUT_SECONDS` during graceful shutdown.
 
 ## Streaming Concurrency
 

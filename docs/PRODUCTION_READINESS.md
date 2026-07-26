@@ -22,7 +22,9 @@ part of the current support claim.
 - [ ] Use a new PostgreSQL database for the current operational baseline.
 - [ ] Configure PostgreSQL TLS `verify-full` for remote/production databases.
 - [ ] Set strong unique admin, router, database, and Provider credentials.
-- [ ] Set `MODELPORT_ENTERPRISE_MODE=1`.
+- [ ] Set `MODELPORT_ENTERPRISE_MODE=1`; startup then enforces database
+      `verify-full`, secure cookies, HTTPS allowed origins, exact trusted proxy
+      CIDRs, control API keys, and enabled CSRF protection.
 - [ ] Set secure cookies, exact public origin, and exact trusted proxy CIDRs.
 - [ ] Set `MODELPORT_REQUIRE_CONTROL_API_KEYS=1`.
 - [ ] Keep backend and PostgreSQL ports private.

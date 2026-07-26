@@ -227,7 +227,8 @@ direct path and cannot govern its usage or balance.
 | `MODELPORT_DATABASE_ACQUIRE_TIMEOUT_SECS` | `10` | Maximum wait to acquire a PostgreSQL connection. |
 | `MODELPORT_LEDGER_LEASE_TTL_SECS` | `300` | Lifetime of a request/attempt ownership lease; minimum 30 seconds. Active requests renew at one-third of this interval. |
 | `MODELPORT_LEDGER_RECONCILE_INTERVAL_SECS` | `60` | Interval for reclaiming expired `started` rows; minimum 5 seconds and strictly smaller than the lease TTL. |
-| `MODELPORT_ENTERPRISE_MODE` | off | Fail-closed production profile. Requires `MODELPORT_DATABASE_URL`; defaults database TLS to `verify-full` and rejects weaker explicit modes. |
+| `MODELPORT_FINALIZATION_DRAIN_TIMEOUT_SECONDS` | `30` | Graceful-shutdown deadline for tracked streaming ledger finalizers; valid range `1..300`. |
+| `MODELPORT_ENTERPRISE_MODE` | off | Fail-closed production profile. Requires database TLS `verify-full`, secure admin cookies, dashboard-issued control API keys, HTTPS-only allowed origins, explicit trusted proxies, and enabled CSRF protection. |
 
 Bootstrap variables do not overwrite existing users. Dashboard sessions are
 process-local and are invalidated by restart.

@@ -43,7 +43,10 @@ pub(crate) async fn serve() -> Result<(), AppError> {
     let bind_addr = config.bind_addr;
     let ledger = Arc::new(EnterpriseLedger::connect_from_env().await?);
     let finalizers = Arc::new(FinalizationTracker::default());
+    let metrics = Arc::new(Metrics::new());
     let reconciled = ledger.reconcile_expired().await?;
+    metrics.record_ledger_operation("lease_reconciliation", true);
+    metrics.record_reconciliation(reconciled.requests, reconciled.attempts);
     if reconciled.requests > 0 || reconciled.attempts > 0 {
         warn!(
             requests = reconciled.requests,
@@ -51,7 +54,7 @@ pub(crate) async fn serve() -> Result<(), AppError> {
             "reconciled expired inference ledger leases during startup"
         );
     }
-    ledger.spawn_reconciler();
+    ledger.spawn_reconciler(metrics.clone());
     let state = AppState {
         config: Arc::new(RuntimeConfig::new(config.clone())),
         auth: Arc::new(AuthStore::load_or_bootstrap(&config)?),
@@ -64,7 +67,7 @@ pub(crate) async fn serve() -> Result<(), AppError> {
         ))),
         trusted_proxies: Arc::new(TrustedProxyConfig::from_env()?),
         transport: HttpTransport::new()?,
-        metrics: Arc::new(Metrics::new()),
+        metrics,
         ledger,
         finalizers: finalizers.clone(),
     };

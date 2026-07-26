@@ -143,7 +143,7 @@ jobs:
 
       - name: Build and start PostgreSQL-backed ModelPort
         run: |
-          cargo test --locked postgres_operational_queries_use_database_aggregation
+          cargo test --locked postgres_critical_paths_use_database_transactions_and_aggregation
           cargo build --locked --bin model-port
           export MODELPORT_CONFIG="${RUNNER_TEMP}/modelport-no-config.toml"
           export MODELPORT_ENV_FILE="${RUNNER_TEMP}/modelport-no-env"

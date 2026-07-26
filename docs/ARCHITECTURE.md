@@ -33,6 +33,10 @@ PostgreSQL -> request, attempt, usage, quota/spend, budget, and audit facts
 JSON/PostgreSQL document -> low-frequency auth and control configuration
 ```
 
+Operational logs, latency percentiles, and Dashboard ranges are filtered,
+aggregated, bucketed, ordered, and paginated in PostgreSQL. Runtime routes do
+not materialize complete request windows in process memory.
+
 The first typed Exchange IR covers text roles, function tools, tool calls and
 results, generation controls, finish reasons, normalized usage, and terminal
 stream state. It is intentionally narrower than the target enterprise IR:

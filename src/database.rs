@@ -58,9 +58,9 @@ struct DatabaseValidationValues<'a> {
 fn validate_values(values: DatabaseValidationValues<'_>) -> Result<(), AppError> {
     let enterprise = parse_flag("MODELPORT_ENTERPRISE_MODE", values.enterprise_mode)?;
 
-    if enterprise && values.control_url.is_none() {
+    if values.control_url.is_none() {
         return Err(AppError::Config(
-            "MODELPORT_ENTERPRISE_MODE requires MODELPORT_DATABASE_URL so auth and control state do not fall back to files"
+            "MODELPORT_DATABASE_URL is required; current releases use PostgreSQL for all runtime state"
                 .to_owned(),
         ));
     }
@@ -366,6 +366,7 @@ mod tests {
     #[test]
     fn deployment_rejects_inconsistent_pool_bounds() {
         let error = validate_values(DatabaseValidationValues {
+            control_url: Some("postgres://modelport:secret@db:5432/modelport"),
             max_connections: Some("4"),
             min_connections: Some("5"),
             ..DatabaseValidationValues::default()
@@ -376,6 +377,7 @@ mod tests {
 
         assert!(
             validate_values(DatabaseValidationValues {
+                control_url: Some("postgres://modelport:secret@db:5432/modelport"),
                 max_connections: Some("16"),
                 min_connections: Some("2"),
                 acquire_timeout: Some("10"),

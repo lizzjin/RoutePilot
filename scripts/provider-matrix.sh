@@ -10,6 +10,7 @@ all_models=0
 run_non_stream=1
 run_stream=1
 timeout_secs=120
+evidence_file=""
 
 usage() {
   cat <<'USAGE'
@@ -21,10 +22,11 @@ Secrets are read from .env but never printed.
 Options:
   --model MODEL          Test one model. Can be repeated.
   --models A,B,C         Test a comma-separated model list.
-  --all                  Test every model returned by /v1/models.
+  --all                  Test each provider-qualified model from /v1/models once.
   --non-stream-only      Only test non-streaming /v1/messages.
   --stream-only          Only test streaming /v1/messages.
   --timeout SECONDS      Per-request timeout. Default: 120.
+  --evidence FILE        Write a secret-free, machine-readable JSON evidence record.
   -h, --help             Show this help.
 
 Default model: ANTHROPIC_MODEL, then DEEPSEEK_MODEL, then deepseek-v4-flash.
@@ -79,6 +81,13 @@ while [[ "$#" -gt 0 ]]; do
       fi
       shift 2
       ;;
+    --evidence)
+      if [[ -z "${2:-}" ]]; then
+        die "--evidence requires a file path"
+      fi
+      evidence_file="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -102,6 +111,8 @@ for command_name in curl node; do
 done
 
 tmp_files=()
+results_file="$(mktemp)"
+tmp_files+=("$results_file")
 cleanup() {
   if [[ "${#tmp_files[@]}" -gt 0 ]]; then
     rm -f "${tmp_files[@]}"
@@ -110,6 +121,7 @@ cleanup() {
 trap cleanup EXIT
 
 declare -A model_providers=()
+declare -A model_provider_ids=()
 
 fetch_model_catalog() {
   local body_file
@@ -120,10 +132,11 @@ fetch_model_catalog() {
     -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
     "$(base_url)/v1/models" > "$body_file"
 
-  while IFS=$'\t' read -r model provider; do
+  while IFS=$'\t' read -r model provider provider_id; do
     [[ -z "$model" ]] && continue
     model_providers["$model"]="$provider"
-    if [[ "$all_models" == "1" ]]; then
+    model_provider_ids["$model"]="$provider_id"
+    if [[ "$all_models" == "1" && "$model" == *:* ]]; then
       models+=("$model")
     fi
   done < <(
@@ -134,7 +147,7 @@ fetch_model_catalog() {
       for (const item of body.data || []) {
         if (!item?.id || seen.has(item.id)) continue;
         seen.add(item.id);
-        process.stdout.write(`${item.id}\t${item.display_name || ""}\n`);
+        process.stdout.write(`${item.id}\t${item.display_name || ""}\t${item.owned_by || "unknown"}\n`);
       }
     ' "$body_file"
   )
@@ -172,22 +185,28 @@ stream_has_text() {
     const fs = require("fs");
     const raw = fs.readFileSync(process.argv[1], "utf8");
     let event = "";
+    let hasText = false;
+    let terminal = false;
     for (const line of raw.split(/\r?\n/)) {
       if (line.startsWith("event:")) {
         event = line.slice(6).trim();
+        if (event === "message_stop") terminal = true;
         continue;
       }
       if (!line.startsWith("data:")) continue;
-      if (event !== "content_block_delta") continue;
       const data = line.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
+      if (data === "[DONE]") {
+        terminal = true;
+        continue;
+      }
+      if (!data || event !== "content_block_delta") continue;
       try {
         const parsed = JSON.parse(data);
         const text = parsed?.delta?.text;
-        if (typeof text === "string" && text.trim().length > 0) process.exit(0);
+        if (typeof text === "string" && text.trim().length > 0) hasText = true;
       } catch {}
     }
-    process.exit(1);
+    process.exit(hasText && terminal ? 0 : 1);
   ' "$body_file"
 }
 
@@ -268,7 +287,7 @@ check_stream() {
     return 0
   fi
 
-  printf 'FAIL: empty stream text'
+  printf 'FAIL: missing stream text or terminal event'
   return 1
 }
 
@@ -276,6 +295,10 @@ fetch_model_catalog
 
 if [[ "$all_models" == "1" ]]; then
   mapfile -t models < <(printf '%s\n' "${models[@]}" | awk 'NF && !seen[$0]++')
+fi
+
+if [[ "${#models[@]}" -eq 0 && "$all_models" == "1" ]]; then
+  die "/v1/models returned no provider-qualified model IDs"
 fi
 
 if [[ "${#models[@]}" -eq 0 ]]; then
@@ -295,6 +318,7 @@ for model in "${models[@]}"; do
   non_stream_result='SKIP'
   stream_result='SKIP'
   provider="${model_providers[$model]:-unknown}"
+  provider_id="${model_provider_ids[$model]:-unknown}"
 
   if [[ "$run_non_stream" == "1" ]]; then
     if non_stream_result="$(check_non_stream "$model")"; then
@@ -313,7 +337,55 @@ for model in "${models[@]}"; do
   fi
 
   printf '| `%s` | %s | %s | %s |\n' "$model" "$provider" "$non_stream_result" "$stream_result"
+  safe_model="${model//$'\t'/ }"
+  safe_model="${safe_model//$'\n'/ }"
+  safe_provider="${provider//$'\t'/ }"
+  safe_provider="${safe_provider//$'\n'/ }"
+  safe_provider_id="${provider_id//$'\t'/ }"
+  safe_provider_id="${safe_provider_id//$'\n'/ }"
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$safe_model" "$safe_provider" "$safe_provider_id" "$non_stream_result" "$stream_result" >> "$results_file"
 done
+
+if [[ -n "$evidence_file" ]]; then
+  evidence_parent="$(dirname "$evidence_file")"
+  mkdir -p "$evidence_parent"
+  evidence_commit="$(git rev-parse HEAD 2>/dev/null || printf 'unknown')"
+  if [[ -z "$(git status --porcelain --untracked-files=normal 2>/dev/null)" ]]; then
+    evidence_source_state="clean"
+  else
+    evidence_source_state="dirty"
+  fi
+  node - "$results_file" "$evidence_file" "$evidence_commit" "$evidence_source_state" "$failures" <<'NODE'
+const fs = require('fs')
+const [resultsPath, evidencePath, commit, sourceState, failureCount] = process.argv.slice(2)
+const checks = fs.readFileSync(resultsPath, 'utf8')
+  .split(/\r?\n/)
+  .filter(Boolean)
+  .map((line) => {
+    const [model, providerLabel, providerId, nonStream, stream] = line.split('\t')
+    return {
+      model,
+      providerId,
+      providerLabel,
+      nonStream,
+      stream,
+      toolUse: 'not-run',
+    }
+  })
+const evidence = {
+  schemaVersion: 1,
+  generatedAt: new Date().toISOString(),
+  commit,
+  sourceState,
+  trafficClass: 'synthetic',
+  passed: Number(failureCount) === 0,
+  checks,
+}
+fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 })
+NODE
+  printf '\nVerification evidence written to %s\n' "$evidence_file"
+fi
 
 if [[ "$failures" -gt 0 ]]; then
   printf '\nModelPort provider matrix failed: %d failed check(s).\n' "$failures" >&2

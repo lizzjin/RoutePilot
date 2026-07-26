@@ -117,6 +117,7 @@ measure_upstream_message() {
 
   curl_local -sS -m 120 -o /dev/null -w '%{time_total}\n' \
     -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+    -H 'x-modelport-traffic-class: synthetic' \
     -H 'Content-Type: application/json' \
     "$(base_url)/v1/messages" \
     -d "$payload"

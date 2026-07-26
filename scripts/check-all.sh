@@ -173,6 +173,7 @@ validate_env_example() {
       PATH="$PATH" \
       MODELPORT_CONFIG="$CHECK_TMP_DIR/no-config.toml" \
       MODELPORT_ENV_FILE="$sanitized_file" \
+      MODELPORT_DATABASE_URL="postgres://modelport:ci-validation@db.example:5432/modelport" \
       "$ROOT_DIR/target/debug/model-port" config validate
 }
 
@@ -225,6 +226,7 @@ validate_config_examples() {
       PATH="$PATH" \
       MODELPORT_CONFIG="$ROOT_DIR/config.example.toml" \
       MODELPORT_ENV_FILE="$config_env_file" \
+      MODELPORT_DATABASE_URL="postgres://modelport:ci-validation@db.example:5432/modelport" \
       "$ROOT_DIR/target/debug/model-port" config validate
 }
 

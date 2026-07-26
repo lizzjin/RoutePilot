@@ -25,6 +25,7 @@ static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
 pub enum JsonStore {
+    #[cfg(test)]
     File(PathBuf),
     Postgres(PostgresJsonStore),
 }
@@ -56,12 +57,15 @@ impl std::fmt::Debug for PostgresJsonStore {
 }
 
 impl JsonStore {
-    pub fn open(namespace: &str, file_path: PathBuf) -> Result<Self, AppError> {
-        let Some(database_url) = database_url() else {
-            return Ok(Self::File(file_path));
-        };
+    pub fn open(namespace: &str) -> Result<Self, AppError> {
+        let database_url = database_url().ok_or_else(|| {
+            AppError::Config(
+                "MODELPORT_DATABASE_URL is required; current releases store auth and control state in PostgreSQL"
+                    .to_owned(),
+            )
+        })?;
 
-        let worker = spawn_postgres_worker(database_url.clone(), namespace.to_owned(), file_path)?;
+        let worker = spawn_postgres_worker(database_url.clone(), namespace.to_owned())?;
 
         Ok(Self::Postgres(PostgresJsonStore {
             namespace: namespace.to_owned(),
@@ -85,6 +89,7 @@ impl JsonStore {
 
     pub fn read_value(&self) -> Result<Option<Value>, AppError> {
         match self {
+            #[cfg(test)]
             Self::File(path) => {
                 if !path.exists() {
                     return Ok(None);
@@ -117,6 +122,7 @@ impl JsonStore {
 
     pub fn write_value(&self, value: &Value) -> Result<(), AppError> {
         match self {
+            #[cfg(test)]
             Self::File(path) => write_json_file_atomic(path, value),
             Self::Postgres(store) => {
                 let (respond_to, response) = mpsc::channel();
@@ -139,6 +145,7 @@ impl JsonStore {
 
     pub fn location(&self) -> String {
         match self {
+            #[cfg(test)]
             Self::File(path) => path.to_string_lossy().into_owned(),
             Self::Postgres(store) => store.location.clone(),
         }
@@ -245,7 +252,6 @@ async fn initialize_postgres(pool: &PgPool) -> Result<(), AppError> {
 fn spawn_postgres_worker(
     database_url: String,
     namespace: String,
-    file_path: PathBuf,
 ) -> Result<mpsc::Sender<PostgresCommand>, AppError> {
     let (command_sender, command_receiver) = mpsc::channel::<PostgresCommand>();
     let (ready_sender, ready_receiver) = mpsc::channel::<Result<(), String>>();
@@ -264,11 +270,7 @@ fn spawn_postgres_worker(
                     return;
                 }
             };
-            let pool = match runtime.block_on(connect_and_initialize(
-                &database_url,
-                &namespace,
-                &file_path,
-            )) {
+            let pool = match runtime.block_on(connect_and_initialize(&database_url)) {
                 Ok(pool) => {
                     let _ = ready_sender.send(Ok(()));
                     pool
@@ -306,14 +308,9 @@ fn spawn_postgres_worker(
     Ok(command_sender)
 }
 
-async fn connect_and_initialize(
-    database_url: &str,
-    namespace: &str,
-    file_path: &Path,
-) -> Result<PgPool, AppError> {
+async fn connect_and_initialize(database_url: &str) -> Result<PgPool, AppError> {
     let pool = connect_pool(database_url, Some(1)).await?;
     initialize_postgres(&pool).await?;
-    import_file_if_empty(&pool, namespace, file_path).await?;
     Ok(pool)
 }
 
@@ -337,32 +334,6 @@ async fn write_postgres_value(
              VALUES ($1, $2, now()) \
              ON CONFLICT (namespace) DO UPDATE \
              SET document = EXCLUDED.document, updated_at = now()"
-    ))
-    .bind(namespace)
-    .bind(value)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-async fn import_file_if_empty(
-    pool: &PgPool,
-    namespace: &str,
-    file_path: &Path,
-) -> Result<(), AppError> {
-    let exists =
-        sqlx::query_scalar::<_, i32>(&format!("SELECT 1 FROM {STATE_TABLE} WHERE namespace = $1"))
-            .bind(namespace)
-            .fetch_optional(pool)
-            .await?
-            .is_some();
-    if exists || !file_path.exists() {
-        return Ok(());
-    }
-
-    let value: Value = serde_json::from_str(&fs::read_to_string(file_path)?)?;
-    sqlx::query(&format!(
-        "INSERT INTO {STATE_TABLE} (namespace, document, updated_at) VALUES ($1, $2, now())"
     ))
     .bind(namespace)
     .bind(value)

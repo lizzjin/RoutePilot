@@ -5,15 +5,17 @@
 
 ## Implementation status
 
-The first two expand steps are implemented: SQLx/Tokio/rustls, bounded pools,
-embedded migrations `0001_enterprise_foundation.sql` and
-`0002_idempotency_and_leases.sql`, normalized tenant parents, request/Provider-
-attempt lifecycle rows, hashed idempotency claims, renewable instance leases,
-and expired-row reconciliation. Compatibility auth/control documents remain in
-place. Current estimated cost is stored as rounded USD micro-units; response
-replay, authoritative decimal price-book settlement, Provider evidence
-ingestion, and the append-only adjustment model below remain required before
-billing can be considered exact.
+The current baseline implements SQLx/Tokio/rustls, bounded pools, embedded
+migrations, normalized tenant parents, request/Provider-attempt lifecycle rows,
+hashed idempotency claims, renewable instance leases, expired-row
+reconciliation, transactional budgets, complete operational request snapshots,
+relational usage/quota/spend queries, and append-only audit events. Runtime
+requires PostgreSQL; the memory ledger is test-only. Migration
+`0005_current_operational_schema.sql` rejects a database containing older
+request/attempt rows because this release does not fabricate missing
+operational dimensions or provide a compatibility import. Current estimated
+cost remains rounded USD micro-units; response replay and invoice-grade
+settlement are still out of scope.
 
 ## Context
 
@@ -30,10 +32,12 @@ historical mutation.
 
 ## Decision
 
-Enterprise mode uses normalized PostgreSQL tables through SQLx with Tokio,
-Rustls, connection pooling, explicit timeouts, and embedded versioned
-migrations. PostgreSQL is the authoritative store. JSON files remain available
-only in a development/compatibility profile.
+ModelPort uses normalized PostgreSQL tables through SQLx with Tokio, Rustls,
+connection pooling, explicit timeouts, and embedded versioned migrations.
+PostgreSQL is authoritative for request/attempt lifecycle, usage accounting,
+budgets, and audit history. Low-frequency identity and control definitions may
+remain documents, but they contain no request usage, spend ledger, or activity
+history.
 
 Repository traits isolate domain logic from persistence, but they do not hide
 transaction boundaries. Every tenant-owned repository operation requires an
@@ -55,15 +59,13 @@ settlements are corrected with append-only adjustments, not destructive edits.
 Redis may provide distributed rate limits, short leases, cache invalidation, and
 ephemeral coordination. Redis is not the authoritative budget or usage ledger.
 
-Migrations follow expand/migrate/contract:
+The current operational migration is a deliberate contract boundary:
 
-1. Add backward-compatible schema.
-2. Deploy code that reads/writes both required versions or backfills explicitly.
-3. Verify migration and rollback evidence.
-4. Remove legacy structures in a later release.
-
-Legacy document import is explicit, idempotent, checksummed, dry-run capable,
-and never performed as an unannounced startup rewrite.
+1. Apply all migrations to a new database.
+2. Verify the clean schema and application checks.
+3. Point the new release at that database during the planned cutover.
+4. Keep any old database as an operator-managed backup; ModelPort neither
+   imports nor silently rewrites its request/attempt history.
 
 ## Consequences
 

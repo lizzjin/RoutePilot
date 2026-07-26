@@ -5,6 +5,10 @@ security boundaries, and low operational cost for a single host or small team.
 Changes should preserve that scope and distinguish implemented behavior from
 provider-specific verification or future proposals.
 
+Participation is governed by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+Project decisions and contribution licensing are described in
+[GOVERNANCE.md](GOVERNANCE.md).
+
 ## Development Setup
 
 The CI baseline is Rust stable and Node.js 24. Install Rust with `rustfmt` and
@@ -41,8 +45,9 @@ scripts/check-all.sh
 
 If working incrementally, `scripts/check.sh` is the backend-only subset and
 `cd dashboard && npm run check` is the dashboard subset.
-Dependency updates must also pass `cargo audit --deny warnings --file Cargo.lock`
-and `npm --prefix dashboard audit --audit-level=low`; CI runs both.
+Dependency updates must also pass `cargo audit --deny warnings --file Cargo.lock`,
+`cargo deny check`, and `node scripts/audit-dashboard.mjs`; CI runs these
+gates. Never add a broad or non-expiring audit exception.
 
 Then choose checks by risk:
 
@@ -73,6 +78,9 @@ ordinary pull requests should prefer mock-backed checks.
 - Treat control-plane changes as security-sensitive: verify role checks, CSRF,
   Origin, IP/trusted-proxy, and ownership behavior.
 - Avoid presenting estimated usage/cost as exact billing.
+- Confirm every contribution is your work or is legally reusable under terms
+  compatible with the MIT-licensed repository. Identify generated and
+  third-party material in the pull request.
 
 ## Documentation Contract
 

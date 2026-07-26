@@ -4,12 +4,11 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
-    control::ProviderUsageStats,
+    control::{ProviderUsageStats, UsageSummary},
     error::AppError,
-    metrics::{MessageMetricsSnapshot, MetricsSnapshot},
 };
 
-use super::{AppState, effective_config, now_millis, now_millis_string, provider_rows};
+use super::{AppState, effective_config, now_millis, provider_rows};
 
 const HOUR_MS: u64 = 60 * 60 * 1_000;
 const DAY_MS: u64 = 24 * HOUR_MS;
@@ -41,7 +40,6 @@ struct ModelRangeUsage {
 
 #[derive(Debug)]
 struct DashboardRangeUsage {
-    has_any_persisted_usage: bool,
     matched_requests: u64,
     request_time_series: Vec<Value>,
     error_time_series: Vec<Value>,
@@ -50,82 +48,27 @@ struct DashboardRangeUsage {
     summary: Value,
 }
 
-pub(super) fn dashboard_body(state: &AppState, query: &DashboardQuery) -> Result<Value, AppError> {
+pub(super) async fn dashboard_body(
+    state: &AppState,
+    query: &DashboardQuery,
+) -> Result<Value, AppError> {
     let trend_window = dashboard_trend_window(query)?;
-    let snapshot = state.metrics.snapshot();
-    let total_requests = snapshot
-        .messages
-        .iter()
-        .map(|message| message.requests_total)
-        .sum::<u64>();
-    let total_successes = snapshot
-        .messages
-        .iter()
-        .map(|message| message.successes_total)
-        .sum::<u64>();
-    let total_failures = snapshot
-        .messages
-        .iter()
-        .map(|message| message.failures_total)
-        .sum::<u64>();
-    let total_duration = snapshot
-        .messages
-        .iter()
-        .map(|message| message.duration_ms_total)
-        .sum::<u64>();
-    let route_requests = snapshot
-        .routes
-        .iter()
-        .map(|route| route.requests_total)
-        .sum::<u64>();
-    let route_successes = snapshot
-        .routes
-        .iter()
-        .map(|route| route.successes_total)
-        .sum::<u64>();
-    let route_failures = snapshot
-        .routes
-        .iter()
-        .map(|route| route.failures_total)
-        .sum::<u64>();
-    let route_duration = snapshot
-        .routes
-        .iter()
-        .map(|route| route.duration_ms_total)
-        .sum::<u64>();
-    let busiest_route = snapshot
-        .routes
-        .iter()
-        .max_by_key(|route| route.requests_total)
-        .map(|route| route.route.as_str())
-        .unwrap_or("none");
-
+    let uptime_seconds = state.metrics.uptime_seconds();
     let providers = provider_rows(state);
     let active_providers = providers
         .iter()
         .filter(|provider| provider.get("status").and_then(Value::as_str) == Some("active"))
         .count();
     let active_users = state.auth.active_user_count();
-    let usage_summary = state.control.usage_summary_today();
-    let usage_rows = state.control.usage_rows();
+    let today_start = (now_millis() / DAY_MS) * DAY_MS;
+    let usage_rows = state
+        .ledger
+        .usage_rows_since(Some(trend_window.start_ms.min(today_start)))
+        .await?;
+    let usage_summary = dashboard_today_summary(&usage_rows, state.control.api_key_counts());
+    let total_requests = usage_summary.total_requests;
+    let total_successes = usage_summary.total_successes;
     let range_usage = dashboard_range_usage(&usage_rows, &trend_window);
-    let now = now_millis();
-    let process_start = now.saturating_sub(snapshot.uptime_seconds.saturating_mul(1_000));
-    let metrics_cover_window = !range_usage.has_any_persisted_usage
-        && trend_window.start_ms <= process_start
-        && trend_window.end_ms >= now.saturating_sub(5_000);
-    let metric_model_usage_rows = metric_model_usage(&snapshot);
-    let mut metric_top_models = metric_model_usage_rows
-        .iter()
-        .map(|row| {
-            json!({
-                "model": row.get("model").cloned().unwrap_or(Value::Null),
-                "provider": row.get("provider").cloned().unwrap_or(Value::Null),
-                "requests": row.get("requests").cloned().unwrap_or_else(|| json!(0)),
-            })
-        })
-        .collect::<Vec<_>>();
-    sort_and_limit_top_models(&mut metric_top_models);
     let mut persisted_top_models = range_usage
         .model_usage
         .iter()
@@ -138,19 +81,19 @@ pub(super) fn dashboard_body(state: &AppState, query: &DashboardQuery) -> Result
         })
         .collect::<Vec<_>>();
     sort_and_limit_top_models(&mut persisted_top_models);
-    let persisted_provider_usage = state.control.provider_usage_today();
-    let recent_activity = state.control.activity_rows(8);
+    let persisted_provider_usage = provider_usage_today(&usage_rows);
+    let (recent_activity, _) = state.ledger.audit_events(8).await?;
     let config = effective_config(state);
 
     Ok(json!({
-        "uptimeSeconds": snapshot.uptime_seconds,
+        "uptimeSeconds": uptime_seconds,
         "totalRequests": total_requests,
         "successRate": percent(total_successes, total_requests),
         "activeProviders": active_providers,
         "totalProviders": providers.len(),
         "activeUsers": active_users,
         "totalModels": config.model_list().len(),
-        "avgLatencyMs": average(total_duration, total_requests),
+        "avgLatencyMs": usage_summary.average_latency_ms,
         "apiKeysTotal": usage_summary.api_keys_total,
         "apiKeysActive": usage_summary.api_keys_active,
         "todayRequests": usage_summary.total_requests,
@@ -165,21 +108,17 @@ pub(super) fn dashboard_body(state: &AppState, query: &DashboardQuery) -> Result
             "to": trend_window.end_ms.to_string(),
             "bucketMs": trend_window.bucket_ms,
         },
-        "requestTimeSeries": if metrics_cover_window { time_series(total_requests, &trend_window) } else { range_usage.request_time_series },
-        "errorTimeSeries": if metrics_cover_window { time_series(total_failures, &trend_window) } else { range_usage.error_time_series },
-        "topModels": if metrics_cover_window { metric_top_models } else { persisted_top_models },
-        "modelUsage": if metrics_cover_window { metric_model_usage_rows } else { range_usage.model_usage },
-        "tokenTimeSeries": if metrics_cover_window { metric_token_time_series(&snapshot, &trend_window) } else { range_usage.token_time_series },
-        "rangeSummary": if metrics_cover_window { metric_range_summary(&snapshot, total_requests, total_successes) } else { range_usage.summary },
-        "rangeDataSource": if metrics_cover_window { "process-metrics-estimate" } else if range_usage.matched_requests > 0 { "persisted-usage" } else { "empty" },
-        "rangeDataEstimated": metrics_cover_window,
-        "rangeDataAtRetentionLimit": state.control.usage_retention_at_capacity(),
-        "providerHealth": provider_health_rows(&providers, &snapshot, &persisted_provider_usage),
-        "recentActivity": if recent_activity.is_empty() {
-            fallback_activity(total_requests, total_failures, route_requests, route_successes, route_failures, route_duration, busiest_route)
-        } else {
-            recent_activity
-        },
+        "requestTimeSeries": range_usage.request_time_series,
+        "errorTimeSeries": range_usage.error_time_series,
+        "topModels": persisted_top_models,
+        "modelUsage": range_usage.model_usage,
+        "tokenTimeSeries": range_usage.token_time_series,
+        "rangeSummary": range_usage.summary,
+        "rangeDataSource": if range_usage.matched_requests > 0 { "relational-ledger" } else { "empty" },
+        "rangeDataEstimated": false,
+        "rangeDataAtRetentionLimit": false,
+        "providerHealth": provider_health_rows(&providers, &persisted_provider_usage),
+        "recentActivity": recent_activity,
     }))
 }
 
@@ -194,57 +133,97 @@ fn sort_and_limit_top_models(rows: &mut Vec<Value>) {
     rows.truncate(8);
 }
 
-fn fallback_activity(
-    total_requests: u64,
-    total_failures: u64,
-    route_requests: u64,
-    route_successes: u64,
-    route_failures: u64,
-    route_duration: u64,
-    busiest_route: &str,
-) -> Vec<Value> {
-    let now = now_millis_string();
-    vec![
-        json!({
-            "id": "act_health",
-            "timestamp": now.clone(),
-            "type": "request",
-            "message": format!("ModelPort gateway is healthy; busiest route: {busiest_route}"),
-            "severity": "info",
-        }),
-        json!({
-            "id": "act_messages",
-            "timestamp": now_millis_string(),
-            "type": if total_failures > 0 { "error" } else { "request" },
-            "message": format!("{total_requests} model message request(s), {total_failures} failure(s) since startup"),
-            "severity": if total_failures > 0 { "warning" } else { "info" },
-        }),
-        json!({
-            "id": "act_routes",
-            "timestamp": now_millis_string(),
-            "type": if route_failures > 0 { "error" } else { "request" },
-            "message": format!("{route_requests} route request(s), {route_successes} success(es), avg {} ms", average(route_duration, route_requests)),
-            "severity": if route_failures > 0 { "warning" } else { "info" },
-        }),
-    ]
+fn dashboard_today_summary(rows: &[Value], api_keys: (u64, u64)) -> UsageSummary {
+    let today_start = (now_millis() / DAY_MS) * DAY_MS;
+    let mut summary = UsageSummary {
+        api_keys_total: api_keys.0,
+        api_keys_active: api_keys.1,
+        ..UsageSummary::default()
+    };
+    let mut total_latency = 0u64;
+    for row in rows.iter().filter(|row| {
+        row.get("trafficClass").and_then(Value::as_str) == Some("business")
+            && dashboard_usage_timestamp(row).is_some_and(|timestamp| timestamp >= today_start)
+    }) {
+        summary.total_requests = summary.total_requests.saturating_add(1);
+        if row.get("status").and_then(Value::as_str) == Some("success") {
+            summary.total_successes = summary.total_successes.saturating_add(1);
+        }
+        summary.total_input_tokens = summary
+            .total_input_tokens
+            .saturating_add(dashboard_usage_u64(row, "inputTokens"));
+        summary.total_output_tokens = summary
+            .total_output_tokens
+            .saturating_add(dashboard_usage_u64(row, "outputTokens"));
+        summary.total_cache_write_tokens = summary
+            .total_cache_write_tokens
+            .saturating_add(dashboard_usage_u64(row, "cacheWriteTokens"));
+        summary.total_cache_read_tokens = summary
+            .total_cache_read_tokens
+            .saturating_add(dashboard_usage_u64(row, "cacheReadTokens"));
+        summary.total_cost_estimate += row
+            .get("costEstimate")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        total_latency = total_latency.saturating_add(dashboard_usage_u64(row, "latencyMs"));
+    }
+    summary.average_latency_ms = total_latency
+        .checked_div(summary.total_requests)
+        .unwrap_or(0);
+    summary
+}
+
+fn provider_usage_today(rows: &[Value]) -> BTreeMap<String, ProviderUsageStats> {
+    let today_start = (now_millis() / DAY_MS) * DAY_MS;
+    let mut providers = BTreeMap::new();
+    for row in rows.iter().filter(|row| {
+        row.get("trafficClass").and_then(Value::as_str) == Some("business")
+            && dashboard_usage_timestamp(row).is_some_and(|timestamp| timestamp >= today_start)
+    }) {
+        let provider = row
+            .get("provider")
+            .and_then(Value::as_str)
+            .unwrap_or("unrouted");
+        let stats = providers
+            .entry(provider.to_owned())
+            .or_insert_with(ProviderUsageStats::default);
+        stats.requests_total = stats.requests_total.saturating_add(1);
+        if row.get("status").and_then(Value::as_str) == Some("success") {
+            stats.successes_total = stats.successes_total.saturating_add(1);
+        }
+        stats.duration_ms_total = stats
+            .duration_ms_total
+            .saturating_add(dashboard_usage_u64(row, "latencyMs"));
+        stats.input_tokens_total = stats
+            .input_tokens_total
+            .saturating_add(dashboard_usage_u64(row, "inputTokens"));
+        stats.output_tokens_total = stats
+            .output_tokens_total
+            .saturating_add(dashboard_usage_u64(row, "outputTokens"));
+        stats.cache_write_tokens_total = stats
+            .cache_write_tokens_total
+            .saturating_add(dashboard_usage_u64(row, "cacheWriteTokens"));
+        stats.cache_read_tokens_total = stats
+            .cache_read_tokens_total
+            .saturating_add(dashboard_usage_u64(row, "cacheReadTokens"));
+        stats.cost_estimate_usd_total += row
+            .get("costEstimate")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+    }
+    providers
 }
 
 fn provider_health_rows(
     providers: &[Value],
-    snapshot: &MetricsSnapshot,
     persisted_provider_usage: &BTreeMap<String, ProviderUsageStats>,
 ) -> Vec<Value> {
     providers
         .iter()
         .map(|provider| {
             let id = provider.get("id").and_then(Value::as_str).unwrap_or("");
-            let provider_messages = snapshot
-                .messages
-                .iter()
-                .filter(|message| message.provider == id)
-                .collect::<Vec<_>>();
-            let usage = provider_dashboard_usage(&provider_messages, persisted_provider_usage.get(id));
-            let success_rate = percent(usage.successes, usage.requests);
+            let usage = persisted_provider_usage.get(id).cloned().unwrap_or_default();
+            let success_rate = percent(usage.successes_total, usage.requests_total);
             let provider_status = provider
                 .get("status")
                 .and_then(Value::as_str)
@@ -258,7 +237,9 @@ fn provider_health_rows(
                 "down"
             } else if runtime_status == "cooldown" {
                 "cooldown"
-            } else if runtime_status == "degraded" || (usage.requests > 0 && success_rate < 99.0) {
+            } else if runtime_status == "degraded"
+                || (usage.requests_total > 0 && success_rate < 99.0)
+            {
                 "degraded"
             } else {
                 "healthy"
@@ -267,87 +248,20 @@ fn provider_health_rows(
                 "providerId": id,
                 "displayName": provider.get("displayName").cloned().unwrap_or_else(|| json!(id)),
                 "status": health_status,
-                "requestsTotal": usage.requests,
+                "requestsTotal": usage.requests_total,
                 "successRate": success_rate,
-                "avgLatencyMs": average(usage.duration_ms, usage.requests),
-                "inputTokensTotal": usage.input_tokens,
-                "outputTokensTotal": usage.output_tokens,
-                "cacheWriteTokensTotal": usage.cache_write_tokens,
-                "cacheReadTokensTotal": usage.cache_read_tokens,
-                "costEstimateUsdTotal": usage.cost_estimate,
+                "avgLatencyMs": average(usage.duration_ms_total, usage.requests_total),
+                "inputTokensTotal": usage.input_tokens_total,
+                "outputTokensTotal": usage.output_tokens_total,
+                "cacheWriteTokensTotal": usage.cache_write_tokens_total,
+                "cacheReadTokensTotal": usage.cache_read_tokens_total,
+                "costEstimateUsdTotal": usage.cost_estimate_usd_total,
                 "accountIssue": provider_health.get("accountIssue").cloned().unwrap_or_else(|| json!("none")),
                 "rechargeRequired": provider_health.get("rechargeRequired").and_then(Value::as_bool).unwrap_or(false),
                 "rechargeBadge": provider_health.get("rechargeBadge").cloned().unwrap_or(Value::Null),
             })
         })
         .collect()
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-struct DashboardProviderUsage {
-    requests: u64,
-    successes: u64,
-    duration_ms: u64,
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_write_tokens: u64,
-    cache_read_tokens: u64,
-    cost_estimate: f64,
-}
-
-fn provider_dashboard_usage(
-    metric_messages: &[&MessageMetricsSnapshot],
-    persisted_usage: Option<&ProviderUsageStats>,
-) -> DashboardProviderUsage {
-    if let Some(stats) = persisted_usage
-        && stats.requests_total > 0
-    {
-        return DashboardProviderUsage {
-            requests: stats.requests_total,
-            successes: stats.successes_total,
-            duration_ms: stats.duration_ms_total,
-            input_tokens: stats.input_tokens_total,
-            output_tokens: stats.output_tokens_total,
-            cache_write_tokens: stats.cache_write_tokens_total,
-            cache_read_tokens: stats.cache_read_tokens_total,
-            cost_estimate: stats.cost_estimate_usd_total,
-        };
-    }
-
-    DashboardProviderUsage {
-        requests: metric_messages
-            .iter()
-            .map(|message| message.requests_total)
-            .sum(),
-        successes: metric_messages
-            .iter()
-            .map(|message| message.successes_total)
-            .sum(),
-        duration_ms: metric_messages
-            .iter()
-            .map(|message| message.duration_ms_total)
-            .sum(),
-        input_tokens: metric_messages
-            .iter()
-            .map(|message| message.input_tokens_total)
-            .sum(),
-        output_tokens: metric_messages
-            .iter()
-            .map(|message| message.output_tokens_total)
-            .sum(),
-        cache_write_tokens: metric_messages
-            .iter()
-            .map(|message| message.cache_write_tokens_total)
-            .sum(),
-        cache_read_tokens: metric_messages
-            .iter()
-            .map(|message| message.cache_read_tokens_total)
-            .sum(),
-        cost_estimate: metric_messages
-            .iter()
-            .map(|message| message.cost_estimate_usd_total)
-            .sum(),
-    }
 }
 
 fn dashboard_range_usage(rows: &[Value], window: &DashboardTrendWindow) -> DashboardRangeUsage {
@@ -374,6 +288,13 @@ fn dashboard_range_usage(rows: &[Value], window: &DashboardTrendWindow) -> Dashb
     let mut total_cost_estimate = 0.0f64;
 
     for row in rows {
+        if row
+            .get("trafficClass")
+            .and_then(Value::as_str)
+            .is_some_and(|traffic_class| traffic_class != "business")
+        {
+            continue;
+        }
         let Some(timestamp) = dashboard_usage_timestamp(row) else {
             continue;
         };
@@ -482,7 +403,6 @@ fn dashboard_range_usage(rows: &[Value], window: &DashboardTrendWindow) -> Dashb
     let minutes = (window.end_ms.saturating_sub(window.start_ms) as f64 / 60_000.0).max(1.0);
 
     DashboardRangeUsage {
-        has_any_persisted_usage: !rows.is_empty(),
         matched_requests,
         request_time_series,
         error_time_series,
@@ -501,127 +421,6 @@ fn dashboard_range_usage(rows: &[Value], window: &DashboardTrendWindow) -> Dashb
             "tpm": total_tokens as f64 / minutes,
         }),
     }
-}
-
-fn metric_model_usage(snapshot: &MetricsSnapshot) -> Vec<Value> {
-    let mut models = BTreeMap::<(String, String), ModelRangeUsage>::new();
-    for message in &snapshot.messages {
-        let row = models
-            .entry((message.model.clone(), message.provider.clone()))
-            .or_insert_with(|| ModelRangeUsage {
-                model: message.model.clone(),
-                provider: message.provider.clone(),
-                ..ModelRangeUsage::default()
-            });
-        row.requests = row.requests.saturating_add(message.requests_total);
-        row.tokens = row
-            .tokens
-            .saturating_add(message.input_tokens_total)
-            .saturating_add(message.output_tokens_total)
-            .saturating_add(message.cache_write_tokens_total)
-            .saturating_add(message.cache_read_tokens_total);
-        row.cost += message.cost_estimate_usd_total;
-    }
-    let mut rows = models.into_values().collect::<Vec<_>>();
-    rows.sort_by(|left, right| {
-        right
-            .tokens
-            .cmp(&left.tokens)
-            .then_with(|| right.requests.cmp(&left.requests))
-    });
-    rows.into_iter()
-        .map(|row| {
-            json!({
-                "model": row.model,
-                "provider": row.provider,
-                "requests": row.requests,
-                "tokens": row.tokens,
-                "cost": row.cost,
-            })
-        })
-        .collect()
-}
-
-fn metric_token_time_series(
-    snapshot: &MetricsSnapshot,
-    window: &DashboardTrendWindow,
-) -> Vec<Value> {
-    let bucket_count = usize::try_from(bucket_count(
-        window.start_ms,
-        window.end_ms,
-        window.bucket_ms,
-    ))
-    .unwrap_or(1)
-    .max(1);
-    let input = snapshot.messages.iter().fold(0u64, |total, row| {
-        total.saturating_add(row.input_tokens_total)
-    });
-    let output = snapshot.messages.iter().fold(0u64, |total, row| {
-        total.saturating_add(row.output_tokens_total)
-    });
-    let cache_write = snapshot.messages.iter().fold(0u64, |total, row| {
-        total.saturating_add(row.cache_write_tokens_total)
-    });
-    let cache_read = snapshot.messages.iter().fold(0u64, |total, row| {
-        total.saturating_add(row.cache_read_tokens_total)
-    });
-    let billed_input = input.saturating_add(cache_write).saturating_add(cache_read);
-
-    (0..bucket_count)
-        .map(|index| {
-            let latest = index + 1 == bucket_count;
-            json!({
-                "timestamp": dashboard_bucket_timestamp(window, index),
-                "inputTokens": if latest { input } else { 0 },
-                "outputTokens": if latest { output } else { 0 },
-                "cacheWriteTokens": if latest { cache_write } else { 0 },
-                "cacheReadTokens": if latest { cache_read } else { 0 },
-                "cacheHitRate": if latest && billed_input > 0 { (cache_read as f64 / billed_input as f64) * 100.0 } else { 0.0 },
-            })
-        })
-        .collect()
-}
-
-fn metric_range_summary(
-    snapshot: &MetricsSnapshot,
-    total_requests: u64,
-    total_successes: u64,
-) -> Value {
-    let total_input_tokens = snapshot.messages.iter().fold(0u64, |total, row| {
-        total.saturating_add(row.input_tokens_total)
-    });
-    let total_output_tokens = snapshot.messages.iter().fold(0u64, |total, row| {
-        total.saturating_add(row.output_tokens_total)
-    });
-    let total_cache_write_tokens = snapshot.messages.iter().fold(0u64, |total, row| {
-        total.saturating_add(row.cache_write_tokens_total)
-    });
-    let total_cache_read_tokens = snapshot.messages.iter().fold(0u64, |total, row| {
-        total.saturating_add(row.cache_read_tokens_total)
-    });
-    let total_tokens = total_input_tokens
-        .saturating_add(total_output_tokens)
-        .saturating_add(total_cache_write_tokens)
-        .saturating_add(total_cache_read_tokens);
-    let total_cost_estimate = snapshot
-        .messages
-        .iter()
-        .map(|row| row.cost_estimate_usd_total)
-        .sum::<f64>();
-    let minutes = (snapshot.uptime_seconds as f64 / 60.0).max(1.0);
-
-    json!({
-        "totalRequests": total_requests,
-        "successRequests": total_successes,
-        "totalInputTokens": total_input_tokens,
-        "totalOutputTokens": total_output_tokens,
-        "totalCacheWriteTokens": total_cache_write_tokens,
-        "totalCacheReadTokens": total_cache_read_tokens,
-        "totalTokens": total_tokens,
-        "totalCostEstimate": total_cost_estimate,
-        "rpm": total_requests as f64 / minutes,
-        "tpm": total_tokens as f64 / minutes,
-    })
 }
 
 fn dashboard_usage_timestamp(row: &Value) -> Option<u64> {
@@ -723,21 +522,6 @@ fn dashboard_bucket_ms(duration_ms: u64) -> u64 {
     }
 }
 
-fn time_series(value: u64, window: &DashboardTrendWindow) -> Vec<Value> {
-    let bucket_count = bucket_count(window.start_ms, window.end_ms, window.bucket_ms);
-    (0..bucket_count)
-        .map(|offset| {
-            let timestamp = window
-                .start_ms
-                .saturating_add(offset.saturating_mul(window.bucket_ms));
-            json!({
-                "timestamp": timestamp.to_string(),
-                "value": if offset + 1 == bucket_count { value } else { 0 },
-            })
-        })
-        .collect()
-}
-
 fn bucket_count(start_ms: u64, end_ms: u64, bucket_ms: u64) -> u64 {
     if bucket_ms == 0 || end_ms <= start_ms {
         return 1;
@@ -760,24 +544,6 @@ fn average(total: u64, count: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metrics::{MetricsSnapshot, RouteMetricsSnapshot};
-
-    #[test]
-    fn time_series_places_fallback_value_in_latest_bucket() {
-        let window = DashboardTrendWindow {
-            range: "custom".to_owned(),
-            start_ms: 1_000,
-            end_ms: 4_000,
-            bucket_ms: 1_000,
-        };
-
-        let series = time_series(42, &window);
-
-        assert_eq!(series.len(), 4);
-        assert_eq!(series[0]["value"], 0);
-        assert_eq!(series[3]["timestamp"], "4000");
-        assert_eq!(series[3]["value"], 42);
-    }
 
     #[test]
     fn provider_health_prefers_persisted_usage_and_keeps_recharge_badge() {
@@ -792,30 +558,6 @@ mod tests {
                 "rechargeBadge": "等待充值",
             },
         })];
-        let snapshot = MetricsSnapshot {
-            uptime_seconds: 1,
-            routes: vec![RouteMetricsSnapshot {
-                route: "messages".to_owned(),
-                requests_total: 1,
-                successes_total: 1,
-                failures_total: 0,
-                duration_ms_total: 10,
-            }],
-            messages: vec![MessageMetricsSnapshot {
-                provider: "deepseek".to_owned(),
-                model: "deepseek-v4-flash".to_owned(),
-                stream: false,
-                requests_total: 1,
-                successes_total: 1,
-                failures_total: 0,
-                duration_ms_total: 10,
-                input_tokens_total: 1,
-                output_tokens_total: 1,
-                cache_write_tokens_total: 0,
-                cache_read_tokens_total: 0,
-                cost_estimate_usd_total: 0.01,
-            }],
-        };
         let mut persisted = BTreeMap::new();
         persisted.insert(
             "deepseek".to_owned(),
@@ -831,7 +573,7 @@ mod tests {
             },
         );
 
-        let rows = provider_health_rows(&providers, &snapshot, &persisted);
+        let rows = provider_health_rows(&providers, &persisted);
         let row = &rows[0];
 
         assert_eq!(row["requestsTotal"], 4);
@@ -887,7 +629,6 @@ mod tests {
 
         let usage = dashboard_range_usage(&rows, &window);
 
-        assert!(usage.has_any_persisted_usage);
         assert_eq!(usage.matched_requests, 2);
         assert_eq!(usage.request_time_series[0]["value"], 1);
         assert_eq!(usage.request_time_series[1]["value"], 1);
@@ -919,8 +660,41 @@ mod tests {
             &window,
         );
 
-        assert!(usage.has_any_persisted_usage);
         assert_eq!(usage.matched_requests, 0);
         assert_eq!(usage.summary["totalRequests"], 0);
+    }
+
+    #[test]
+    fn range_usage_excludes_synthetic_and_diagnostic_traffic() {
+        let window = DashboardTrendWindow {
+            range: "custom".to_owned(),
+            start_ms: 1_000,
+            end_ms: 4_000,
+            bucket_ms: 1_000,
+        };
+        let rows = vec![
+            json!({
+                "timestamp": "1500",
+                "trafficClass": "business",
+                "status": "success",
+                "provider": "local",
+                "resolvedModel": "model",
+                "inputTokens": 10,
+            }),
+            json!({
+                "timestamp": "1600",
+                "trafficClass": "synthetic",
+                "status": "error",
+                "provider": "local",
+                "resolvedModel": "model",
+                "inputTokens": 999,
+            }),
+        ];
+
+        let usage = dashboard_range_usage(&rows, &window);
+
+        assert_eq!(usage.matched_requests, 1);
+        assert_eq!(usage.summary["successRequests"], 1);
+        assert_eq!(usage.summary["totalInputTokens"], 10);
     }
 }

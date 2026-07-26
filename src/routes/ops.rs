@@ -16,6 +16,7 @@ pub(super) async fn livez(State(state): State<AppState>) -> Json<serde_json::Val
     Json(json!({
         "status": "ok",
         "service": "model-port",
+        "build": crate::version::json(),
     }))
 }
 
@@ -64,6 +65,7 @@ pub(super) async fn health(
         Json(json!({
             "status": "ok",
             "service": "model-port",
+            "build": crate::version::json(),
         }))
     }
 }
@@ -75,6 +77,7 @@ fn detailed_health_body(state: &AppState) -> serde_json::Value {
     json!({
         "status": "ok",
         "service": "model-port",
+        "build": crate::version::json(),
         "providers": config.provider_order,
         "storage": {
             "auth": state.auth.data_path(),

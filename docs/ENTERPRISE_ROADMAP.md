@@ -3,7 +3,14 @@
 Status: approved product direction, implementation proposed unless a capability
 is explicitly marked as shipped in the current documentation.
 
-Last reviewed: 2026-07-15.
+Last reviewed: 2026-07-26.
+
+Near-term sequencing is governed by the dated
+[evidence-led optimization plan](OPTIMIZATION_PLAN.md). The broader workstreams
+below remain the target architecture, but recent local-Qwen Tool Use,
+accounting, persistence, and verification evidence takes priority over adding
+Responses, SCIM, high availability, or Provider breadth without a concrete
+workload requirement.
 
 ## Executive Decision
 
@@ -58,8 +65,8 @@ The existing gateway already has useful foundations: bounded transport, a first
 typed Exchange IR, Anthropic Messages and scoped OpenAI Chat Completions client
 edges, Anthropic/OpenAI Provider adaptation, common Tool Use conversion,
 terminal stream usage evidence, deterministic routing, API keys, teams, policy
-checks, quotas, Provider credential pools, health/cooldown behavior, PostgreSQL
-or JSON persistence, a dashboard, metrics, and acceptance scripts.
+checks, quotas, Provider credential pools, health/cooldown behavior, mandatory
+PostgreSQL persistence, a dashboard, metrics, and acceptance scripts.
 
 The enterprise transition must address these structural gaps before adding a
 large catalog of surface features.
@@ -68,11 +75,11 @@ large catalog of surface features.
 | --- | --- | --- |
 | The first typed Exchange IR covers text roles and common Tool Use, but not multimodal content, Responses items, reasoning, or all structured-output semantics. | Expanding through generic JSON would reintroduce silent protocol loss. | Extend the typed IR and capability/fidelity report for each new content or item type. |
 | Public data plane exposes `/v1/messages` and a scoped `/v1/chat/completions`; Responses is absent. | OpenAI text SDKs can use the gateway, but Responses clients and unsupported Chat features cannot. | Expand Chat conformance and add typed `/v1/responses` while preserving both existing edges. |
-| Auth and control state are two whole JSON documents, including when stored in PostgreSQL. | Writes, filtering, migrations, isolation, retention, and concurrent updates cannot meet enterprise requirements. | Replace the document store with normalized relational repositories and versioned migrations. Keep file storage for development only. |
-| Compatibility auth/control access still serializes whole-document operations through one worker per namespace; only the new ledger is row-oriented and fully async. | Identity, policy, quota, and dashboard-log concurrency still cannot meet the target. | Move each remaining document domain to tenant-scoped async repositories and transactions, then remove the compatibility workers. |
+| Auth and low-frequency control definitions are two whole JSON documents, including when stored in PostgreSQL. Request usage and audit history have moved out. | Identity/policy writes, isolation, and concurrent updates still cannot meet enterprise requirements. | Replace the remaining document domains with normalized relational repositories and versioned migrations. |
+| Auth/control access still serializes whole-document operations through one worker per namespace; the operational ledger is row-oriented and async. | Identity and policy-definition concurrency still cannot meet the target. | Move each remaining document domain to tenant-scoped async repositories and transactions, then remove the document workers. |
 | Sessions, login attempts, rate limits, stream permits, metrics, and parts of Provider health are process-local. | Horizontal replicas can make inconsistent decisions and reset enforcement on restart. | Move shared enforcement to PostgreSQL/Redis-backed services; retain local limits only as an additional safety valve. |
-| Compatibility user/API-key/team quota and spend checks are preflight estimates followed by later updates; the initial tenant budget now reserves atomically before Provider egress. | The tenant hard limit is protected, but the remaining compatibility limit dimensions can still overshoot under concurrency. | Move every hard limit onto tenant-scoped reservation, settlement, release, and expiry records. |
-| The tenant budget uses integer micro-USD balances and append-only events, while compatibility usage logs and aggregates still use floating-point values and mutable documents. | The initial budget evidence is safer, but the complete usage and pricing history is not yet an auditable financial ledger. | Store decimal monetary values, currency, price-book version, source, and immutable adjustments across all accounting domains. |
+| User/API-key/team quota and spend checks are relational preflight aggregates; the tenant budget reserves atomically before Provider egress. | The tenant hard limit is protected, but preflight-only limit dimensions can still overshoot under concurrency. | Move every hard limit onto tenant-scoped reservation, settlement, release, and expiry records. |
+| The tenant budget uses integer micro-USD balances and append-only events, while operational request cost is stored as integer micro-USD with a pricing snapshot. | Evidence is durable, but it is not yet invoice-grade decimal settlement with price-book revisions and corrections. | Store decimal monetary values, currency, price-book version, source, and immutable adjustments across all accounting domains. |
 | Request/attempt state is persisted before egress; live owners renew leases, and a durable worker terminalizes expired rows as unbilled `unreconciled` evidence. | An expired lease cannot prove whether the Provider accepted work or reconstruct missing usage. | Add Provider evidence ingestion and operator review so exact settlement can append corrective evidence without mutating the original attempt. |
 | Admin roles are coarse and local sessions are memory-only. | They do not express enterprise ownership or survive multi-instance deployment. | Add OIDC, shared sessions or signed short-lived sessions, organizations, projects, groups, service accounts, and resource-level role bindings. |
 | Provider secrets are environment-variable references. | Rotation and external secret managers are not managed consistently. | Define a secret-reference interface for Vault and cloud secret managers; cache values briefly and audit access without persisting secret material. |
@@ -445,24 +452,25 @@ observable and regression tested; architectural decisions are reviewed.
 
 ### E1 — Relational and tenant foundation (P0)
 
-Current progress (2026-07-15): SQLx/Tokio pooling, rustls TLS policy, embedded
+Current progress (2026-07-26): SQLx/Tokio pooling, rustls TLS policy, embedded
 versioned migrations, organization/project/environment keys, and mandatory-
 tenant request/Provider-attempt lifecycle rows, hashed request idempotency
 claims, renewable instance leases, periodic expired-row reconciliation,
 transactional tenant-budget reservation/settlement/release, and append-only
-manual adjustment evidence are shipped. The compatibility auth/control
-documents still exist, and response replay, principals, memberships, policies,
-Provider evidence ingestion, import/rollback tooling, and multi-instance
-conflict tests remain open. The E1 exit gate is therefore not met.
+manual adjustment evidence are shipped. PostgreSQL is now mandatory, and
+request, usage, audit, quota, and management views are relational. The
+low-frequency auth/control definitions still use complete PostgreSQL `jsonb`
+documents; response replay, normalized principals/memberships/policies,
+Provider evidence ingestion, rollback tooling, and multi-instance conflict
+tests remain open. The E1 exit gate is therefore not met.
 
 - Introduce async pooled PostgreSQL with TLS and versioned migrations.
 - Create organization, project, environment, principal, membership, role
   binding, API client, Provider connection, route, policy, request, attempt,
   reservation, usage, adjustment, and audit tables.
 - Add repository interfaces with mandatory tenant scope and concurrency tests.
-- Migrate current auth/control documents through an idempotent import command;
-  retain validated backups and a documented rollback boundary.
-- Keep JSON storage only for a non-enterprise development profile.
+- Replace remaining auth/control documents through versioned relational
+  migrations; retain validated backups and a documented rollback boundary.
 
 Exit gate: two application instances can mutate independent tenant data without
 lost updates; cross-tenant access tests fail closed; backup/restore and migration
@@ -550,8 +558,8 @@ a coherent foundation:
    types without changing the public API.
 5. Add a stream finalizer that distinguishes completed, upstream failed,
    downstream cancelled, limited, timed out, and shutdown outcomes.
-6. Persist request and attempt lifecycle through a new repository trait while
-   keeping the legacy store behind an adapter during migration.
+6. Persist request and attempt lifecycle through the PostgreSQL repository and
+   remove the old usage/audit adapter.
 7. Add black-box Anthropic fixtures that protect current behavior before the
    internal protocol refactor.
 8. Create the minimal typed exchange model for text and common Tool Use.
@@ -567,16 +575,14 @@ new enterprise-facing protocol instead of adding a second handler coupled to
 
 ## Migration And Compatibility Policy
 
-- Existing `/v1/messages`, model aliases, API keys, and single-host deployment
-  remain supported through a documented compatibility window.
-- The enterprise database importer is explicit, idempotent, dry-run capable,
-  checksummed, and produces a rollback backup. Startup must not silently rewrite
-  legacy state.
-- Public API breaking changes require a versioned endpoint or a declared major
-  release. Provider quirks stay in adapters, not global protocol behavior.
-- Database migrations support the previous released application version during
-  rolling upgrades whenever practical; destructive cleanup occurs in a later
-  release.
+- The current operational schema is a deliberate clean baseline. Migration
+  `0005` rejects databases containing old request/attempt rows; deploy with a
+  new database and retain the old database only as a backup.
+- Old JSON state is neither imported nor used as a runtime fallback.
+- Provider quirks stay in adapters, not global protocol behavior.
+- Breaking public protocol changes require an explicit product decision; this
+  storage cutover does not alter the documented Anthropic/OpenAI client
+  contracts.
 - Policy and route changes are revisioned and auditable. Data-plane replicas
   report the revision serving each request.
 - Compatibility tests use official client SDKs where possible and raw HTTP

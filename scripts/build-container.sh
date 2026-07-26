@@ -16,6 +16,13 @@ fi
 
 source_revision="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 source_state="clean"
+modelport_version="$(
+  sed -n 's/^version = "\\([^"]*\\)"/\\1/p' "$ROOT_DIR/Cargo.toml" | head -n 1
+)"
+if [[ -z "$modelport_version" ]]; then
+  die "could not read package version from Cargo.toml"
+fi
+build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if [[ -n "$(git -C "$ROOT_DIR" status --porcelain=v1)" ]]; then
   source_state="dirty"
   if [[ "$allow_dirty" != "1" ]]; then
@@ -23,16 +30,21 @@ if [[ -n "$(git -C "$ROOT_DIR" status --porcelain=v1)" ]]; then
   fi
 fi
 
-log "building ModelPort image revision=$source_revision source_state=$source_state"
+log "building ModelPort images version=$modelport_version revision=$source_revision source_state=$source_state"
+MODELPORT_VERSION="$modelport_version" \
 MODELPORT_SOURCE_REVISION="$source_revision" \
 MODELPORT_SOURCE_STATE="$source_state" \
-  docker compose build modelport
+MODELPORT_BUILD_DATE="$build_date" \
+  docker compose build modelport dashboard
 
-image_id="$(docker image inspect modelport:local --format '{{.Id}}')"
-image_revision="$(docker image inspect modelport:local --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
-image_state="$(docker image inspect modelport:local --format '{{index .Config.Labels "io.modelport.source-state"}}')"
+for image in modelport:local modelport-dashboard:local; do
+  image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+  image_revision="$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+  image_state="$(docker image inspect "$image" --format '{{index .Config.Labels "io.modelport.source-state"}}')"
+  image_version="$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
 
-if [[ "$image_revision" != "$source_revision" || "$image_state" != "$source_state" ]]; then
-  die "built image provenance labels do not match the requested source state"
-fi
-log "built modelport:local id=$image_id revision=$image_revision source_state=$image_state"
+  if [[ "$image_revision" != "$source_revision" || "$image_state" != "$source_state" || "$image_version" != "$modelport_version" ]]; then
+    die "$image provenance labels do not match the requested source state"
+  fi
+  log "built $image id=$image_id version=$image_version revision=$image_revision source_state=$image_state"
+done

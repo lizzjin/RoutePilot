@@ -14,19 +14,14 @@ pub(super) async fn admin_users(
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
     let actor = require_console_user(&state, &headers)?;
-    let requests = state
-        .metrics
-        .snapshot()
-        .messages
-        .iter()
-        .map(|message| message.requests_total)
-        .sum::<u64>();
-    let mut users = state.auth.list_users(requests);
+    let usage = state.ledger.management_usage().await?;
+    let mut users = state.auth.list_users(0);
     if actor.role == "user" {
         users.retain(|user| user.id == actor.id);
     }
     for user in &mut users {
         user.api_key_count = state.control.active_api_key_count(&user.id);
+        user.request_count_24h = usage.users_24h.get(&user.id).copied().unwrap_or(0);
     }
     Ok(Json(json!(users)))
 }
@@ -48,7 +43,8 @@ pub(super) async fn admin_create_user(
         format!("user:{}", user.id),
         format!("创建用户 {}", user.username),
         "info",
-    );
+    )
+    .await;
     Ok(Json(json!(user)))
 }
 
@@ -87,7 +83,8 @@ pub(super) async fn admin_update_user(
         format!("user:{user_id}"),
         format!("更新用户 {} ({})", user.username, user.role),
         "info",
-    );
+    )
+    .await;
     Ok(Json(json!(user)))
 }
 
@@ -106,6 +103,7 @@ pub(super) async fn admin_delete_user(
         format!("user:{user_id}"),
         format!("删除用户 {user_id} 并回收相关资源"),
         "warning",
-    );
+    )
+    .await;
     Ok(Json(json!({ "ok": true })))
 }

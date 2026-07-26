@@ -1,0 +1,94 @@
+# Releasing ModelPort
+
+ModelPort uses semantic versions shared by the Rust backend and dashboard. A
+release tag is `v<version>`, matching `Cargo.toml` and
+`dashboard/package.json`.
+
+## Release Preconditions
+
+1. The worktree is clean and the release commit is on protected `main`.
+2. `CHANGELOG.md` describes user-visible behavior, security changes, breaking
+   storage/configuration changes, and remaining limits.
+3. `scripts/check-all.sh`, PostgreSQL-backed dashboard E2E, dependency audit,
+   CodeQL, dependency review, and Scorecard checks are green.
+   Any temporary dashboard audit exception must still match its documented
+   deployment exposure and remain unexpired.
+4. A clean PostgreSQL migration and the old-row rejection fixture have been
+   verified.
+5. Documentation, configuration examples, Compose, systemd, and dashboard use
+   the same versioned contract.
+6. Any real-Provider claim has a dated, secret-free, commit-bound evidence
+   artifact. Routine release CI makes no paid Provider calls.
+
+## Version And Tag
+
+Update:
+
+- `Cargo.toml`;
+- `dashboard/package.json` and its lockfile;
+- the changelog comparison links and release section.
+
+Then run:
+
+```bash
+scripts/check-all.sh
+git diff --check
+git tag -s vX.Y.Z -m "ModelPort vX.Y.Z"
+git push origin main vX.Y.Z
+```
+
+A signed tag is preferred. If the maintainer cannot sign tags, document that
+fact in the release notes rather than implying signature verification.
+
+## Automated Outputs
+
+The release workflow:
+
+- revalidates the repository;
+- builds the Linux amd64 backend archive;
+- emits SHA-256 checksums and an SPDX JSON SBOM;
+- creates GitHub build-provenance and SBOM attestations;
+- publishes versioned backend and dashboard images to GHCR;
+- attests the published container digests;
+- creates the GitHub Release from the existing tag.
+
+Release workflows use least-privilege job permissions and pin third-party
+Actions to complete commit SHAs.
+
+## Verification
+
+Consumers should verify checksums and GitHub attestations:
+
+```bash
+sha256sum --check SHA256SUMS
+gh attestation verify model-port-vX.Y.Z-linux-amd64.tar.gz \
+  --repo tiammomo/ModelPort
+docker pull ghcr.io/tiammomo/modelport:X.Y.Z
+```
+
+For container provenance, verify the immutable digest rather than relying only
+on a mutable tag.
+
+## Rollback
+
+Application rollback and database rollback are separate decisions.
+
+- Keep the previous image digest, binary, configuration, and database-native
+  backup until production acceptance passes.
+- Never point an older release at a database after a migration unless that
+  downgrade path was explicitly tested.
+- The current clean operational baseline does not import old request/attempt or
+  JSON state. Roll back by restoring the previous database and application
+  together.
+- The PostgreSQL 18 Compose baseline uses a new
+  `modelport_modelport-postgres-18` volume and the versioned
+  `/var/lib/postgresql/18/docker` data directory. It intentionally does not
+  reuse the old PostgreSQL 16 volume. Back up the old deployment before
+  upgrading, and do not delete its volume until restore acceptance passes.
+
+## Repository Settings
+
+Maintainers must enable private vulnerability reporting, Dependabot alerts and
+security updates, immutable releases where available, tag protection/rulesets,
+and required status checks. Repository settings are external state and cannot
+be guaranteed by workflow files alone.

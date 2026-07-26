@@ -10,6 +10,14 @@ export function useSettings() {
   })
 }
 
+export function useRouterStatus() {
+  return useQuery({
+    queryKey: queryKeys.routerStatus,
+    queryFn: () => settingsService.getRouterStatus(),
+    refetchInterval: 30_000,
+  })
+}
+
 export function useUpdateSettings() {
   const qc = useQueryClient()
   return useMutation({
@@ -30,6 +38,7 @@ export function useReloadConfig() {
     mutationFn: () => settingsService.reloadConfig(),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.settings })
+      qc.invalidateQueries({ queryKey: queryKeys.routerStatus })
       qc.invalidateQueries({ queryKey: queryKeys.providers })
       qc.invalidateQueries({ queryKey: queryKeys.aliases })
       qc.invalidateQueries({ queryKey: queryKeys.dashboard })

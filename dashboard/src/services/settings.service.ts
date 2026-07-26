@@ -1,4 +1,4 @@
-import type { AuditEventsResponse, BackupExport, ConfigReloadResult, SystemSettings } from '@/types'
+import type { AuditEventsResponse, BackupExport, ConfigReloadResult, SmartRouterStatus, SystemSettings } from '@/types'
 import { api } from '@/lib/api-client'
 import { isMockMode, mockDelay } from '@/lib/mock-mode'
 import { mockProviders, mockSettings } from '@/mock'
@@ -8,6 +8,30 @@ let mockSettingsStore = mockSettings
 export const settingsService = {
   getSettings: (): Promise<SystemSettings> =>
     isMockMode ? mockDelay(mockSettingsStore) : api.get('/admin/settings'),
+
+  getRouterStatus: (): Promise<SmartRouterStatus> => {
+    if (!isMockMode) return api.get('/admin/router/status')
+    return mockDelay({
+      ...mockSettingsStore.smartRouting,
+      groups: [{
+        id: 'general',
+        aliases: ['modelport-auto'],
+        defaultProfile: mockSettingsStore.smartRouting.defaultProfile,
+        candidateCount: mockSettingsStore.smartRouting.candidateCount,
+      }],
+      decisionsTotal: 42,
+      activeDecisionsTotal: 0,
+      shadowDecisionsTotal: 42,
+      staticDecisionsTotal: 0,
+      shadowDisagreementsTotal: 7,
+      selectedByCandidate: { 'deepseek:deepseek-v4-pro': 42 },
+      recommendedByCandidate: {
+        'deepseek:deepseek-v4-pro': 35,
+        'deepseek:deepseek-v4-flash': 7,
+      },
+      outcomes: [],
+    }, 180)
+  },
 
   updateSettings: (settings: Partial<SystemSettings>): Promise<SystemSettings> => {
     if (!isMockMode) return api.put('/admin/settings', settings)

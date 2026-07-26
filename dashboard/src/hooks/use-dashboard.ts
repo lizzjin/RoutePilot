@@ -17,6 +17,7 @@ export const queryKeys = {
   logById: (id: string) => ['logs', id] as const,
   latencyStats: ['latency-stats'] as const,
   settings: ['settings'] as const,
+  routerStatus: ['router-status'] as const,
 } as const
 
 export function useDashboard(params: DashboardStatsParams = {}) {

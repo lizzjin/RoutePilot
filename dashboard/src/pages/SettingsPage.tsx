@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { useAuditEvents, useExportBackup, useProviders, useReloadConfig, useSettings, useTestProviderConnection } from '@/hooks'
+import { useAuditEvents, useExportBackup, useProviders, useReloadConfig, useRouterStatus, useSettings, useTestProviderConnection } from '@/hooks'
 import { useAuthStore } from '@/stores'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { StatusBadge } from '@/components/shared/StatusBadge'
@@ -29,7 +29,7 @@ import {
   Server,
   ShieldCheck,
 } from 'lucide-react'
-import type { AuditEvent, BackupExport, Provider, SetupCheck, SystemSettings } from '@/types'
+import type { AuditEvent, BackupExport, Provider, SetupCheck, SmartRouterStatus, SystemSettings } from '@/types'
 
 type ProviderTestResult = {
   success: boolean
@@ -66,6 +66,12 @@ function SettingsForm({ initialSettings }: { initialSettings: SystemSettings }) 
   const testConnection = useTestProviderConnection()
   const reloadConfig = useReloadConfig()
   const exportBackup = useExportBackup()
+  const {
+    data: routerStatus,
+    isLoading: routerStatusLoading,
+    error: routerStatusError,
+    refetch: refetchRouterStatus,
+  } = useRouterStatus()
   const {
     data: providers = [],
     isLoading: providersLoading,
@@ -238,17 +244,26 @@ function SettingsForm({ initialSettings }: { initialSettings: SystemSettings }) 
         </div>
 
         <TabsContent value="service">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Server className="h-4 w-4" />服务运行事实</CardTitle>
-              <CardDescription>这些值来自当前进程，不是可编辑表单；部署配置修改后需要重启。</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-3 md:grid-cols-3">
-              <RuntimeFact label="绑定地址" value={form.server.bindAddress} hint="MODELPORT_BIND" mono />
-              <RuntimeFact label="最大请求体" value={formatBytes(form.server.maxRequestBodyBytes)} hint="MODELPORT_MAX_REQUEST_BODY_BYTES" />
-              <RuntimeFact label="并发请求" value={String(form.server.maxConcurrentRequests)} hint="MODELPORT_MAX_CONCURRENT_REQUESTS" />
-            </CardContent>
-          </Card>
+          <div className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2"><Server className="h-4 w-4" />服务运行事实</CardTitle>
+                <CardDescription>这些值来自当前进程，不是可编辑表单；部署配置修改后需要重启。</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-3 md:grid-cols-3">
+                <RuntimeFact label="绑定地址" value={form.server.bindAddress} hint="MODELPORT_BIND" mono />
+                <RuntimeFact label="最大请求体" value={formatBytes(form.server.maxRequestBodyBytes)} hint="MODELPORT_MAX_REQUEST_BODY_BYTES" />
+                <RuntimeFact label="并发请求" value={String(form.server.maxConcurrentRequests)} hint="MODELPORT_MAX_CONCURRENT_REQUESTS" />
+              </CardContent>
+            </Card>
+            <SmartRoutingStatusCard
+              settings={form.smartRouting}
+              status={routerStatus}
+              isLoading={routerStatusLoading}
+              error={routerStatusError}
+              onRetry={() => void refetchRouterStatus()}
+            />
+          </div>
         </TabsContent>
 
         <TabsContent value="security">
@@ -491,6 +506,98 @@ function OverviewFact({ label, value, detail }: { label: string; value: string; 
       <p className="mt-1 truncate text-sm font-semibold">{value}</p>
       <p className="mt-1 truncate text-xs text-muted-foreground">{detail}</p>
     </div>
+  )
+}
+
+function SmartRoutingStatusCard({
+  settings,
+  status,
+  isLoading,
+  error,
+  onRetry,
+}: {
+  settings: SystemSettings['smartRouting']
+  status?: SmartRouterStatus
+  isLoading: boolean
+  error: Error | null
+  onRetry: () => void
+}) {
+  const current = status ?? {
+    ...settings,
+    groups: [],
+    decisionsTotal: 0,
+    activeDecisionsTotal: 0,
+    shadowDecisionsTotal: 0,
+    staticDecisionsTotal: 0,
+    shadowDisagreementsTotal: 0,
+    selectedByCandidate: {},
+    recommendedByCandidate: {},
+    outcomes: [],
+  }
+  const disagreementRate = current.shadowDecisionsTotal > 0
+    ? (current.shadowDisagreementsTotal / current.shadowDecisionsTotal) * 100
+    : 0
+  const modeLabel = {
+    off: '关闭 / 基线',
+    shadow: '影子评估',
+    active: '灰度生效',
+  }[current.mode]
+
+  return (
+    <Card>
+      <CardHeader className="flex-col items-start justify-between gap-3 space-y-0 sm:flex-row">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <CardTitle className="flex items-center gap-2"><Route className="h-4 w-4" />智能路由</CardTitle>
+            <Badge variant={current.mode === 'active' ? 'warning' : current.mode === 'shadow' ? 'default' : 'secondary'}>
+              {modeLabel}
+            </Badge>
+          </div>
+          <CardDescription className="mt-2">
+            展示当前进程的策略与灰度证据；修改 config.toml 后需执行配置热加载。
+          </CardDescription>
+        </div>
+        <Button variant="outline" size="sm" onClick={onRetry} disabled={isLoading}>
+          <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+          刷新状态
+        </Button>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {error && (
+          <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+            <CircleAlert className="h-4 w-4 shrink-0" />
+            无法读取路由运行计数：{error.message}
+          </div>
+        )}
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <RuntimeFact label="策略版本" value={current.policyVersion} hint={`${current.defaultProfile} 默认档位`} mono />
+          <RuntimeFact label="激活比例" value={`${current.activationPercent}%`} hint="未命中灰度桶时保持基线顺序" />
+          <RuntimeFact label="决策总数" value={String(current.decisionsTotal)} hint={`${current.activeDecisionsTotal} 条 active`} />
+          <RuntimeFact
+            label="影子分歧率"
+            value={`${disagreementRate.toFixed(1)}%`}
+            hint={`${current.shadowDisagreementsTotal} / ${current.shadowDecisionsTotal} 条影子决策`}
+          />
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          {current.groups.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+              尚未加载智能路由组；普通 alias 与 provider:model 仍按确定性规则运行。
+            </div>
+          ) : current.groups.map((group) => (
+            <div key={group.id} className="rounded-lg border bg-muted/20 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-mono text-sm font-semibold">{group.id}</p>
+                <Badge variant="outline">{group.candidateCount} 个候选</Badge>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {group.aliases.join(', ')} · {group.defaultProfile}
+              </p>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

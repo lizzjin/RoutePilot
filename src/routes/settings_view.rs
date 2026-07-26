@@ -42,6 +42,17 @@ pub(super) fn settings_row(state: &AppState) -> Value {
             "defaultProvider": config.default_provider,
             "providerOrder": config.provider_order,
         },
+        "smartRouting": {
+            "mode": config.smart_routing.mode.as_str(),
+            "defaultProfile": config.smart_routing.default_profile.as_str(),
+            "policyVersion": config.smart_routing.policy_version,
+            "activationPercent": config.smart_routing.activation_percent,
+            "groupCount": config.smart_routing.groups.len(),
+            "candidateCount": config.smart_routing.groups.values()
+                .flat_map(|group| group.candidates.iter())
+                .filter(|candidate| candidate.enabled)
+                .count(),
+        },
         "rateLimits": {
             "maxConcurrentRequests": config.max_concurrent_requests,
             "maxRequestBodyBytes": config.max_request_body_bytes,
@@ -256,6 +267,7 @@ mod tests {
             aliases: Default::default(),
             max_request_body_bytes: 1024 * 1024,
             max_concurrent_requests: 64,
+            smart_routing: Default::default(),
         }
     }
 }

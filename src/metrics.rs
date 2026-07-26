@@ -51,6 +51,8 @@ struct MetricsInner {
     messages: BTreeMap<MessageKey, MessageCounterSet>,
     rejections: BTreeMap<RejectionKey, u64>,
     ledger_operations: BTreeMap<String, LedgerOperationMetrics>,
+    routing_decisions: BTreeMap<RoutingDecisionKey, u64>,
+    routing_shadow_disagreements_total: u64,
     reconciled_requests_total: u64,
     reconciled_attempts_total: u64,
 }
@@ -97,6 +99,13 @@ struct RejectionKey {
     route: String,
     phase: String,
     reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct RoutingDecisionKey {
+    mode: String,
+    profile: String,
+    provider: String,
 }
 
 impl Metrics {
@@ -187,6 +196,29 @@ impl Metrics {
         }
     }
 
+    pub fn record_routing_decision(
+        &self,
+        mode: &str,
+        profile: &str,
+        provider: &str,
+        shadow_disagreement: bool,
+    ) {
+        let mut inner = self.inner.lock().expect("metrics lock poisoned");
+        let count = inner
+            .routing_decisions
+            .entry(RoutingDecisionKey {
+                mode: mode.to_owned(),
+                profile: profile.to_owned(),
+                provider: provider.to_owned(),
+            })
+            .or_default();
+        *count = count.saturating_add(1);
+        if shadow_disagreement {
+            inner.routing_shadow_disagreements_total =
+                inner.routing_shadow_disagreements_total.saturating_add(1);
+        }
+    }
+
     pub fn record_reconciliation(&self, requests: u64, attempts: u64) {
         let mut inner = self.inner.lock().expect("metrics lock poisoned");
         inner.reconciled_requests_total = inner.reconciled_requests_total.saturating_add(requests);
@@ -237,6 +269,28 @@ impl Metrics {
             let labels = format!("route=\"{}\"", escape_label_value(route));
             push_counter_set(&mut output, "modelport_route", &labels, counters);
         }
+        output.push('\n');
+
+        output.push_str(
+            "# HELP modelport_routing_decisions_total Routing decisions observed by this process, by mode, profile, and selected provider.\n",
+        );
+        output.push_str("# TYPE modelport_routing_decisions_total counter\n");
+        for (key, count) in &inner.routing_decisions {
+            output.push_str(&format!(
+                "modelport_routing_decisions_total{{mode=\"{}\",profile=\"{}\",provider=\"{}\"}} {count}\n",
+                escape_label_value(&key.mode),
+                escape_label_value(&key.profile),
+                escape_label_value(&key.provider),
+            ));
+        }
+        output.push_str(
+            "# HELP modelport_routing_shadow_disagreements_total Decisions where the recommendation differed from the configured baseline selection.\n",
+        );
+        output.push_str("# TYPE modelport_routing_shadow_disagreements_total counter\n");
+        output.push_str(&format!(
+            "modelport_routing_shadow_disagreements_total {}\n",
+            inner.routing_shadow_disagreements_total
+        ));
         output.push('\n');
 
         output.push_str(
@@ -455,6 +509,7 @@ mod tests {
         metrics.record_rejection("messages", "validation", "invalid_request");
         metrics.record_ledger_operation("request_finalization", false);
         metrics.record_reconciliation(2, 3);
+        metrics.record_routing_decision("shadow", "balanced", "mimo", true);
         metrics.record_message(
             MessageMetricLabels {
                 provider: "mimo",
@@ -510,6 +565,10 @@ mod tests {
         ));
         assert!(rendered.contains("modelport_ledger_reconciled_requests_total 2"));
         assert!(rendered.contains("modelport_ledger_reconciled_attempts_total 3"));
+        assert!(rendered.contains(
+            r#"modelport_routing_decisions_total{mode="shadow",profile="balanced",provider="mimo"} 1"#
+        ));
+        assert!(rendered.contains("modelport_routing_shadow_disagreements_total 1"));
         assert_eq!(
             metrics.degraded_ledger_operations(),
             vec!["request_finalization"]

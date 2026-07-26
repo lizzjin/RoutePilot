@@ -947,6 +947,12 @@ pub struct ProviderUsageStats {
     pub cost_estimate_usd_total: f64,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ProviderRoutingSignal {
+    pub(crate) requests_total: u64,
+    pub(crate) successes_total: u64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RoutingConfigSnapshot {
     pub default_provider: Option<String>,
@@ -1729,6 +1735,55 @@ impl ControlStore {
             .iter()
             .map(|(provider_id, health)| (provider_id.clone(), provider_health_row(health, now)))
             .collect()
+    }
+
+    pub(crate) fn provider_routing_signals(&self) -> BTreeMap<String, ProviderRoutingSignal> {
+        self.inner
+            .lock()
+            .expect("control lock poisoned")
+            .provider_health
+            .iter()
+            .map(|(provider_id, health)| {
+                (
+                    provider_id.clone(),
+                    ProviderRoutingSignal {
+                        requests_total: health.requests_total,
+                        successes_total: health.successes_total,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    pub(crate) fn provider_credential_route_available(&self, provider_id: &str) -> Option<bool> {
+        let inner = self.inner.lock().expect("control lock poisoned");
+        let credentials = inner.provider_credentials.get(provider_id)?;
+        if credentials.is_empty() {
+            return None;
+        }
+        let now = now_millis();
+        if provider_credential_pool_mode_locked(&inner, provider_id) != "manual" {
+            return Some(has_usable_provider_credential_locked(
+                &inner,
+                provider_id,
+                now,
+            ));
+        }
+        let selected = inner
+            .active_provider_credentials
+            .get(provider_id)
+            .and_then(|id| credentials.get(id))
+            .filter(|credential| credential.status != "disabled")
+            .or_else(|| {
+                credentials
+                    .values()
+                    .find(|credential| credential.status != "disabled")
+            });
+        Some(selected.is_some_and(|credential| {
+            env::var(&credential.api_key_env)
+                .ok()
+                .is_some_and(|value| !value.trim().is_empty())
+        }))
     }
 
     pub fn provider_in_cooldown(&self, provider_id: &str) -> bool {

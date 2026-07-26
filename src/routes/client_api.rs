@@ -15,7 +15,10 @@ use serde_json::{Value, json};
 use tracing::{error, info};
 
 use crate::{
-    config::{AppConfig, ProviderConfig, ProviderProtocol, ResolvedProvider, TokenCountingMode},
+    config::{
+        AppConfig, ProviderConfig, ProviderProtocol, ResolvedProvider, RoutingProfile,
+        SmartRoutingMode, TokenCountingMode,
+    },
     control::{UsageEstimate, UsageEventInput},
     domain::{AttemptId, RequestContext, RequestId},
     enterprise_ledger::{
@@ -25,6 +28,7 @@ use crate::{
     metrics::MessageMetricLabels,
     pricing::{self, ModelPricing, TokenUsageBreakdown},
     providers,
+    smart_router::{RoutingRequest, hash_session_key},
     stream_lifecycle::{
         ResponseObservation, StreamLifecycle, StreamTerminalOutcome, UpstreamStreamState,
         audit_safe_stream_error,
@@ -100,6 +104,21 @@ pub(super) fn public_model_rows(config: &AppConfig) -> Vec<Value> {
                 "owned_by": resolved.provider_id,
                 "display_name": public_model_display_name(&resolved.provider_id, &resolved.provider, &resolved.model),
             }));
+        }
+    }
+
+    if config.smart_routing.mode != SmartRoutingMode::Off {
+        for group in config.smart_routing.groups.values() {
+            for alias in &group.aliases {
+                if seen.insert(alias.clone()) {
+                    models.push(json!({
+                        "id": alias,
+                        "type": "model",
+                        "owned_by": "modelport-router",
+                        "display_name": format!("{} (Smart Router)", alias),
+                    }));
+                }
+            }
         }
     }
 
@@ -439,14 +458,86 @@ async fn handle_inference(
     );
     let requested_model = exchange.requested_model.clone();
     let config = effective_config(&state);
-    let resolved = match config.resolve(&requested_model) {
-        Ok(resolved) => resolved,
+    let routing_profile = match request_routing_header(
+        &headers,
+        &ROUTING_PROFILE,
+        "x-modelport-routing-profile",
+        32,
+    ) {
+        Ok(value) => value,
+        Err(err) => {
+            return Err(record_inference_rejection(
+                &state,
+                route_name,
+                "validation",
+                err,
+                started,
+            ));
+        }
+    };
+    let routing_session_id = match request_routing_header(
+        &headers,
+        &ROUTING_SESSION_ID,
+        "x-modelport-session-id",
+        128,
+    ) {
+        Ok(value) => value,
+        Err(err) => {
+            return Err(record_inference_rejection(
+                &state,
+                route_name,
+                "validation",
+                err,
+                started,
+            ));
+        }
+    };
+    let routing_profile = match routing_profile.as_deref() {
+        Some(value) => match RoutingProfile::parse(value) {
+            Some(profile) => Some(profile),
+            None => {
+                return Err(record_inference_rejection(
+                    &state,
+                    route_name,
+                    "validation",
+                    AppError::InvalidRequest(
+                        "x-modelport-routing-profile must be quality, balanced, economy, or latency"
+                            .to_owned(),
+                    ),
+                    started,
+                ));
+            }
+        },
+        None => None,
+    };
+    let routing_session_hash = routing_session_id
+        .as_deref()
+        .map(|session_id| hash_session_key(&identity.user_id, session_id));
+    let routing_activation_key = routing_session_hash.clone().unwrap_or_else(|| {
+        hash_session_key(&identity.user_id, request_context.request_id.as_str())
+    });
+    let routing_plan = match state.smart_router.plan(RoutingRequest {
+        config: &config,
+        control: &state.control,
+        identity: &identity,
+        client_ip: request_client_ip.as_deref(),
+        exchange: &exchange,
+        profile_override: routing_profile,
+        session_hash: routing_session_hash.as_deref(),
+        activation_key: &routing_activation_key,
+    }) {
+        Ok(plan) => plan,
         Err(err) => {
             return Err(record_inference_rejection(
                 &state, route_name, "routing", err, started,
             ));
         }
     };
+    let resolved = routing_plan
+        .attempts
+        .first()
+        .cloned()
+        .ok_or_else(|| AppError::ProviderNotFound("routing plan is empty".to_owned()))?;
     if let Err(err) = state.rate_limiter.check(RateLimitScope {
         identity: &identity,
         client_ip: request_client_ip.as_deref(),
@@ -510,6 +601,7 @@ async fn handle_inference(
                 team_id: identity.team_id.clone(),
                 team_name: identity.team_name.clone(),
                 client_ip: request_client_ip.clone(),
+                routing_decision: Some(routing_plan.evidence.clone()),
             },
         )
         .await
@@ -534,11 +626,25 @@ async fn handle_inference(
         requested_model = exchange.requested_model.as_str(),
         provider = resolved.provider_id.as_str(),
         upstream_model = resolved.model.as_str(),
+        routing_mode = routing_plan.evidence.mode.as_str(),
+        routing_profile = routing_plan.evidence.profile.as_str(),
+        routing_decision_id = routing_plan.evidence.decision_id.as_str(),
+        recommended_provider = routing_plan.evidence.recommended_provider.as_str(),
+        recommended_model = routing_plan.evidence.recommended_model.as_str(),
         stream,
         "routing inference request"
     );
+    state.metrics.record_routing_decision(
+        &routing_plan.evidence.mode,
+        &routing_plan.evidence.profile,
+        &routing_plan.evidence.selected_provider,
+        routing_plan.evidence.shadow_disagreement,
+    );
+    let routing_decision_id = routing_plan.evidence.decision_id.clone();
+    let routing_mode = routing_plan.evidence.mode.clone();
 
-    let mut attempts = route_attempts(&state, &config, &requested_model, resolved)
+    let mut attempts = routing_plan
+        .attempts
         .into_iter()
         .map(|resolved| (resolved, None))
         .collect::<VecDeque<_>>();
@@ -673,6 +779,12 @@ async fn handle_inference(
         let attempt_error = attempt_result.as_ref().err().map(AppError::audit_message);
         let mut finalized_attempt_estimate = None;
         if !(stream && attempt_success) {
+            state.smart_router.record_outcome(
+                &provider_id,
+                &upstream_model,
+                attempt_success,
+                attempt_started.elapsed(),
+            );
             if let Err(err) = state.control.record_provider_outcome_for_credential(
                 &provider_id,
                 credential_id.as_deref(),
@@ -871,7 +983,8 @@ async fn handle_inference(
     };
 
     if stream && success {
-        let response = result.expect("successful stream result must contain a response");
+        let mut response = result.expect("successful stream result must contain a response");
+        attach_routing_response_headers(&mut response, &routing_decision_id, &routing_mode)?;
         let permit = stream_permit.expect("stream request must hold a stream permit");
         let sent = last_sent.expect("successful stream must have a sent attempt");
         return Ok(response_with_stream_finalizer(
@@ -920,6 +1033,9 @@ async fn handle_inference(
             request_id = request_context.request_id.as_str(),
             "failed to finalize request ledger row"
         );
+    }
+    if let Ok(response) = &mut result {
+        attach_routing_response_headers(response, &routing_decision_id, &routing_mode)?;
     }
     result
 }
@@ -1265,21 +1381,28 @@ impl StreamFinalizationContext {
 
         if let Some((success, status_code, error_message)) =
             provider_terminal_outcome(&outcome, &self.lifecycle)
-            && let Err(err) = self.state.control.record_provider_outcome_for_credential(
+        {
+            self.state.smart_router.record_outcome(
+                &self.usage.provider,
+                &self.usage.resolved_model,
+                success,
+                self.attempt_started.elapsed(),
+            );
+            if let Err(err) = self.state.control.record_provider_outcome_for_credential(
                 &self.usage.provider,
                 self.credential_id.as_deref(),
                 success,
                 status_code,
                 error_message.as_deref(),
                 false,
-            )
-        {
-            error!(
-                error = %err,
-                request_id = self.usage.request_id.as_deref().unwrap_or("unknown"),
-                attempt_id = self.usage.attempt_id.as_deref().unwrap_or("unknown"),
-                "failed to record provider stream outcome"
-            );
+            ) {
+                error!(
+                    error = %err,
+                    request_id = self.usage.request_id.as_deref().unwrap_or("unknown"),
+                    attempt_id = self.usage.attempt_id.as_deref().unwrap_or("unknown"),
+                    "failed to record provider stream outcome"
+                );
+            }
         }
 
         info!(
@@ -1497,60 +1620,6 @@ fn validate_inference_attempt(
     Ok(())
 }
 
-fn route_attempts(
-    state: &AppState,
-    config: &AppConfig,
-    requested_model: &str,
-    primary: ResolvedProvider,
-) -> Vec<ResolvedProvider> {
-    let mut attempts = Vec::new();
-    if !state.control.provider_in_cooldown(&primary.provider_id) {
-        attempts.push(primary.clone());
-    }
-
-    for provider_id in &config.provider_order {
-        if provider_id == &primary.provider_id || state.control.provider_in_cooldown(provider_id) {
-            continue;
-        }
-        let Some(provider) = config.providers.get(provider_id) else {
-            continue;
-        };
-        let Some(model) = fallback_model_for_provider(provider, requested_model, &primary.model)
-        else {
-            continue;
-        };
-        attempts.push(ResolvedProvider {
-            provider_id: provider_id.clone(),
-            provider: provider.clone(),
-            model,
-        });
-    }
-
-    if attempts.is_empty() {
-        attempts.push(primary);
-    }
-    attempts
-}
-
-fn fallback_model_for_provider(
-    provider: &ProviderConfig,
-    requested_model: &str,
-    primary_model: &str,
-) -> Option<String> {
-    for model in [requested_model, primary_model] {
-        if provider.models.iter().any(|configured| configured == model)
-            || provider
-                .model_prefixes
-                .iter()
-                .any(|prefix| model.starts_with(prefix))
-            || provider.passthrough_unknown_models
-        {
-            return Some(model.to_owned());
-        }
-    }
-    None
-}
-
 fn is_retryable_message_error(error: Option<&AppError>) -> bool {
     match error {
         Some(
@@ -1561,6 +1630,48 @@ fn is_retryable_message_error(error: Option<&AppError>) -> bool {
         Some(AppError::Upstream { status, .. }) => *status == 429 || *status >= 500,
         _ => false,
     }
+}
+
+fn request_routing_header(
+    headers: &HeaderMap,
+    name: &axum::http::HeaderName,
+    label: &str,
+    max_len: usize,
+) -> Result<Option<String>, AppError> {
+    let Some(value) = headers.get(name) else {
+        return Ok(None);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| AppError::InvalidRequest(format!("{label} must be ASCII")))?;
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.len() > max_len || value.chars().any(char::is_control) {
+        return Err(AppError::InvalidRequest(format!(
+            "{label} must contain at most {max_len} non-control bytes"
+        )));
+    }
+    Ok(Some(value.to_owned()))
+}
+
+fn attach_routing_response_headers(
+    response: &mut Response,
+    decision_id: &str,
+    mode: &str,
+) -> Result<(), AppError> {
+    response.headers_mut().insert(
+        ROUTING_DECISION_ID.clone(),
+        axum::http::HeaderValue::from_str(decision_id)
+            .map_err(|_| AppError::Config("invalid routing decision ID".to_owned()))?,
+    );
+    response.headers_mut().insert(
+        ROUTING_MODE.clone(),
+        axum::http::HeaderValue::from_str(mode)
+            .map_err(|_| AppError::Config("invalid routing mode".to_owned()))?,
+    );
+    Ok(())
 }
 
 fn validate_message_request(request: &AnthropicRequest) -> Result<(), AppError> {

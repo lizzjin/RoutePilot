@@ -46,6 +46,7 @@ updates, and secret protection.
 
 ```bash
 cp deploy/docker/modelport.env.example .env
+cp config.example.toml config.toml
 # replace every required placeholder
 scripts/build-container.sh
 docker compose up -d
@@ -83,7 +84,7 @@ ANTHROPIC_AUTH_TOKEN=<same-as-MODELPORT_AUTH_TOKEN>
 ANTHROPIC_MODEL=<configured-model-id>
 ```
 
-Run [Production Acceptance](ACCEPTANCE.md) after startup.
+Run [Production](PRODUCTION.md) checks after startup.
 
 ## Daily Commands
 
@@ -315,7 +316,7 @@ CUSTOM_OPENAI_MODEL=default
 
 `host.docker.internal` is a hostname and current URL validation does not inspect
 its resolved IP. Only use it for a runtime you trust. See
-[Local Runtime Integration](LOCAL_RUNTIME.md).
+[Providers](PROVIDERS.md#local-runtime-contract).
 
 Local/custom Provider classes may use HTTP for these controlled runtime paths.
 Other Providers require HTTPS unless

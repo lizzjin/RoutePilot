@@ -230,6 +230,7 @@ fn provider_host(base_url: &str) -> String {
 
 fn is_local_provider(provider_id: &str, host: &str) -> bool {
     provider_id.starts_with("local_")
+        || provider_id.starts_with("cpa_")
         || provider_id == "ollama"
         || matches!(host, "localhost" | "127.0.0.1" | "0.0.0.0" | "::1")
 }

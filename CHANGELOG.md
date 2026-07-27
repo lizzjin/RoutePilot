@@ -16,11 +16,16 @@ All notable ModelPort changes are recorded here. The project follows
 - Opt-in smart-routing groups with policy/capability gates, quality/balanced/
   economy/latency profiles, shadow decisions, stable canary activation,
   session affinity, metrics, and relational decision evidence.
+- Separate `cpa_codex` and `cpa_claude` internal Provider templates with
+  closed model allowlists, CPA catalog discovery, and internal-HTTP URL policy.
 - Commercial open-source governance, support, privacy, release, and supply
   chain policies.
 
 ### Changed
 
+- Documentation now uses a role-based index and one verified Getting Started
+  path; overlapping planning, acceptance, Provider, performance, lifecycle, and
+  learning documents were consolidated into maintained references.
 - PostgreSQL is mandatory for every runtime deployment.
 - The default Compose and CI database is PostgreSQL 18.4, using the PostgreSQL
   18 versioned data directory and a new `modelport-postgres-18` named volume.

@@ -33,6 +33,21 @@ PostgreSQL -> request, attempt, usage, quota/spend, budget, and audit facts
 JSON/PostgreSQL document -> low-frequency auth and control configuration
 ```
 
+CLIProxyAPI (CPA) can be inserted only as an internal Provider boundary:
+
+```text
+clients -> ModelPort -> cpa_codex  -> CPA -> Codex OAuth accounts
+                    -> cpa_claude -> CPA -> Claude OAuth accounts
+                    -> other hosted/local Providers
+```
+
+ModelPort remains the only public client endpoint and owns authentication,
+policy, routing, quota, retry/fallback, health, and durable evidence. CPA owns
+OAuth material and bounded account selection. Its management API is outside
+ModelPort's data plane. LiteLLM is not linked or deployed; only independently
+useful design patterns may be adopted. This boundary is recorded in
+[ADR-0004](adr/0004-modelport-gateway-and-cpa-provider-boundary.md).
+
 Operational logs, latency percentiles, and Dashboard ranges are filtered,
 aggregated, bucketed, ordered, and paginated in PostgreSQL. Runtime routes do
 not materialize complete request windows in process memory.
@@ -63,7 +78,7 @@ operator must still account for.
 
 The detailed lifecycle and failure semantics below are normative. Provider and
 Tool Use verification evidence is maintained separately in the
-[Provider Matrix](PROVIDER_MATRIX.md) and
+[Providers](PROVIDERS.md) and
 [Tool Use Compatibility](TOOL_USE_COMPATIBILITY.md).
 
 ## Backend Boundaries

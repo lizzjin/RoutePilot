@@ -210,7 +210,8 @@ fragments before parsing them. Providers may split a valid JSON string at any
 token boundary; a single SSE event is not required to contain a complete tool
 argument value.
 
-Record a dated result in [Provider Matrix](PROVIDER_MATRIX.md). A mock pass means
+Record a dated result using [Providers](PROVIDERS.md#discovery-and-verification).
+A mock pass means
 the gateway adapter works for the fixture; it says nothing about a provider's
 schema limits, tool-choice support, argument streaming, or account entitlement.
 

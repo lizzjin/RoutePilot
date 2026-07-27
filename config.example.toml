@@ -1,8 +1,9 @@
 # Minimal, self-contained ModelPort configuration.
 #
 # Copy this file to `config.toml`, set the referenced secrets in the process
-# environment, then run `model-port config validate`. Optional providers are
-# enabled through their environment variables; see docs/CONFIGURATION.md.
+# environment, then run `model-port config validate`. In TOML mode, add every
+# optional Provider explicitly and keep its secrets in environment variables;
+# see docs/CONFIGURATION.md.
 
 default_provider = "deepseek"
 provider_order = ["deepseek"]

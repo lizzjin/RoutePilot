@@ -71,9 +71,10 @@ production build with mock mode enabled.
 
 ## Runtime Truth In The UI
 
-The maintained product and interaction contract is
-[Dashboard Experience](../docs/DASHBOARD_UX.md). Keep page behavior, E2E tests,
-and that contract in sync.
+Keep page behavior, backend contracts, and E2E tests in sync. The dashboard
+must help an operator answer whether clients can route now, where a failed
+request stopped, and whether access, quota, cost, or Provider health needs
+attention.
 
 - The Settings page shows bind address, request-body limit, concurrency, auth,
   and timeout/rate values as read-only runtime facts. Change them in environment
@@ -114,6 +115,44 @@ and that contract in sync.
   persisted row. Neither consumes quota/spend.
   Live-stream completion/final usage currently has additional limits documented
   in [Operations](../docs/OPERATIONS.md#request-logs).
+
+## Experience Contract
+
+The preferred first-run sequence is:
+
+1. Configure a Provider and its server-side credential reference.
+2. Check readiness, discover or enter models, and test the exact Provider route.
+3. Select a deterministic default route or alias.
+4. Create the user/team boundary that owns access.
+5. Issue a scoped client API key and save its one-time secret.
+6. Send a request and open the matching request log.
+
+Configuration readiness is not evidence that a paid Provider request
+succeeded.
+
+Navigation and direct routes use the same role policy:
+
+| Role | Expected behavior |
+| --- | --- |
+| Administrator | Manage system resources and run operational actions. |
+| User | Use only owned workflows and permitted self-service actions. |
+| Viewer | Read available operational views without write controls. |
+
+Denied direct routes show an access-denied state. Changing the authenticated
+principal clears client-side query data so cached records do not cross account
+boundaries.
+
+Every data-backed page distinguishes initial loading, fresh data, background
+refresh, stale data after refresh failure, initial failure, true empty results,
+and access denied. Missing backend values remain missing; the UI must not invent
+loopback addresses, trace stages, successful Provider health, or 100% success
+for an empty range.
+
+At 390 CSS pixels, primary workflows must avoid page-level horizontal
+scrolling. Icon-only controls need accessible names; forms need associated
+labels and announced validation; dialogs/drawers need focus entry, trapping,
+Escape close, and restoration. Menus, tabs, virtual rows, mobile navigation,
+and destructive confirmations must remain keyboard usable.
 
 ## Checks
 

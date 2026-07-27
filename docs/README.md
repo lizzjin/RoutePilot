@@ -1,90 +1,64 @@
 # ModelPort Documentation
 
-This directory contains the maintained documentation for ModelPort. The root
-[README](../README.md) is the short product entry point; the documents below are
-the source of truth for behavior and operations.
+The root [README](../README.md) is the product entry point. You do not need to
+read every document: choose the path that matches your task.
 
-## Start Here
+## I Want To Run ModelPort
 
-- [Architecture](ARCHITECTURE.md): component boundaries, request flow, state,
-  [technical core](ARCHITECTURE.md#technical-core), trust boundaries, and known
-  design limits.
-- [Configuration](CONFIGURATION.md): environment variables, TOML, precedence,
-  provider activation, Qwen-only/DeepSeek/combined recipes, QuantPilot client
-  secret boundaries, validation, and reload scope.
-- [Smart routing](SMART_ROUTING.md): opt-in aliases, eligibility, scoring,
-  shadow/canary rollout, decision evidence, and current learning boundaries.
-- [API](API.md): public endpoints, authentication, model resolution, errors,
-  streaming, and control-plane route groups.
-- [OIDC console sign-in](OIDC.md): optional single-host SSO preview,
-  identity linking, configuration, security boundaries, and troubleshooting.
-- [Operations](OPERATIONS.md): health checks, metrics, request logs, backup,
-  reload, troubleshooting, and current operational limitations.
-- [Evidence-led optimization plan](OPTIMIZATION_PLAN.md): dated workload
-  baseline, completed correctness work, local-Qwen performance loop, and the
-  near-term execution order.
-- [Data lifecycle](DATA_LIFECYCLE.md): retention ownership, append-only budget
-  evidence, acceptance-test residue, and safe maintenance boundaries.
-- [Development](DEVELOPMENT.md): toolchain, local workflow, test layers, and
-  documentation maintenance.
-- [Production readiness](PRODUCTION_READINESS.md): supported commercial
-  self-hosting boundary, go-live gate, operational ownership, and release
-  evidence.
-- [Enterprise gateway roadmap](ENTERPRISE_ROADMAP.md): target product,
-  enterprise admission criteria, architecture direction, migration workstreams,
-  and release gates. Roadmap items are proposed unless explicitly marked as
-  shipped elsewhere.
-- [Dashboard experience](DASHBOARD_UX.md): navigation, role behavior, data-truth
-  rules, page state contracts, responsive design, and accessibility.
-- [systemd deployment](SYSTEMD.md): hardened single-host installation and data
-  directory layout.
-- [Docker Compose](DOCKER.md): the recommended complete deployment with the
-  dashboard and PostgreSQL.
+1. [Getting Started](GETTING_STARTED.md) — go from a clean clone to the first
+   authenticated request.
+2. [Deployment](DEPLOYMENT.md) — choose Docker Compose or systemd.
+3. [Production](PRODUCTION.md) — harden and accept a shared deployment.
+4. [Operations](OPERATIONS.md) — monitor, back up, troubleshoot, and upgrade it.
 
-## Technical Core
+## I Want To Connect An Application
 
-ModelPort's implemented core is the bounded pipeline summarized in
-[Architecture: Technical Core](ARCHITECTURE.md#technical-core): typed
-Anthropic/OpenAI client edges and Provider adaptation, deterministic model routing, eligible
-fallback, attempt-scoped policy and spend checks, environment-backed Provider
-credentials, persisted control overrides, defensive transport, and
-source-labelled observability. That section also records the non-distributed,
-non-transactional, streaming, DNS, persistence, and estimation boundaries;
-these limits are part of the design contract rather than optional caveats.
+- [API](API.md) — authentication, Messages, Chat Completions, streaming,
+  errors, request IDs, and control-plane endpoints.
+- [Providers](PROVIDERS.md) — choose a hosted Provider or local runtime and
+  verify its exact model path.
+- [Tool Use](TOOL_USE_COMPATIBILITY.md) — request/response conversion,
+  validation, streaming, and Provider-specific acceptance.
+- [Smart Routing](SMART_ROUTING.md) — define smart aliases and roll them out
+  through shadow and canary modes.
 
-## Protocol And Providers
+## I Want To Configure ModelPort
 
-- [Provider compatibility matrix](PROVIDER_MATRIX.md)
-- [Tool Use compatibility](TOOL_USE_COMPATIBILITY.md)
-- [Local runtime integration](LOCAL_RUNTIME.md)
-- [Production acceptance](ACCEPTANCE.md)
-- [Performance and efficiency](PERFORMANCE.md)
+- [Configuration](CONFIGURATION.md) is the single reference for environment
+  variables, TOML, precedence, security guardrails, and reload scope.
+- [OIDC](OIDC.md) covers optional dashboard sign-in and identity linking.
+- [Docker Compose](DOCKER.md) and [systemd](SYSTEMD.md) contain
+  deployment-specific details.
 
-## Maintainer Material
+## I Want To Contribute
 
-- [Security policy](../SECURITY.md)
-- [Contributing guide](../CONTRIBUTING.md)
-- [Project guide](PROJECT_GUIDE.md)
-- [Architecture Decision Records](adr/README.md)
-- [Repository and release setup](GITHUB_SETUP.md)
-- [Release process](RELEASING.md)
-- [Learning and interview material](learning/README.md) — non-normative
+- [Development](DEVELOPMENT.md) — toolchain, local workflow, tests, and
+  change-to-test matrix.
+- [Architecture](ARCHITECTURE.md) — component boundaries, request lifecycle,
+  persistence, trust boundaries, and deliberate non-goals.
+- [Dashboard README](../dashboard/README.md) — UI behavior and contribution
+  contract.
+- [ADRs](adr/README.md) — accepted architecture decisions.
+- [Releasing](RELEASING.md) and
+  [maintainer policy](../.github/MAINTAINERS.md) — release and repository
+  administration.
 
-## Documentation Contract
+## Project Direction
 
-The implementation and checked examples take precedence when a conflict is
-found. Documentation changes should keep these rules:
+[Roadmap](ROADMAP.md) separates the current single-host/small-team product from
+proposed enterprise work. Proposed work must not be described as shipped.
 
-1. Distinguish **implemented**, **verified against a real upstream**, and
-   **proposed** behavior.
-2. Do not call a provider verified without a dated acceptance result.
-3. Treat cost, token, latency, and health values as estimates unless the exact
-   measurement path is documented. Preserve `upstream-returned` versus
-   `local-estimate` provenance and do not describe a preflight rejection as
-   consuming quota/spend.
-4. Keep secrets, complete `.env` files, prompts, and raw provider bodies out of
-   issues and documentation examples.
-5. Run the checks in [Development](DEVELOPMENT.md#documentation-checks) after
-   changing links, commands, provider defaults, or configuration names.
+## Documentation Rules
 
-Last reviewed: 2026-07-26.
+1. Each fact has one authoritative document; other pages link to it.
+2. Distinguish implemented behavior, configured support, real-upstream
+   verification, and proposed work.
+3. Keep secrets, complete `.env` files, prompts, responses, and raw Provider
+   bodies out of examples and reports.
+4. Treat cost and token values as estimates unless their exact provenance is
+   stated.
+5. Update behavior, examples, tests, and documentation in the same change.
+6. Run `node scripts/check-doc-links.mjs` and the relevant checks from
+   [Development](DEVELOPMENT.md) before merging.
+
+Last reviewed: 2026-07-27.

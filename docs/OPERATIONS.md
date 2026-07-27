@@ -25,7 +25,7 @@ It does not call an upstream by default. A real call can cost money:
 scripts/smoke-test.sh --upstream
 ```
 
-For a release or production trial, use [Production Acceptance](ACCEPTANCE.md).
+For a release or production trial, use [Production](PRODUCTION.md).
 
 `scripts/config-validate.sh` uses the same application and deployment preflight
 as server startup. Validation errors—including placeholders, broken
@@ -65,7 +65,8 @@ Treat a routing-policy change like a production release:
 3. Set `mode = "active"` with a small explicit percentage such as 5. Increase
    only after the canary and baseline are comparable over the intended traffic
    classes. Bucketing is deterministic per hashed session ID when supplied,
-   otherwise per principal-scoped request fingerprint.
+   otherwise per principal-scoped request ID. Reuse the request ID when retry
+   assignment must remain stable.
 4. Roll back immediately by setting `MODELPORT_SMART_ROUTING_MODE=shadow` or
    `off` and restarting/reloading the base configuration. Do not edit historical
    decision rows.
@@ -226,6 +227,42 @@ The query reads only the selected window and current UTC day. Apply an explicit
 database retention policy if required by cost or personal-data policy; ModelPort
 does not silently evict rows from an in-document ring.
 
+## Data Lifecycle And Retention
+
+Treat persisted data by ownership class:
+
+| Data | Retention rule |
+| --- | --- |
+| Organizations, projects, environments, Providers, routes, users, and API-key metadata | Configuration authority; retain and back up while referenced. |
+| Provider secrets | Keep only in the configured secret input; never copy into logs, backups of public metadata, or the repository. |
+| Gateway requests, attempts, routing decisions, and feedback | Operational evidence; retain or archive as one request-scoped unit under an explicit policy. |
+| Budget accounts, reservations, and events | Financial/audit evidence; events are append-only and are not ordinary cleanup targets. |
+| Sessions and transient login/rate-limit state | Expire through the built-in lifecycle rather than manual table deletion. |
+| Acceptance objects | Scripts remove temporary control objects; request-ledger evidence can remain. |
+
+Budget foreign keys and append-only event controls intentionally reject unsafe
+deletion. Do not disable them to make the dashboard look empty. When physical
+retention becomes necessary, export required audit/reconciliation evidence and
+use a reviewed archive or partition policy.
+
+Migrations preserve normalized request and attempt history. Routing decisions
+and feedback cascade with their owning request and store no prompt, response,
+or raw session ID. Test migrations against a restored database before every
+production upgrade.
+
+Acceptance scripts modify control state and can leave request evidence. For a
+zero-residue test, use an isolated ModelPort database, export the result, and
+remove that isolated environment. Never point destructive test cleanup at a
+shared or production database.
+
+Safe maintenance sequence:
+
+1. Run `scripts/status.sh` and `scripts/doctor.sh`.
+2. Create, verify, and restore-drill a backup.
+3. Export the request, usage, routing, and budget evidence required by policy.
+4. Apply only the reviewed retention/archive operation.
+5. Re-run diagnostics, budget reconciliation, and dashboard totals.
+
 ## Quotas And Spend Windows
 
 User quota periods are UTC calendar periods. `daily` resets at 00:00 UTC,
@@ -276,6 +313,48 @@ failed. A degraded operation also makes `/readyz` fail until a later successful
 operation proves recovery. `modelport_ledger_pending_finalizers` should normally
 return to zero promptly and is drained for up to
 `MODELPORT_FINALIZATION_DRAIN_TIMEOUT_SECONDS` during graceful shutdown.
+
+## Performance And Benchmarking
+
+ModelPort targets single-host personal and small-team traffic. Upstream
+queueing and generation usually dominate latency, but authentication, routing,
+policy, protocol conversion, streaming, metrics, and PostgreSQL evidence add
+local work. The project does not claim a universal throughput or latency target
+without a dated benchmark.
+
+Local endpoints, default 30 iterations:
+
+```bash
+scripts/bench.sh
+```
+
+Real upstream, default 3 paid synthetic calls:
+
+```bash
+scripts/bench.sh --upstream
+scripts/bench.sh --upstream -n 5
+```
+
+Record commit/build profile, hardware, retained-row count, Provider/model,
+stream mode, context/output size, concurrency, local overhead, semantic TTFT,
+full latency, and terminal failure count. Compare like-for-like workload
+classes; an initial stream HTTP 200 is not a completed sample.
+
+Tune only after measurement:
+
+- reduce concurrency when Provider limits, local runtime queues, or database
+  latency are saturated;
+- size `MODELPORT_MAX_CONCURRENT_STREAMS` for simultaneously open bodies, not
+  request-start throughput;
+- keep request, response, SSE, idle, and byte limits finite;
+- diagnose Provider/network/runtime latency before extending timeouts;
+- apply PostgreSQL retention or partitioning only when observed cardinality and
+  query plans require it;
+- measure Tool Use and large-context traffic separately from tiny text calls.
+
+Process-local limits and Provider behavior make results deployment-specific.
+They cannot be tuned into multi-instance correctness or invoice-grade
+reconciliation.
 
 ## Streaming Concurrency
 
@@ -349,10 +428,10 @@ business relationship or external credential is still usable.
 Stop writers before restore. The command saves the previous logical auth and
 control values next to the supplied backup path before replacing them. Auth and
 control are then replaced sequentially, not in one cross-document transaction;
-a second-write failure can require recovery from those saved values. For
-Keep the database-native dump produced by `backup-compose.sh`; the CLI export
-contains only the two logical auth/control documents and not the operational
-ledger. Store both backup forms with restrictive permissions.
+a second-write failure can require recovery from those saved values. Keep the
+database-native dump produced by `backup-compose.sh`; the CLI export contains
+only the two logical auth/control documents and not the operational ledger.
+Store both backup forms with restrictive permissions.
 
 ## Provider Diagnosis
 
@@ -423,6 +502,10 @@ pause and the reconciliation interval below the TTL.
 | Active SSE exceeds `MODELPORT_HTTP_REQUEST_TIMEOUT_SECS` | Expected: that value governs only the SSE handshake. Check the resettable stream idle timeout and byte ceilings for the established phase. |
 | Provider is cooling down | Recent retryable/account failures; ordinary non-retryable 4xx responses do not trigger cooldown. Verify key, rate limit, and balance. |
 | Provider pool has no usable credential | `failover`/`round_robin` fail closed when every credential is disabled, cooling down, or missing its environment value; repair the pool or verify the next Provider candidate. |
+| CPA request shows excessive attempts or latency | Verify CPA `request-retry: 0` and a bounded `max-retry-credentials`; ModelPort already owns retry/fallback and records each ModelPort attempt. |
+| CPA returns 401 | Check the CPA client key in `CPA_CODEX_API_KEY`/`CPA_CLAUDE_API_KEY`, not the upstream OAuth token; then inspect CPA auth state without copying auth files into ModelPort. |
+| CPA Claude sends requests to `/v1/v1/messages` | Remove `/v1` from `CPA_CLAUDE_BASE_URL`; only `CPA_CODEX_BASE_URL` ends in `/v1`. |
+| CPA model is visible but calls fail | Catalog discovery is availability metadata, not entitlement. Call the provider-qualified model and verify the exact account, protocol, stream, and Tool Use path. |
 | Dashboard cross-origin failure | Use a same-origin reverse proxy; `MODELPORT_ALLOWED_ORIGINS` is not a CORS switch. |
 | `config validate` rejects enterprise mode | Set a valid `MODELPORT_DATABASE_URL`, use `MODELPORT_DATABASE_TLS_MODE=verify-full`, and fix any reported pool, lease, proxy, or origin syntax before restarting. Validation errors intentionally prevent the server from binding. |
 | Auth/control state write latency grows | Inspect PostgreSQL latency and the one-connection document workers. Operational usage and audit rows are independent; low-frequency identity/policy definitions still replace their complete PostgreSQL documents. |

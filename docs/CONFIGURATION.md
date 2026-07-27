@@ -238,6 +238,80 @@ DeepSeek deterministically with `deepseek:deepseek-v4-flash`. Provider fallback
 does not mean arbitrary model substitution: the requested model must be
 eligible for the fallback Provider and the failure must be retryable.
 
+### CPA as an internal Provider
+
+CPA is an optional CLIProxyAPI account adapter behind ModelPort. Do not point
+clients directly to CPA and do not configure CPA as ModelPort's control plane.
+In environment-default mode, enable its Codex and Claude channels
+independently:
+
+```env
+MODELPORT_ENABLE_CPA_CODEX=1
+CPA_CODEX_BASE_URL=http://127.0.0.1:8317/v1
+CPA_CODEX_API_KEY=replace-with-cpa-client-api-key
+CPA_CODEX_MODEL=gpt-5.3-codex
+CPA_CODEX_MODELS=gpt-5.3-codex
+
+MODELPORT_ENABLE_CPA_CLAUDE=1
+CPA_CLAUDE_BASE_URL=http://127.0.0.1:8317
+CPA_CLAUDE_API_KEY=replace-with-cpa-client-api-key
+CPA_CLAUDE_MODEL=claude-sonnet-4-6
+CPA_CLAUDE_MODELS=claude-sonnet-4-6
+```
+
+Setting either key or an explicit `MODELPORT_ENABLE_CPA_*` flag enables only
+that Provider. The two key variables may contain the same CPA client key; they
+stay separate so enabling one protocol never silently enables the other.
+
+The maintained Docker path uses TOML. TOML mode never invents Provider records
+from environment variables, so add the channels you intend to use and include
+them in `provider_order`:
+
+```toml
+provider_order = ["deepseek", "cpa_codex", "cpa_claude"]
+
+[providers.cpa_codex]
+display_name = "CPA · OpenAI Codex"
+protocol = "openai-compat"
+base_url_env = "CPA_CODEX_BASE_URL"
+api_key_env = "CPA_CODEX_API_KEY"
+api_key_required = true
+default_model = "gpt-5.3-codex"
+models = ["gpt-5.3-codex"]
+model_prefixes = []
+passthrough_unknown_models = false
+max_tokens_field = "max_completion_tokens"
+
+[providers.cpa_claude]
+display_name = "CPA · Claude Code"
+protocol = "anthropic"
+base_url_env = "CPA_CLAUDE_BASE_URL"
+api_key_env = "CPA_CLAUDE_API_KEY"
+api_key_required = true
+default_model = "claude-sonnet-4-6"
+models = ["claude-sonnet-4-6"]
+model_prefixes = []
+passthrough_unknown_models = false
+max_tokens_field = "max_tokens"
+```
+
+CPA Providers require explicit model allowlists and
+`passthrough_unknown_models=false`. They cannot claim a model prefix. Use
+`cpa_codex:model` or `cpa_claude:model` for acceptance and deterministic
+routing. `cpa_codex` Base URL must end in `/v1`; `cpa_claude` must omit `/v1`
+because the Anthropic adapter appends `/v1/messages`.
+
+Docker deployments should use `http://cpa:8317/v1` and
+`http://cpa:8317` only after attaching CPA under the single-label `cpa` DNS
+name to ModelPort's private network. Keep CPA unexposed. A private literal IP
+still requires `MODELPORT_ALLOW_PRIVATE_PROVIDER_URLS=1`; a public hostname
+requires HTTPS.
+
+ModelPort owns request-level retries and cross-Provider fallback. Set CPA's
+`request-retry: 0` and bound `max-retry-credentials` initially so one
+ModelPort attempt cannot fan out across an unbounded CPA account pool. See the
+[CPA Provider contract](PROVIDERS.md#cpa-codex-and-claude-account-adapter).
+
 ### QuantPilot client boundary
 
 For QuantPilot, issue a dashboard API key scoped only to the providers/models it
@@ -480,7 +554,7 @@ concurrent requests can overshoot a tight budget.
 ## Provider Environment Pattern
 
 The complete built-in catalog and current defaults are in
-[Provider Compatibility Matrix](PROVIDER_MATRIX.md). Most providers use:
+[Providers](PROVIDERS.md). Most providers use:
 
 ```text
 <PROVIDER>_API_KEY
@@ -494,6 +568,8 @@ Names that intentionally differ include:
 
 | Provider | Credential | Base URL | Model |
 | --- | --- | --- | --- |
+| `cpa_codex` | `CPA_CODEX_API_KEY` | `CPA_CODEX_BASE_URL` | `CPA_CODEX_MODEL` |
+| `cpa_claude` | `CPA_CLAUDE_API_KEY` | `CPA_CLAUDE_BASE_URL` | `CPA_CLAUDE_MODEL` |
 | `deepseek` | `DEEPSEEK_ANTHROPIC_AUTH_TOKEN` (fallback `DEEPSEEK_API_KEY`) | `DEEPSEEK_ANTHROPIC_BASE_URL` | `DEEPSEEK_MODEL` |
 | `deepseek_openai` | `DEEPSEEK_OPENAI_API_KEY` (fallback `DEEPSEEK_API_KEY`) | `DEEPSEEK_OPENAI_BASE_URL` | `DEEPSEEK_OPENAI_MODEL` |
 | `mimo` | `MIMO_OPENAI_API_KEY` | `MIMO_OPENAI_BASE_URL` (fallback `BASE_URL`) | `MIMO_MODEL` |
@@ -507,6 +583,8 @@ Names that intentionally differ include:
 Catalog variables are:
 
 ```text
+CPA_CODEX_MODELS
+CPA_CLAUDE_MODELS
 DEEPSEEK_MODELS
 DEEPSEEK_OPENAI_MODELS
 MIMO_MODELS

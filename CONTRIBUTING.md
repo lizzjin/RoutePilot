@@ -22,6 +22,7 @@ not install Rust, Node.js, npm, Docker, or Playwright browsers.
 git clone git@github.com:tiammomo/ModelPort.git
 cd ModelPort
 cp .env.example .env
+cp config.example.toml config.toml
 # replace required placeholders; never commit this file
 scripts/config-validate.sh
 scripts/check.sh
@@ -91,8 +92,8 @@ ordinary pull requests should prefer mock-backed checks.
 - Keep English and Chinese README commands, endpoints, limits, and links aligned.
 - Update configuration, deployment templates, scripts, and docs together when a
   variable or default changes.
-- Learning/interview material is non-normative and must link back to maintained
-  reference docs.
+- Product tutorials belong in the maintained role-based documentation tree;
+  internal interview notes and dated task plans do not.
 - Check relative links and example commands before submission.
 
 ## Pull Request Description

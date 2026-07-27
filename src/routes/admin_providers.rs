@@ -228,18 +228,19 @@ pub(super) async fn admin_provider_models(
         return Err(AppError::ProviderNotFound(provider_id));
     };
 
-    let (success, message, models) = match discover_provider_models(&state, &provider).await {
-        Ok(models) => {
-            let message = if provider.protocol == ProviderProtocol::OpenaiCompat {
-                format!("discovered {} model(s)", models.len())
-            } else {
-                "model discovery is not available for this protocol; returned configured models"
-                    .to_owned()
-            };
-            (true, message, models)
-        }
-        Err(err) => (false, err.audit_message(), Vec::new()),
-    };
+    let (success, message, models) =
+        match discover_provider_models(&state, &provider_id, &provider).await {
+            Ok(models) => {
+                let message = if provider_supports_model_discovery(&provider_id, &provider) {
+                    format!("discovered {} model(s)", models.len())
+                } else {
+                    "model discovery is not available for this protocol; returned configured models"
+                        .to_owned()
+                };
+                (true, message, models)
+            }
+            Err(err) => (false, err.audit_message(), Vec::new()),
+        };
     let tested_at = state.control.record_provider_test(
         provider_id.clone(),
         success,

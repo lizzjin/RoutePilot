@@ -1306,17 +1306,18 @@ async fn admin_test_provider(
         })));
     };
 
-    let (success, message, models) = match discover_provider_models(&state, &provider).await {
-        Ok(models) => {
-            let message = if provider.protocol == ProviderProtocol::OpenaiCompat {
-                format!("connected; discovered {} model(s)", models.len())
-            } else {
-                "configured".to_owned()
-            };
-            (true, message, models)
-        }
-        Err(err) => (false, err.audit_message(), Vec::new()),
-    };
+    let (success, message, models) =
+        match discover_provider_models(&state, provider_id, &provider).await {
+            Ok(models) => {
+                let message = if provider_supports_model_discovery(provider_id, &provider) {
+                    format!("connected; discovered {} model(s)", models.len())
+                } else {
+                    "configured".to_owned()
+                };
+                (true, message, models)
+            }
+            Err(err) => (false, err.audit_message(), Vec::new()),
+        };
     let tested_at = state.control.record_provider_test(
         provider_id.to_owned(),
         success,
@@ -1389,14 +1390,19 @@ async fn admin_backup(
 
 async fn discover_provider_models(
     state: &AppState,
+    provider_id: &str,
     provider: &ProviderConfig,
 ) -> Result<Vec<String>, AppError> {
-    if provider.protocol != ProviderProtocol::OpenaiCompat {
+    if !provider_supports_model_discovery(provider_id, provider) {
         provider.api_key()?;
         return Ok(configured_provider_models(provider));
     }
 
-    let url = provider.endpoint("/models");
+    let url = if provider_id == "cpa_claude" {
+        provider.endpoint("/v1/models")
+    } else {
+        provider.endpoint("/models")
+    };
     let body = state
         .transport
         .get_json(&url, &openai_compatible_headers(provider)?)
@@ -1408,6 +1414,10 @@ async fn discover_provider_models(
     } else {
         Ok(models)
     }
+}
+
+fn provider_supports_model_discovery(provider_id: &str, provider: &ProviderConfig) -> bool {
+    provider.protocol == ProviderProtocol::OpenaiCompat || provider_id == "cpa_claude"
 }
 
 fn openai_compatible_headers(provider: &ProviderConfig) -> Result<Vec<Header>, AppError> {
@@ -4747,11 +4757,167 @@ data: [DONE]
             pricing: None,
         };
 
-        let err = discover_provider_models(&state, &provider)
+        let err = discover_provider_models(&state, "anthropic", &provider)
             .await
             .unwrap_err();
 
         assert!(matches!(err, AppError::MissingSecret(name) if name == "ANTHROPIC_API_KEY"));
+    }
+
+    #[tokio::test]
+    async fn discover_cpa_claude_models_through_shared_compatibility_catalog() {
+        let upstream = spawn_openai_models_upstream(
+            r#"{"data":[{"id":"claude-sonnet-4-6"},{"id":"claude-opus-4-7"}]}"#,
+        )
+        .await;
+        let state = test_state(upstream.clone(), 1024 * 1024);
+        let provider = ProviderConfig {
+            display_name: "CPA · Claude Code".to_owned(),
+            protocol: ProviderProtocol::Anthropic,
+            base_url: upstream.trim_end_matches("/v1").to_owned(),
+            api_key_env: Some("CPA_CLAUDE_API_KEY".to_owned()),
+            api_key: Some("test-cpa-client-key".to_owned()),
+            api_key_required: true,
+            default_model: "claude-sonnet-4-6".to_owned(),
+            models: vec!["claude-sonnet-4-6".to_owned()],
+            model_prefixes: Vec::new(),
+            passthrough_unknown_models: false,
+            max_tokens_field: MaxTokensField::MaxTokens,
+            deduplicate_stream_text: false,
+            buffer_stream_text: false,
+            fidelity_mode: FidelityMode::BestEffort,
+            tool_use: ToolUseConfig::default_for_provider(
+                "cpa_claude",
+                ProviderProtocol::Anthropic,
+                false,
+            ),
+            reasoning: Default::default(),
+            sampling: Default::default(),
+            token_counting: Default::default(),
+            pricing: None,
+        };
+
+        let models = discover_provider_models(&state, "cpa_claude", &provider)
+            .await
+            .unwrap();
+
+        assert_eq!(models, vec!["claude-sonnet-4-6", "claude-opus-4-7"]);
+    }
+
+    #[tokio::test]
+    async fn cpa_codex_stream_uses_openai_adapter_and_keeps_provider_evidence() {
+        let upstream = spawn_openai_upstream(
+            StatusCode::OK,
+            r#"data: {"choices":[{"delta":{"content":"hello from CPA"},"finish_reason":null,"index":0}]}
+data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}]}
+data: [DONE]
+
+"#,
+            "text/event-stream",
+        )
+        .await;
+        let mut state = test_state(upstream, 1024 * 1024);
+        retarget_test_provider(
+            &mut state,
+            "mimo",
+            "cpa_codex",
+            "CPA · OpenAI Codex",
+            "gpt-5.3-codex",
+        );
+        let ledger = state.ledger.clone();
+        let mut body = message_body(true);
+        body["model"] = json!("cpa_codex:gpt-5.3-codex");
+
+        let (status, response) = post_message(router(state), body).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert!(response.contains("hello from CPA"));
+        assert!(!response.contains("event: error"));
+        let rows = wait_for_usage_rows(&ledger, 1).await;
+        assert_eq!(rows[0]["provider"], "cpa_codex");
+        assert_eq!(rows[0]["model"], "cpa_codex:gpt-5.3-codex");
+    }
+
+    #[tokio::test]
+    async fn cpa_codex_upstream_error_is_attributed_to_the_cpa_channel() {
+        let upstream = spawn_openai_upstream(
+            StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"error":{"message":"CPA account unavailable"}}"#,
+            "application/json",
+        )
+        .await;
+        let mut state = test_state(upstream, 1024 * 1024);
+        retarget_test_provider(
+            &mut state,
+            "mimo",
+            "cpa_codex",
+            "CPA · OpenAI Codex",
+            "gpt-5.3-codex",
+        );
+        let ledger = state.ledger.clone();
+        let mut body = message_body(false);
+        body["model"] = json!("cpa_codex:gpt-5.3-codex");
+
+        let (status, _) = post_message(router(state), body).await;
+
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        let rows = wait_for_usage_rows(&ledger, 1).await;
+        assert_eq!(rows[0]["provider"], "cpa_codex");
+        assert_eq!(rows[0]["status"], "error");
+        assert_eq!(rows[0]["terminalReason"], "failed_before_response");
+    }
+
+    #[tokio::test]
+    async fn cpa_claude_tool_use_keeps_anthropic_protocol_and_provider_evidence() {
+        let upstream = spawn_anthropic_upstream(
+            StatusCode::OK,
+            r#"{
+                "id":"msg_cpa",
+                "type":"message",
+                "role":"assistant",
+                "model":"claude-sonnet-4-6",
+                "content":[{
+                    "type":"tool_use",
+                    "id":"toolu_cpa",
+                    "name":"weather",
+                    "input":{"city":"Shanghai"}
+                }],
+                "stop_reason":"tool_use",
+                "usage":{"input_tokens":8,"output_tokens":4}
+            }"#,
+            "application/json",
+        )
+        .await;
+        let mut state = test_anthropic_state(upstream, 1024 * 1024);
+        retarget_test_provider(
+            &mut state,
+            "anthropic",
+            "cpa_claude",
+            "CPA · Claude Code",
+            "claude-sonnet-4-6",
+        );
+        let ledger = state.ledger.clone();
+        let mut body = message_body(false);
+        body["model"] = json!("cpa_claude:claude-sonnet-4-6");
+        body["tools"] = json!([{
+            "name":"weather",
+            "description":"Look up weather",
+            "input_schema":{
+                "type":"object",
+                "properties":{"city":{"type":"string"}},
+                "required":["city"]
+            }
+        }]);
+
+        let (status, response) = post_message(router(state), body).await;
+
+        assert_eq!(status, StatusCode::OK, "{response}");
+        let response: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["content"][0]["type"], "tool_use");
+        assert_eq!(response["content"][0]["input"]["city"], "Shanghai");
+        let rows = wait_for_usage_rows(&ledger, 1).await;
+        assert_eq!(rows[0]["provider"], "cpa_claude");
+        assert_eq!(rows[0]["toolOutcome"], "tool_called");
     }
 
     #[test]
@@ -5481,6 +5647,36 @@ data: {"type":"message_stop"}
             ledger: Arc::new(EnterpriseLedger::memory()),
             finalizers: Arc::new(FinalizationTracker::default()),
         }
+    }
+
+    fn retarget_test_provider(
+        state: &mut AppState,
+        current_id: &str,
+        provider_id: &str,
+        display_name: &str,
+        model: &str,
+    ) {
+        let mut config = state.config.snapshot();
+        let mut provider = config.providers.remove(current_id).expect("test provider");
+        provider.display_name = display_name.to_owned();
+        provider.api_key_env = Some(
+            match provider_id {
+                "cpa_codex" => "CPA_CODEX_API_KEY",
+                "cpa_claude" => "CPA_CLAUDE_API_KEY",
+                _ => panic!("unsupported CPA test provider"),
+            }
+            .to_owned(),
+        );
+        provider.default_model = model.to_owned();
+        provider.models = vec![model.to_owned()];
+        provider.model_prefixes.clear();
+        provider.passthrough_unknown_models = false;
+        provider.tool_use =
+            ToolUseConfig::default_for_provider(provider_id, provider.protocol, false);
+        config.default_provider = provider_id.to_owned();
+        config.provider_order = vec![provider_id.to_owned()];
+        config.providers.insert(provider_id.to_owned(), provider);
+        state.config = Arc::new(RuntimeConfig::new(config));
     }
 
     fn test_anthropic_state(base_url: String, max_request_body_bytes: usize) -> AppState {

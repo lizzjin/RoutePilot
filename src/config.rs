@@ -850,6 +850,7 @@ impl AppConfig {
                 &mut seen_models,
                 &mut issues,
             );
+            validate_cpa_provider(id, provider, &mut issues);
             if id == "openai"
                 && openai_base_url_targets_modelport_listener(&provider.base_url, self.bind_addr)
             {
@@ -1400,6 +1401,44 @@ const MIMO_SPEC: ProviderSpec = ProviderSpec {
 };
 
 const OPTIONAL_PROVIDER_SPECS: &[ProviderSpec] = &[
+    ProviderSpec {
+        id: "cpa_codex",
+        display_name: "CPA · OpenAI Codex",
+        protocol: ProviderProtocol::OpenaiCompat,
+        base_url_env: "CPA_CODEX_BASE_URL",
+        base_url_env_fallbacks: &[],
+        default_base_url: "http://127.0.0.1:8317/v1",
+        api_key_env: Some("CPA_CODEX_API_KEY"),
+        api_key_env_fallbacks: &[],
+        api_key_required: true,
+        default_model_env: "CPA_CODEX_MODEL",
+        default_model: "gpt-5.3-codex",
+        models_env: "CPA_CODEX_MODELS",
+        models: &["gpt-5.3-codex"],
+        model_prefixes: &[],
+        passthrough_unknown_models: false,
+        max_tokens_field: MaxTokensField::MaxCompletionTokens,
+        deduplicate_stream_text: false,
+    },
+    ProviderSpec {
+        id: "cpa_claude",
+        display_name: "CPA · Claude Code",
+        protocol: ProviderProtocol::Anthropic,
+        base_url_env: "CPA_CLAUDE_BASE_URL",
+        base_url_env_fallbacks: &[],
+        default_base_url: "http://127.0.0.1:8317",
+        api_key_env: Some("CPA_CLAUDE_API_KEY"),
+        api_key_env_fallbacks: &[],
+        api_key_required: true,
+        default_model_env: "CPA_CLAUDE_MODEL",
+        default_model: "claude-sonnet-4-6",
+        models_env: "CPA_CLAUDE_MODELS",
+        models: &["claude-sonnet-4-6"],
+        model_prefixes: &[],
+        passthrough_unknown_models: false,
+        max_tokens_field: MaxTokensField::MaxTokens,
+        deduplicate_stream_text: false,
+    },
     ProviderSpec {
         id: "deepseek_openai",
         display_name: "DeepSeek",
@@ -2581,6 +2620,72 @@ fn validate_provider(
     }
 }
 
+fn validate_cpa_provider(
+    provider_id: &str,
+    provider: &ProviderConfig,
+    issues: &mut Vec<ConfigIssue>,
+) {
+    let expected_protocol = match provider_id {
+        "cpa_codex" => ProviderProtocol::OpenaiCompat,
+        "cpa_claude" => ProviderProtocol::Anthropic,
+        _ => return,
+    };
+
+    if provider.protocol != expected_protocol {
+        issues.push(ConfigIssue::error(format!(
+            "provider `{provider_id}` must use protocol={}",
+            match expected_protocol {
+                ProviderProtocol::OpenaiCompat => "openai-compat",
+                ProviderProtocol::Anthropic => "anthropic",
+            }
+        )));
+    }
+    if !provider.api_key_required || provider.api_key_env.is_none() {
+        issues.push(ConfigIssue::error(format!(
+            "provider `{provider_id}` must require a dedicated CPA client API key"
+        )));
+    }
+    if provider.models.is_empty() {
+        issues.push(ConfigIssue::error(format!(
+            "provider `{provider_id}` requires an explicit model allowlist"
+        )));
+    }
+    if provider.passthrough_unknown_models {
+        issues.push(ConfigIssue::error(format!(
+            "provider `{provider_id}` cannot enable passthrough_unknown_models"
+        )));
+    }
+    if !provider.model_prefixes.is_empty() {
+        issues.push(ConfigIssue::error(format!(
+            "provider `{provider_id}` cannot claim model prefixes; use provider-qualified model names"
+        )));
+    }
+
+    let Ok(url) = Url::parse(&provider.base_url) else {
+        return;
+    };
+    let path = url.path().trim_end_matches('/');
+    if path.contains("/v0/management") {
+        issues.push(ConfigIssue::error(format!(
+            "provider `{provider_id}` must use CPA's client API, not its management API"
+        )));
+    }
+    match provider_id {
+        "cpa_codex" if !path.ends_with("/v1") => {
+            issues.push(ConfigIssue::error(
+                "provider `cpa_codex` base_url must end with `/v1`".to_owned(),
+            ));
+        }
+        "cpa_claude" if path.ends_with("/v1") => {
+            issues.push(ConfigIssue::error(
+                "provider `cpa_claude` base_url must omit `/v1`; ModelPort appends `/v1/messages`"
+                    .to_owned(),
+            ));
+        }
+        _ => {}
+    }
+}
+
 fn validate_provider_base_url_policy(
     provider_id: &str,
     base_url: &str,
@@ -2615,6 +2720,7 @@ fn validate_provider_base_url_policy(
         || host.parse::<IpAddr>().is_ok_and(private_or_metadata_ip);
     if url.scheme() == "http"
         && !provider_allows_loopback_base_url(provider_id)
+        && !provider_allows_trusted_internal_http(provider_id, host)
         && (!allow_private_provider_urls || !private_literal_host)
         && !env_flag("MODELPORT_ALLOW_INSECURE_PROVIDER_HTTP")
     {
@@ -2629,14 +2735,21 @@ fn validate_provider_base_url_policy(
     }
 
     if host.eq_ignore_ascii_case("localhost") {
-        if provider_allows_loopback_base_url(provider_id) {
+        if provider_allows_loopback_base_url(provider_id)
+            || provider_allows_trusted_internal_http(provider_id, host)
+        {
             return Ok(());
         }
-        return Err("localhost base URLs are only allowed for local/custom providers".to_owned());
+        return Err(
+            "localhost base URLs are only allowed for local/custom/CPA providers".to_owned(),
+        );
     }
 
     if let Ok(ip) = host.parse::<IpAddr>() {
-        if ip.is_loopback() && provider_allows_loopback_base_url(provider_id) {
+        if ip.is_loopback()
+            && (provider_allows_loopback_base_url(provider_id)
+                || provider_allows_trusted_internal_http(provider_id, host))
+        {
             return Ok(());
         }
         if private_or_metadata_ip(ip) {
@@ -2691,6 +2804,14 @@ fn provider_allows_loopback_base_url(provider_id: &str) -> bool {
             provider_id,
             "custom" | "ollama" | "local_sglang" | "local_vllm" | "local_llamacpp"
         )
+}
+
+fn provider_allows_trusted_internal_http(provider_id: &str, host: &str) -> bool {
+    provider_id.starts_with("cpa_")
+        && (host.eq_ignore_ascii_case("localhost")
+            || host.eq_ignore_ascii_case("host.docker.internal")
+            || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+            || !host.contains('.'))
 }
 
 fn private_or_metadata_ip(ip: IpAddr) -> bool {
@@ -2840,6 +2961,51 @@ mod tests {
                 "openrouter:anthropic/claude-sonnet-4".to_owned(),
             )]),
             smart_routing: SmartRoutingConfig::default(),
+        }
+    }
+
+    fn test_cpa_provider(provider_id: &str) -> ProviderConfig {
+        let (display_name, protocol, base_url, api_key_env, default_model, max_tokens_field) =
+            match provider_id {
+                "cpa_codex" => (
+                    "CPA · OpenAI Codex",
+                    ProviderProtocol::OpenaiCompat,
+                    "http://127.0.0.1:8317/v1",
+                    "CPA_CODEX_API_KEY",
+                    "gpt-5.3-codex",
+                    MaxTokensField::MaxCompletionTokens,
+                ),
+                "cpa_claude" => (
+                    "CPA · Claude Code",
+                    ProviderProtocol::Anthropic,
+                    "http://127.0.0.1:8317",
+                    "CPA_CLAUDE_API_KEY",
+                    "claude-sonnet-4-6",
+                    MaxTokensField::MaxTokens,
+                ),
+                _ => panic!("unsupported test CPA provider"),
+            };
+
+        ProviderConfig {
+            display_name: display_name.to_owned(),
+            protocol,
+            base_url: base_url.to_owned(),
+            api_key_env: Some(api_key_env.to_owned()),
+            api_key: Some("test-cpa-client-key".to_owned()),
+            api_key_required: true,
+            default_model: default_model.to_owned(),
+            models: vec![default_model.to_owned()],
+            model_prefixes: Vec::new(),
+            passthrough_unknown_models: false,
+            max_tokens_field,
+            deduplicate_stream_text: false,
+            buffer_stream_text: false,
+            fidelity_mode: FidelityMode::BestEffort,
+            tool_use: ToolUseConfig::default_for_provider(provider_id, protocol, false),
+            reasoning: ReasoningConfig::default(),
+            sampling: SamplingConfig::default(),
+            token_counting: TokenCountingConfig::default(),
+            pricing: None,
         }
     }
 
@@ -3048,6 +3214,25 @@ mod tests {
     }
 
     #[test]
+    fn provider_url_policy_allows_only_trusted_internal_http_for_cpa() {
+        for base_url in [
+            "http://127.0.0.1:8317/v1",
+            "http://cpa:8317/v1",
+            "http://host.docker.internal:8317/v1",
+        ] {
+            validate_provider_base_url_for_request("cpa_codex", base_url, false).unwrap();
+        }
+
+        let err = validate_provider_base_url_for_request(
+            "cpa_codex",
+            "http://cpa.example.com:8317/v1",
+            false,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("must use https"));
+    }
+
+    #[test]
     fn provider_url_policy_blocks_userinfo() {
         let err = validate_provider_base_url_for_request(
             "deepseek",
@@ -3182,6 +3367,81 @@ mod tests {
                 .all(|issue| issue.severity != ConfigIssueSeverity::Error),
             "{issues:?}"
         );
+    }
+
+    #[test]
+    fn built_in_cpa_specs_are_isolated_and_closed_by_default() {
+        let codex = OPTIONAL_PROVIDER_SPECS
+            .iter()
+            .find(|spec| spec.id == "cpa_codex")
+            .unwrap();
+        let claude = OPTIONAL_PROVIDER_SPECS
+            .iter()
+            .find(|spec| spec.id == "cpa_claude")
+            .unwrap();
+
+        assert_eq!(codex.protocol, ProviderProtocol::OpenaiCompat);
+        assert_eq!(claude.protocol, ProviderProtocol::Anthropic);
+        assert_eq!(codex.api_key_env, Some("CPA_CODEX_API_KEY"));
+        assert_eq!(claude.api_key_env, Some("CPA_CLAUDE_API_KEY"));
+        assert!(codex.model_prefixes.is_empty());
+        assert!(claude.model_prefixes.is_empty());
+        assert!(!codex.passthrough_unknown_models);
+        assert!(!claude.passthrough_unknown_models);
+    }
+
+    #[test]
+    fn cpa_providers_validate_and_resolve_by_qualified_model() {
+        let mut config = test_config();
+        config.auth_token = Some("long-local-client-token".to_owned());
+        for provider_id in ["cpa_codex", "cpa_claude"] {
+            config.provider_order.push(provider_id.to_owned());
+            config
+                .providers
+                .insert(provider_id.to_owned(), test_cpa_provider(provider_id));
+        }
+
+        let issues = config.validation_issues();
+        assert!(
+            issues
+                .iter()
+                .all(|issue| issue.severity != ConfigIssueSeverity::Error),
+            "{issues:?}"
+        );
+        let resolved = config.resolve("cpa_claude:claude-sonnet-4-6").unwrap();
+        assert_eq!(resolved.provider_id, "cpa_claude");
+        assert_eq!(resolved.model, "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn cpa_validation_rejects_unsafe_or_ambiguous_configuration() {
+        let mut config = test_config();
+        config.auth_token = Some("long-local-client-token".to_owned());
+        let mut provider = test_cpa_provider("cpa_codex");
+        provider.protocol = ProviderProtocol::Anthropic;
+        provider.base_url = "http://127.0.0.1:8317/v0/management".to_owned();
+        provider.api_key_required = false;
+        provider.models.clear();
+        provider.model_prefixes.push("gpt-".to_owned());
+        provider.passthrough_unknown_models = true;
+        config.provider_order.push("cpa_codex".to_owned());
+        config.providers.insert("cpa_codex".to_owned(), provider);
+
+        let issues = config.validation_issues();
+        for expected in [
+            "must use protocol=openai-compat",
+            "must require a dedicated CPA client API key",
+            "requires an explicit model allowlist",
+            "cannot enable passthrough_unknown_models",
+            "cannot claim model prefixes",
+            "not its management API",
+            "must end with `/v1`",
+        ] {
+            assert!(
+                issues.iter().any(|issue| issue.message.contains(expected)),
+                "missing `{expected}` in {issues:?}"
+            );
+        }
     }
 
     #[test]

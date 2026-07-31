@@ -35,6 +35,11 @@ pub(super) async fn readyz(
             .control
             .health_check()
             .map_err(|error| AppError::NotReady(format!("control storage: {error}")))?;
+        if !state.governance.is_ready() {
+            return Err(AppError::NotReady(
+                "governance storage persistence is degraded".to_owned(),
+            ));
+        }
         state
             .ledger
             .health_check()
@@ -90,6 +95,7 @@ fn detailed_health_body(state: &AppState) -> serde_json::Value {
             "auth": state.auth.data_path(),
             "control": state.control.data_path(),
             "enterpriseLedger": state.ledger.location(),
+            "governance": if state.governance.is_ready() { "ready" } else { "degraded" },
             "status": "ready",
             "pendingFinalizers": state.finalizers.active(),
             "degradedLedgerOperations": state.metrics.degraded_ledger_operations(),

@@ -43,6 +43,7 @@ use crate::{
     },
     error::AppError,
     finalization::FinalizationTracker,
+    governance::{GovernanceStore, LocalScheduler},
     http::{Header, HttpTransport},
     metrics::Metrics,
     oidc::{OIDC_FLOW_COOKIE, OidcService},
@@ -54,6 +55,8 @@ mod admin_providers;
 mod admin_users;
 mod client_api;
 mod dashboard_view;
+#[path = "routes/governance.rs"]
+mod governance_routes;
 mod logs_view;
 mod ops;
 mod provider_view;
@@ -71,6 +74,10 @@ const ROUTING_PROFILE: HeaderName = HeaderName::from_static("x-modelport-routing
 const ROUTING_SESSION_ID: HeaderName = HeaderName::from_static("x-modelport-session-id");
 const ROUTING_DECISION_ID: HeaderName = HeaderName::from_static("x-modelport-routing-decision-id");
 const ROUTING_MODE: HeaderName = HeaderName::from_static("x-modelport-routing-mode");
+const HYBRID_MODE: HeaderName = HeaderName::from_static("x-modelport-hybrid-mode");
+const DATA_CLASSIFICATION: HeaderName = HeaderName::from_static("x-modelport-data-classification");
+const EXECUTION_MODE: HeaderName = HeaderName::from_static("x-modelport-execution-mode");
+const CHANGE_REQUEST_ID: HeaderName = HeaderName::from_static("x-modelport-change-request-id");
 const ORGANIZATION_ID: HeaderName = HeaderName::from_static("x-modelport-organization-id");
 const PROJECT_ID: HeaderName = HeaderName::from_static("x-modelport-project-id");
 const ENVIRONMENT_ID: HeaderName = HeaderName::from_static("x-modelport-environment-id");
@@ -93,6 +100,8 @@ pub struct AppState {
     pub transport: HttpTransport,
     pub metrics: Arc<Metrics>,
     pub(crate) smart_router: Arc<SmartRouter>,
+    pub(crate) governance: Arc<GovernanceStore>,
+    pub(crate) local_scheduler: Arc<LocalScheduler>,
     pub(crate) ledger: Arc<EnterpriseLedger>,
     pub(crate) finalizers: Arc<FinalizationTracker>,
 }
@@ -449,6 +458,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/messages", post(client_api::messages))
         .route("/v1/messages/count_tokens", post(client_api::count_tokens))
         .route("/v1/chat/completions", post(client_api::chat_completions))
+        .route("/v1/effective-policy", get(client_api::effective_policy))
         .route(
             "/admin/auth/login",
             post(admin_login)
@@ -469,6 +479,27 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/admin/auth/logout", post(admin_logout))
         .route("/admin/auth/me", get(admin_me))
+        .route(
+            "/admin/self-service/governance",
+            get(governance_routes::self_service_governance),
+        )
+        .route(
+            "/admin/governance",
+            get(governance_routes::admin_governance_overview),
+        )
+        .route(
+            "/admin/governance/change-requests",
+            get(governance_routes::admin_change_requests)
+                .post(governance_routes::admin_create_change_request),
+        )
+        .route(
+            "/admin/governance/change-requests/{change_id}/approve",
+            post(governance_routes::admin_approve_change_request),
+        )
+        .route(
+            "/admin/governance/change-requests/{change_id}/apply",
+            post(governance_routes::admin_apply_change_request),
+        )
         .route("/admin/dashboard", get(admin_dashboard))
         .route(
             "/admin/providers",
@@ -856,6 +887,30 @@ fn require_admin_user(state: &AppState, headers: &HeaderMap) -> Result<PublicUse
 fn require_admin_write_user(state: &AppState, headers: &HeaderMap) -> Result<PublicUser, AppError> {
     require_console_write_protection(headers)?;
     require_admin_user(state, headers)
+}
+
+fn require_high_risk_change(
+    state: &AppState,
+    headers: &HeaderMap,
+    action: &str,
+    target: &str,
+    payload: &Value,
+) -> Result<String, AppError> {
+    let request_id = headers
+        .get(&CHANGE_REQUEST_ID)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AppError::Forbidden(
+                "high-risk change requires x-modelport-change-request-id with two distinct approvals"
+                    .to_owned(),
+            )
+        })?;
+    state
+        .governance
+        .verify_approved_change(request_id, action, target, payload)?;
+    Ok(request_id.to_owned())
 }
 
 fn require_console_user(state: &AppState, headers: &HeaderMap) -> Result<PublicUser, AppError> {
@@ -1544,7 +1599,16 @@ async fn admin_update_enterprise_budget(
     Json(body): Json<EnterpriseBudgetUpdate>,
 ) -> Result<Json<Value>, AppError> {
     let actor = require_admin_write_user(&state, &headers)?;
+    let approval_payload = serde_json::to_value(&body)?;
+    let approval_id = require_high_risk_change(
+        &state,
+        &headers,
+        "budget.hard_limit",
+        "enterprise-budget",
+        &approval_payload,
+    )?;
     let view = state.ledger.update_budget(&body).await?;
+    state.governance.mark_change_applied(&approval_id)?;
     record_admin_activity(
         &state,
         &actor,
@@ -1832,6 +1896,10 @@ fn management_config(state: &AppState) -> AppConfig {
 
 fn merged_config(state: &AppState, include_disabled: bool) -> AppConfig {
     let mut config = state.config.snapshot();
+    // The checked-in/runtime configuration is the organization-reviewed
+    // catalog. Control-plane overrides may tune an approved entry, but must
+    // never manufacture a new OpenAI-compatible endpoint or model.
+    let organization_catalog = config.providers.clone();
     let controls = state.control.provider_control_snapshot();
     let snapshot = state.control.routing_config();
     let discovered_models = state.control.provider_discovered_models();
@@ -1845,9 +1913,22 @@ fn merged_config(state: &AppState, include_disabled: bool) -> AppConfig {
         if controls.deleted_providers.contains(provider_id) {
             continue;
         }
+        let Some(approved) = organization_catalog.get(provider_id) else {
+            continue;
+        };
         let Ok(provider) = provider_record_to_config(record) else {
             continue;
         };
+        if provider.protocol != approved.protocol
+            || provider.base_url != approved.base_url
+            || provider
+                .models
+                .iter()
+                .any(|model| !approved.models.contains(model))
+            || provider.passthrough_unknown_models != approved.passthrough_unknown_models
+        {
+            continue;
+        }
         config.providers.insert(provider_id.clone(), provider);
         if !config.provider_order.contains(provider_id) {
             config.provider_order.push(provider_id.clone());
@@ -1865,9 +1946,12 @@ fn merged_config(state: &AppState, include_disabled: bool) -> AppConfig {
         let Some(provider) = config.providers.get_mut(&provider_id) else {
             continue;
         };
+        let Some(approved) = organization_catalog.get(&provider_id) else {
+            continue;
+        };
         let mut seen = provider.models.iter().cloned().collect::<BTreeSet<_>>();
         for model in models {
-            if seen.insert(model.clone()) {
+            if approved.models.contains(&model) && seen.insert(model.clone()) {
                 provider.models.push(model);
             }
         }
@@ -1875,6 +1959,22 @@ fn merged_config(state: &AppState, include_disabled: bool) -> AppConfig {
 
     apply_provider_credentials(&mut config, &controls);
     apply_provider_model_overrides(&mut config, &controls.provider_model_overrides);
+    for (provider_id, provider) in &mut config.providers {
+        if let Some(approved) = organization_catalog.get(provider_id) {
+            provider
+                .models
+                .retain(|model| approved.models.contains(model));
+            if !provider.models.contains(&provider.default_model) {
+                provider.default_model.clone_from(&approved.default_model);
+            }
+            // Runtime prefixes and passthrough are convenient discovery features,
+            // but they are not an organization approval. The effective catalog is
+            // deliberately exact so a newly published upstream model cannot become
+            // routable without a reviewed configuration change.
+            provider.model_prefixes.clear();
+            provider.passthrough_unknown_models = false;
+        }
+    }
     config.aliases = state.control.effective_aliases(&config.aliases);
 
     if let Some(provider_id) = snapshot.default_provider
@@ -3411,6 +3511,8 @@ data: [DONE]
                 user_id: owner.id,
                 username: Some(owner.username),
                 name: "Claude Code".to_owned(),
+                principal_type: None,
+                purpose: None,
                 group: None,
                 team_id: None,
                 allowed_models: None,
@@ -3455,6 +3557,8 @@ data: [DONE]
                 user_id: owner.id,
                 username: Some(owner.username),
                 name: "scoped client".to_owned(),
+                principal_type: None,
+                purpose: None,
                 group: None,
                 team_id: None,
                 allowed_models: None,
@@ -3542,6 +3646,8 @@ data: [DONE]
                 user_id: owner.id,
                 username: Some(owner.username),
                 name: "disabled owner key".to_owned(),
+                principal_type: None,
+                purpose: None,
                 group: None,
                 team_id: None,
                 allowed_models: None,
@@ -4179,11 +4285,11 @@ data: [DONE]
             .iter()
             .filter_map(|row| row.get("id").and_then(Value::as_str))
             .collect::<Vec<_>>();
-        assert!(ids.contains(&"mimo:mimo-v2.6-pro"));
+        assert!(!ids.contains(&"mimo:mimo-v2.6-pro"));
     }
 
     #[test]
-    fn discovered_provider_models_are_runtime_routable() {
+    fn discovered_models_remain_unroutable_until_added_to_the_organization_catalog() {
         let state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
         state
             .control
@@ -4205,15 +4311,18 @@ data: [DONE]
                 .count(),
             1
         );
-        assert!(provider.models.contains(&"mimo-v2.6-pro".to_owned()));
+        assert!(!provider.models.contains(&"mimo-v2.6-pro".to_owned()));
 
         let rows = client_api::public_model_rows(&config);
         let ids = rows
             .iter()
             .filter_map(|row| row.get("id").and_then(Value::as_str))
             .collect::<Vec<_>>();
-        assert!(ids.contains(&"mimo:mimo-v2.6-pro"));
-        assert_eq!(config.resolve("mimo-v2.6-pro").unwrap().provider_id, "mimo");
+        assert!(!ids.contains(&"mimo:mimo-v2.6-pro"));
+        assert_ne!(
+            config.resolve("mimo-v2.6-pro").unwrap().model,
+            "mimo-v2.6-pro"
+        );
     }
 
     #[test]
@@ -4535,7 +4644,7 @@ data: [DONE]
     }
 
     #[test]
-    fn provider_override_is_routable_until_disabled() {
+    fn unreviewed_dynamic_provider_override_never_enters_effective_routing() {
         let state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
         state
             .control
@@ -4566,11 +4675,8 @@ data: [DONE]
             .unwrap();
 
         let config = effective_config(&state);
-        assert_eq!(
-            config.resolve("qwen-local").unwrap().provider_id,
-            "local_custom"
-        );
-        assert!(client_api::public_model_rows(&config).iter().any(|row| {
+        assert_eq!(config.resolve("qwen-local").unwrap().provider_id, "mimo");
+        assert!(!client_api::public_model_rows(&config).iter().any(|row| {
             row.get("id").and_then(Value::as_str) == Some("local_custom:qwen-local")
         }));
 
@@ -4584,7 +4690,7 @@ data: [DONE]
                 .contains_key("local_custom")
         );
         assert!(
-            management_config(&state)
+            !management_config(&state)
                 .providers
                 .contains_key("local_custom")
         );
@@ -4639,6 +4745,8 @@ data: [DONE]
                 user_id: "usr_test".to_owned(),
                 username: Some("test-user".to_owned()),
                 name: "mimo only".to_owned(),
+                principal_type: None,
+                purpose: None,
                 group: None,
                 team_id: None,
                 allowed_models: None,
@@ -5618,6 +5726,9 @@ data: {"type":"message_stop"}
                 mode: TokenCountingMode::Anthropic,
                 context_tokens: None,
                 recommended_reasoning_input_tokens: None,
+                model_recommended_input_tokens: Default::default(),
+                max_output_tokens: None,
+                model_max_output_tokens: Default::default(),
             },
             pricing: None,
         };
@@ -5644,6 +5755,10 @@ data: {"type":"message_stop"}
             transport: HttpTransport::new().unwrap(),
             metrics: Arc::new(Metrics::new()),
             smart_router: Arc::new(SmartRouter::new()),
+            governance: Arc::new(GovernanceStore::for_tests()),
+            local_scheduler: LocalScheduler::new(
+                crate::governance::LocalSchedulerConfig::for_tests(),
+            ),
             ledger: Arc::new(EnterpriseLedger::memory()),
             finalizers: Arc::new(FinalizationTracker::default()),
         }
@@ -5706,6 +5821,9 @@ data: {"type":"message_stop"}
                 mode: TokenCountingMode::Anthropic,
                 context_tokens: None,
                 recommended_reasoning_input_tokens: None,
+                model_recommended_input_tokens: Default::default(),
+                max_output_tokens: None,
+                model_max_output_tokens: Default::default(),
             },
             pricing: None,
         };
@@ -5732,6 +5850,10 @@ data: {"type":"message_stop"}
             transport: HttpTransport::new().unwrap(),
             metrics: Arc::new(Metrics::new()),
             smart_router: Arc::new(SmartRouter::new()),
+            governance: Arc::new(GovernanceStore::for_tests()),
+            local_scheduler: LocalScheduler::new(
+                crate::governance::LocalSchedulerConfig::for_tests(),
+            ),
             ledger: Arc::new(EnterpriseLedger::memory()),
             finalizers: Arc::new(FinalizationTracker::default()),
         }

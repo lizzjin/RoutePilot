@@ -11,6 +11,7 @@ use crate::{
     deployment,
     enterprise_ledger::EnterpriseLedger,
     finalization::FinalizationTracker,
+    governance::{GovernanceStore, LocalScheduler, LocalSchedulerConfig},
     http::HttpTransport,
     metrics::Metrics,
     oidc::OidcService,
@@ -70,6 +71,8 @@ pub(crate) async fn serve() -> Result<(), AppError> {
         transport: HttpTransport::new()?,
         metrics,
         smart_router: Arc::new(SmartRouter::new()),
+        governance: Arc::new(GovernanceStore::load()?),
+        local_scheduler: LocalScheduler::new(LocalSchedulerConfig::from_env()?),
         ledger,
         finalizers: finalizers.clone(),
     };

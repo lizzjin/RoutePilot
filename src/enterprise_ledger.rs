@@ -429,7 +429,7 @@ pub(crate) struct EnterpriseBudgetScopeQuery {
     pub(crate) environment_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EnterpriseBudgetUpdate {
     organization_id: String,
@@ -463,6 +463,8 @@ pub(crate) struct EnterpriseBudgetAccount {
     settled_microunits: i64,
     available_microunits: Option<i64>,
     utilization_basis_points: Option<i64>,
+    warning_threshold_reached: bool,
+    hard_limit_reached: bool,
     version: i64,
     updated_at_ms: i64,
 }
@@ -4009,6 +4011,7 @@ fn budget_account(
     updated_at_ms: i64,
 ) -> EnterpriseBudgetAccount {
     let consumed = reserved_microunits.saturating_add(settled_microunits);
+    let utilization_basis_points = limit_microunits.map(|limit| utilization_bps(consumed, limit));
     EnterpriseBudgetAccount {
         organization_id: tenant.organization_id.clone(),
         project_id: tenant.project_id.clone(),
@@ -4018,7 +4021,9 @@ fn budget_account(
         reserved_microunits,
         settled_microunits,
         available_microunits: limit_microunits.map(|limit| limit.saturating_sub(consumed)),
-        utilization_basis_points: limit_microunits.map(|limit| utilization_bps(consumed, limit)),
+        utilization_basis_points,
+        warning_threshold_reached: utilization_basis_points.is_some_and(|value| value >= 8_000),
+        hard_limit_reached: utilization_basis_points.is_some_and(|value| value >= 10_000),
         version,
         updated_at_ms,
     }

@@ -1,0 +1,80 @@
+# Maintained ModelPort side of contracts/local-qwen-provider-v1.json in
+# local-inference-stack. Copy this file to config.toml; do not edit it in place.
+default_provider = "local_qwen"
+provider_order = ["local_qwen"]
+
+[server]
+bind = "0.0.0.0:38082"
+max_request_body_bytes = 33554432
+max_concurrent_requests = 64
+
+[auth]
+token_env = "MODELPORT_AUTH_TOKEN"
+
+[providers.local_qwen]
+display_name = "Qwen3.5-9B Q5_K_M (local)"
+protocol = "openai-compat"
+base_url_env = "QWEN_LOCAL_BASE_URL"
+base_url = "http://qwen-runtime:8080/v1"
+api_key_required = false
+default_model = "qwen3.5-9b-q5km"
+models = ["qwen3.5-9b-q5km"]
+passthrough_unknown_models = false
+max_tokens_field = "max_tokens"
+fidelity_mode = "best_effort"
+
+[providers.local_qwen.tool_use]
+supported = true
+tool_choice = true
+parallel_tool_calls = true
+streaming_arguments = "best_effort"
+response_validation = "strict"
+repair_invalid_arguments = true
+
+[providers.local_qwen.reasoning]
+mode = "llama_cpp"
+default_enabled = false
+model_enabled = { "qwen3.5-fast" = false, "qwen3.5-code" = true, "qwen3.5-deep" = true }
+default_budget_tokens = 4096
+model_budget_tokens = { "qwen3.5-fast" = 512, "qwen3.5-code" = 4096, "qwen3.5-deep" = 16384 }
+
+[providers.local_qwen.sampling]
+mode = "llama_cpp"
+
+[providers.local_qwen.sampling.profiles."qwen3.5-fast"]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 1.5
+repeat_penalty = 1.0
+
+[providers.local_qwen.sampling.profiles."qwen3.5-code"]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+repeat_penalty = 1.0
+
+[providers.local_qwen.sampling.profiles."qwen3.5-deep"]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 1.5
+repeat_penalty = 1.0
+
+[providers.local_qwen.token_counting]
+mode = "anthropic"
+context_tokens = 131072
+recommended_reasoning_input_tokens = 94208
+model_recommended_input_tokens = { "qwen3.5-fast" = 24576, "qwen3.5-code" = 57344, "qwen3.5-deep" = 94208 }
+max_output_tokens = 32768
+model_max_output_tokens = { "qwen3.5-fast" = 4096, "qwen3.5-code" = 16384, "qwen3.5-deep" = 32768 }
+
+[aliases]
+"qwen3.5-local" = "local_qwen:qwen3.5-9b-q5km"
+"qwen3.5-fast" = "local_qwen:qwen3.5-9b-q5km"
+"qwen3.5-code" = "local_qwen:qwen3.5-9b-q5km"
+"qwen3.5-deep" = "local_qwen:qwen3.5-9b-q5km"

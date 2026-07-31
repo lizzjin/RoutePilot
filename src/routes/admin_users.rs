@@ -32,10 +32,23 @@ pub(super) async fn admin_create_user(
     Json(body): Json<CreateUserInput>,
 ) -> Result<Json<Value>, AppError> {
     let actor = require_admin_write_user(&state, &headers)?;
+    let approval_id = require_high_risk_change(
+        &state,
+        &headers,
+        "identity.permission",
+        &format!("user:new:{}", body.username),
+        &json!({
+            "username": body.username.clone(),
+            "email": body.email.clone(),
+            "role": body.role.clone(),
+            "status": body.status.clone(),
+        }),
+    )?;
     let auth = state.auth.clone();
     let user = tokio::task::spawn_blocking(move || auth.create_user(body))
         .await
         .map_err(|error| AppError::Config(format!("password worker failed: {error}")))??;
+    state.governance.mark_change_applied(&approval_id)?;
     record_admin_activity(
         &state,
         &actor,
@@ -55,6 +68,20 @@ pub(super) async fn admin_update_user(
     Json(body): Json<UpdateUserInput>,
 ) -> Result<Json<Value>, AppError> {
     let current_user = require_admin_write_user(&state, &headers)?;
+    let approval_id = if body.role.is_some() || body.status.is_some() {
+        Some(require_high_risk_change(
+            &state,
+            &headers,
+            "identity.permission",
+            &format!("user:{user_id}"),
+            &json!({
+                "role": body.role.clone(),
+                "status": body.status.clone(),
+            }),
+        )?)
+    } else {
+        None
+    };
     let was_inactive = state
         .auth
         .user_by_id(&user_id)
@@ -76,6 +103,9 @@ pub(super) async fn admin_update_user(
     if user.status != "active" {
         state.control.delete_user_resources(&user.id)?;
     }
+    if let Some(approval_id) = approval_id {
+        state.governance.mark_change_applied(&approval_id)?;
+    }
     record_admin_activity(
         &state,
         &current_user,
@@ -94,8 +124,16 @@ pub(super) async fn admin_delete_user(
     Path(user_id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     let current_user = require_admin_write_user(&state, &headers)?;
+    let approval_id = require_high_risk_change(
+        &state,
+        &headers,
+        "identity.permission",
+        &format!("user:{user_id}"),
+        &json!({ "delete": true }),
+    )?;
     state.auth.delete_user(&user_id, &current_user.id)?;
     state.control.delete_user_resources(&user_id)?;
+    state.governance.mark_change_applied(&approval_id)?;
     record_admin_activity(
         &state,
         &current_user,

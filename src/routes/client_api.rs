@@ -17,7 +17,7 @@ use tracing::{error, info};
 use crate::{
     config::{
         AppConfig, ProviderConfig, ProviderProtocol, ResolvedProvider, RoutingProfile,
-        SmartRoutingMode, TokenCountingMode,
+        SmartRoutingMode, TokenCountingConfig, TokenCountingMode,
     },
     control::{UsageEstimate, UsageEventInput},
     domain::{AttemptId, RequestContext, RequestId},
@@ -25,6 +25,10 @@ use crate::{
         LedgerAttempt, LedgerLease, LedgerOutcome, LedgerRequest, LedgerRequestMetadata,
     },
     exchange::{ClientRequest, ExchangeRequest, OpenAiChatRequest},
+    governance::{
+        DataClassification, HybridMode, LocalAdmission, LocalLease, ProviderBoundary,
+        WorkloadClass, order_attempts,
+    },
     metrics::MessageMetricLabels,
     pricing::{self, ModelPricing, TokenUsageBreakdown},
     providers,
@@ -44,9 +48,23 @@ pub(super) async fn models(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let started = Instant::now();
     let result = (|| {
-        authenticate_client(&state, &headers)?;
+        let identity = authenticate_client(&state, &headers)?;
+        let tenant = state.control.tenant_scope(&identity)?;
+        let policy = state.governance.effective_policy(&tenant);
         let config = effective_config(&state);
-        let data = public_model_rows(&config);
+        let data = public_model_rows(&config)
+            .into_iter()
+            .filter(|row| {
+                let Some(model) = row.get("id").and_then(Value::as_str) else {
+                    return false;
+                };
+                config.resolve(model).is_ok_and(|resolved| {
+                    policy.enforce_attempt(&resolved).is_ok()
+                        && (policy.cloud_enabled
+                            || ProviderBoundary::for_resolved(&resolved) == ProviderBoundary::Local)
+                })
+            })
+            .collect::<Vec<_>>();
 
         Ok(Json(json!({
             "data": data,
@@ -60,6 +78,24 @@ pub(super) async fn models(
         .metrics
         .record_route("models", result.is_ok(), started.elapsed());
     result
+}
+
+pub(super) async fn effective_policy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AppError> {
+    let identity = authenticate_client(&state, &headers)?;
+    let tenant = state.control.tenant_scope(&identity)?;
+    Ok(Json(json!({
+        "principalType": identity.principal_type,
+        "tenant": {
+            "organizationId": tenant.organization_id.as_str(),
+            "projectId": tenant.project_id.as_str(),
+            "environmentId": tenant.environment_id.as_str(),
+        },
+        "policy": state.governance.effective_policy(&tenant),
+        "scheduler": state.local_scheduler.snapshot(),
+    })))
 }
 
 pub(super) fn public_model_rows(config: &AppConfig) -> Vec<Value> {
@@ -288,6 +324,48 @@ async fn count_tokens_inner(
     let requested_model = request.model.clone();
     let config = effective_config(&state);
     let mut resolved = config.resolve(&requested_model)?;
+    let tenant = state.control.tenant_scope(&identity)?;
+    let policy = state.governance.effective_policy(&tenant);
+    let classification = request_routing_header(
+        headers,
+        &DATA_CLASSIFICATION,
+        "x-modelport-data-classification",
+        32,
+    )?
+    .map(|value| {
+        DataClassification::parse(&value).ok_or_else(|| {
+            AppError::InvalidRequest(
+                "x-modelport-data-classification must be unknown, sensitive, internal, or public"
+                    .to_owned(),
+            )
+        })
+    })
+    .transpose()?
+    .unwrap_or(policy.default_classification);
+    let requested_mode = request_routing_header(
+        headers,
+        &HYBRID_MODE,
+        "x-modelport-hybrid-mode",
+        32,
+    )?
+    .map(|value| {
+        HybridMode::parse(&value).ok_or_else(|| {
+            AppError::InvalidRequest(
+                "x-modelport-hybrid-mode must be local_strict, local_first, balanced, or cloud_first"
+                    .to_owned(),
+            )
+        })
+    })
+    .transpose()?;
+    let mode = policy.effective_mode(requested_mode, classification)?;
+    policy.enforce_attempt(&resolved)?;
+    if mode == HybridMode::LocalStrict
+        && ProviderBoundary::for_resolved(&resolved) == ProviderBoundary::Cloud
+    {
+        return Err(AppError::Forbidden(
+            "local_strict token counting cannot use a cloud provider".to_owned(),
+        ));
+    }
     if resolved.provider.token_counting.mode != TokenCountingMode::Anthropic {
         return Err(AppError::InvalidRequest(format!(
             "provider `{}` does not enable Anthropic token counting",
@@ -457,6 +535,78 @@ async fn handle_inference(
         identity.user_id.clone(),
         exchange.client_protocol(),
     );
+    let project_policy = state.governance.effective_policy(&request_context.tenant);
+    let classification = match request_routing_header(
+        &headers,
+        &DATA_CLASSIFICATION,
+        "x-modelport-data-classification",
+        32,
+    ) {
+        Ok(Some(value)) => DataClassification::parse(&value).ok_or_else(|| {
+            record_inference_rejection(
+                &state,
+                route_name,
+                "governance",
+                AppError::InvalidRequest(
+                    "x-modelport-data-classification must be unknown, sensitive, internal, or public"
+                        .to_owned(),
+                ),
+                started,
+            )
+        })?,
+        Ok(None) => project_policy.default_classification,
+        Err(err) => {
+            return Err(record_inference_rejection(
+                &state,
+                route_name,
+                "governance",
+                err,
+                started,
+            ));
+        }
+    };
+    let requested_hybrid_mode = match request_routing_header(
+        &headers,
+        &HYBRID_MODE,
+        "x-modelport-hybrid-mode",
+        32,
+    ) {
+        Ok(Some(value)) => Some(HybridMode::parse(&value).ok_or_else(|| {
+            record_inference_rejection(
+                &state,
+                route_name,
+                "governance",
+                AppError::InvalidRequest(
+                    "x-modelport-hybrid-mode must be local_strict, local_first, balanced, or cloud_first"
+                        .to_owned(),
+                ),
+                started,
+            )
+        })?),
+        Ok(None) => None,
+        Err(err) => {
+            return Err(record_inference_rejection(
+                &state,
+                route_name,
+                "governance",
+                err,
+                started,
+            ));
+        }
+    };
+    let hybrid_mode = match project_policy.effective_mode(requested_hybrid_mode, classification) {
+        Ok(mode) => mode,
+        Err(err) => {
+            return Err(record_inference_rejection(
+                &state,
+                route_name,
+                "governance",
+                err,
+                started,
+            ));
+        }
+    };
+    let workload_class = WorkloadClass::parse(&traffic_class).unwrap_or_default();
     let requested_model = exchange.requested_model.clone();
     let config = effective_config(&state);
     let routing_profile = match request_routing_header(
@@ -534,11 +684,28 @@ async fn handle_inference(
             ));
         }
     };
-    let resolved = routing_plan
-        .attempts
-        .first()
-        .cloned()
-        .ok_or_else(|| AppError::ProviderNotFound("routing plan is empty".to_owned()))?;
+    let ordered_attempts = order_attempts(routing_plan.attempts.clone(), hybrid_mode);
+    let mut first_policy_error = None;
+    let authorized_attempts = ordered_attempts
+        .into_iter()
+        .filter(|attempt| match project_policy.enforce_attempt(attempt) {
+            Ok(()) => true,
+            Err(error) => {
+                if first_policy_error.is_none() {
+                    first_policy_error = Some(error);
+                }
+                false
+            }
+        })
+        .collect::<Vec<_>>();
+    let resolved = authorized_attempts.first().cloned().ok_or_else(|| {
+        first_policy_error.unwrap_or_else(|| {
+            AppError::ProviderNotFound(format!(
+                "no {} provider is authorized for this project",
+                hybrid_mode.as_str()
+            ))
+        })
+    })?;
     if let Err(err) = state.rate_limiter.check(RateLimitScope {
         identity: &identity,
         client_ip: request_client_ip.as_deref(),
@@ -623,6 +790,7 @@ async fn handle_inference(
         project_id = request_context.tenant.project_id.as_str(),
         environment_id = request_context.tenant.environment_id.as_str(),
         principal_id = request_context.principal_id.as_str(),
+        principal_type = identity.principal_type.as_str(),
         client_protocol = request_context.protocol.as_str(),
         requested_model = exchange.requested_model.as_str(),
         provider = resolved.provider_id.as_str(),
@@ -644,8 +812,7 @@ async fn handle_inference(
     let routing_decision_id = routing_plan.evidence.decision_id.clone();
     let routing_mode = routing_plan.evidence.mode.clone();
 
-    let mut attempts = routing_plan
-        .attempts
+    let mut attempts = authorized_attempts
         .into_iter()
         .map(|resolved| (resolved, None))
         .collect::<VecDeque<_>>();
@@ -661,6 +828,7 @@ async fn handle_inference(
     let mut tool_repair_attempted = false;
     let mut tool_repair_recovered = false;
     let mut prior_attempt_usage = UsageEstimate::default();
+    let mut successful_local_lease = None::<LocalLease>;
 
     while let Some((mut attempt, repair)) = attempts.pop_front() {
         let attempt_id = AttemptId::new();
@@ -672,6 +840,31 @@ async fn handle_inference(
             && !stream
             && attempt.provider.protocol == ProviderProtocol::OpenaiCompat
             && attempt.provider.tool_use.repair_invalid_arguments;
+        let attempt_boundary = ProviderBoundary::for_resolved(&attempt);
+        let cloud_available = attempts.iter().any(|(candidate, _)| {
+            ProviderBoundary::for_resolved(candidate) == ProviderBoundary::Cloud
+        });
+        let attempt_local_lease = if attempt_boundary == ProviderBoundary::Local {
+            match state
+                .local_scheduler
+                .acquire(
+                    &identity.user_id,
+                    hybrid_mode,
+                    workload_class,
+                    cloud_available,
+                )
+                .await
+            {
+                Ok((LocalAdmission::Acquired, lease)) => lease,
+                Ok((LocalAdmission::OverflowToCloud, _)) => continue,
+                Err(err) => {
+                    result = Err(err);
+                    break;
+                }
+            }
+        } else {
+            None
+        };
         let credential_id = match state
             .control
             .apply_selected_provider_credential_for_request(&provider_id, &mut attempt.provider)
@@ -851,6 +1044,7 @@ async fn handle_inference(
         result = attempt_result;
         if result.is_ok() {
             tool_repair_recovered = repair.is_some();
+            successful_local_lease = attempt_local_lease;
             break;
         }
 
@@ -985,7 +1179,12 @@ async fn handle_inference(
 
     if stream && success {
         let mut response = result.expect("successful stream result must contain a response");
-        attach_routing_response_headers(&mut response, &routing_decision_id, &routing_mode)?;
+        attach_routing_response_headers(
+            &mut response,
+            &routing_decision_id,
+            &routing_mode,
+            hybrid_mode,
+        )?;
         let permit = stream_permit.expect("stream request must hold a stream permit");
         let sent = last_sent.expect("successful stream must have a sent attempt");
         return Ok(response_with_stream_finalizer(
@@ -1003,6 +1202,7 @@ async fn handle_inference(
                 attempt_started: sent.started,
                 prior_attempt_usage,
                 _ledger_lease: ledger_lease,
+                _local_lease: successful_local_lease,
                 started,
                 route_name,
             },
@@ -1036,7 +1236,12 @@ async fn handle_inference(
         );
     }
     if let Ok(response) = &mut result {
-        attach_routing_response_headers(response, &routing_decision_id, &routing_mode)?;
+        attach_routing_response_headers(
+            response,
+            &routing_decision_id,
+            &routing_mode,
+            hybrid_mode,
+        )?;
     }
     result
 }
@@ -1106,6 +1311,11 @@ async fn enforce_context_admission(
     resolved: &ResolvedProvider,
 ) -> Result<(), AppError> {
     let admission = &resolved.provider.token_counting;
+    validate_output_budget(
+        &exchange.requested_model,
+        exchange.estimated_output_tokens(),
+        admission,
+    )?;
     let Some(context_tokens) = admission.context_tokens else {
         return Ok(());
     };
@@ -1160,13 +1370,48 @@ async fn enforce_context_admission(
     let output_tokens = exchange
         .estimated_output_tokens()
         .saturating_add(repair_reserve);
+    let recommended_input_tokens = recommended_input_limit(&exchange.requested_model, admission);
     validate_context_budget(
         input_tokens,
         output_tokens,
         context_tokens,
-        admission.recommended_reasoning_input_tokens,
+        recommended_input_tokens,
         exchange.thinking_disabled(),
     )
+}
+
+fn recommended_input_limit(requested_model: &str, admission: &TokenCountingConfig) -> Option<u64> {
+    admission
+        .model_recommended_input_tokens
+        .get(requested_model)
+        .copied()
+        .or(admission.recommended_reasoning_input_tokens)
+}
+
+fn validate_output_budget(
+    requested_model: &str,
+    output_tokens: u64,
+    admission: &TokenCountingConfig,
+) -> Result<(), AppError> {
+    let model_limit = admission
+        .model_max_output_tokens
+        .get(requested_model)
+        .copied();
+    let Some(limit) = model_limit.or(admission.max_output_tokens) else {
+        return Ok(());
+    };
+    if output_tokens > limit {
+        let scope = if model_limit.is_some() {
+            format!("logical model `{requested_model}`")
+        } else {
+            "selected provider".to_owned()
+        };
+        return Err(AppError::InvalidRequest(format!(
+            "output admission rejected request: max_output_tokens={output_tokens} exceeds \
+             configured limit={limit} for {scope}; reduce max_tokens"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_context_budget(
@@ -1299,10 +1544,12 @@ fn request_traffic_class(headers: &HeaderMap) -> Result<String, AppError> {
         .map_err(|_| AppError::InvalidRequest("traffic class must be ASCII".to_owned()))?;
     match value.trim().to_ascii_lowercase().as_str() {
         "business" => Ok("business".to_owned()),
+        "batch" => Ok("batch".to_owned()),
         "synthetic" => Ok("synthetic".to_owned()),
         "diagnostic" => Ok("diagnostic".to_owned()),
         _ => Err(AppError::InvalidRequest(
-            "x-modelport-traffic-class must be business, synthetic, or diagnostic".to_owned(),
+            "x-modelport-traffic-class must be business, batch, synthetic, or diagnostic"
+                .to_owned(),
         )),
     }
 }
@@ -1319,6 +1566,7 @@ struct StreamFinalizationContext {
     attempt_started: Instant,
     prior_attempt_usage: UsageEstimate,
     _ledger_lease: LedgerLease,
+    _local_lease: Option<LocalLease>,
     started: Instant,
     route_name: &'static str,
 }
@@ -1661,6 +1909,7 @@ fn attach_routing_response_headers(
     response: &mut Response,
     decision_id: &str,
     mode: &str,
+    hybrid_mode: HybridMode,
 ) -> Result<(), AppError> {
     response.headers_mut().insert(
         ROUTING_DECISION_ID.clone(),
@@ -1671,6 +1920,10 @@ fn attach_routing_response_headers(
         ROUTING_MODE.clone(),
         axum::http::HeaderValue::from_str(mode)
             .map_err(|_| AppError::Config("invalid routing mode".to_owned()))?,
+    );
+    response.headers_mut().insert(
+        EXECUTION_MODE.clone(),
+        axum::http::HeaderValue::from_static(hybrid_mode.as_str()),
     );
     Ok(())
 }
@@ -1895,9 +2148,12 @@ fn estimate_usage(
 mod tests {
     use axum::http::{HeaderMap, HeaderValue};
 
+    use crate::config::{TokenCountingConfig, TokenCountingMode};
+
     use super::{
         ENVIRONMENT_ID, ORGANIZATION_ID, PROJECT_ID, ResponseObservation, classify_tool_outcome,
-        request_tenant_scope, request_traffic_class, validate_context_budget,
+        recommended_input_limit, request_tenant_scope, request_traffic_class,
+        validate_context_budget, validate_output_budget,
     };
 
     #[test]
@@ -1962,6 +2218,54 @@ mod tests {
     fn context_budget_accepts_reasoning_within_recommended_limit() {
         validate_context_budget(92_000, 32_768, 131_072, Some(94_208), false)
             .expect("92K reasoning input should remain admissible");
+    }
+
+    #[test]
+    fn output_budget_prefers_logical_model_limit() {
+        let admission = TokenCountingConfig {
+            mode: TokenCountingMode::Anthropic,
+            context_tokens: Some(131_072),
+            recommended_reasoning_input_tokens: Some(94_208),
+            model_recommended_input_tokens: Default::default(),
+            max_output_tokens: Some(32_768),
+            model_max_output_tokens: std::collections::HashMap::from([
+                ("qwen3.5-fast".to_owned(), 4_096),
+                ("qwen3.5-deep".to_owned(), 32_768),
+            ]),
+        };
+
+        validate_output_budget("qwen3.5-fast", 4_096, &admission)
+            .expect("the logical-model boundary is inclusive");
+        let error = validate_output_budget("qwen3.5-fast", 4_097, &admission)
+            .expect_err("the logical-model limit must be enforced");
+        assert!(error.to_string().contains("logical model `qwen3.5-fast`"));
+        assert!(error.to_string().contains("configured limit=4096"));
+        validate_output_budget("local_qwen:qwen3.5-9b-q5km", 32_768, &admission)
+            .expect("direct selectors use the provider-wide limit");
+    }
+
+    #[test]
+    fn recommended_input_prefers_logical_model_working_set() {
+        let admission = TokenCountingConfig {
+            mode: TokenCountingMode::Anthropic,
+            context_tokens: Some(131_072),
+            recommended_reasoning_input_tokens: Some(94_208),
+            model_recommended_input_tokens: std::collections::HashMap::from([(
+                "qwen3.5-code".to_owned(),
+                57_344,
+            )]),
+            max_output_tokens: None,
+            model_max_output_tokens: Default::default(),
+        };
+
+        assert_eq!(
+            recommended_input_limit("qwen3.5-code", &admission),
+            Some(57_344)
+        );
+        assert_eq!(
+            recommended_input_limit("local_qwen:qwen3.5-9b-q5km", &admission),
+            Some(94_208)
+        );
     }
 
     #[test]

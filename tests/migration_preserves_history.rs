@@ -82,9 +82,29 @@ async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
         )
         .execute(&mut connection)
         .await?;
+        connection
+            .execute(
+                "CREATE TABLE modelport_state (
+                    namespace TEXT PRIMARY KEY,
+                    document JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )",
+            )
+            .await?;
+        connection
+            .execute(
+                "INSERT INTO modelport_state (namespace, document)
+                 VALUES ('auth', '{\"users\": [{\"id\": \"usr_legacy\"}]}'::jsonb)",
+            )
+            .await?;
 
         sqlx::raw_sql(include_str!(
             "../migrations/0005_current_operational_schema.sql"
+        ))
+        .execute(&mut connection)
+        .await?;
+        sqlx::raw_sql(include_str!(
+            "../migrations/0008_state_document_revisions.sql"
         ))
         .execute(&mut connection)
         .await?;
@@ -128,7 +148,20 @@ async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
         )
         .fetch_one(&mut connection)
         .await?;
-        Ok::<_, sqlx::Error>((request, attempt_count, last_attempt, routing_table_exists))
+        let legacy_state = sqlx::query_as::<_, (serde_json::Value, i64)>(
+            "SELECT document, revision
+             FROM modelport_state
+             WHERE namespace = 'auth'",
+        )
+        .fetch_one(&mut connection)
+        .await?;
+        Ok::<_, sqlx::Error>((
+            request,
+            attempt_count,
+            last_attempt,
+            routing_table_exists,
+            legacy_state,
+        ))
     }
     .await;
 
@@ -141,7 +174,7 @@ async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
         .await
         .expect("remove isolated migration schema");
 
-    let (request, attempt_count, last_attempt, routing_table_exists) =
+    let (request, attempt_count, last_attempt, routing_table_exists, legacy_state) =
         migration_result.expect("apply migrations to populated legacy schema");
     assert_eq!(request.0, "usr_legacy");
     assert_eq!(request.1, "/v1/messages");
@@ -154,6 +187,8 @@ async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
     assert_eq!(last_attempt.1.as_deref(), Some("provider_a"));
     assert_eq!(last_attempt.2, 2_000);
     assert!(routing_table_exists);
+    assert_eq!(legacy_state.0["users"][0]["id"], "usr_legacy");
+    assert_eq!(legacy_state.1, 0);
 }
 
 #[tokio::test]

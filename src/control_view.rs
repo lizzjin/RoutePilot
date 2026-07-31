@@ -12,6 +12,8 @@ pub(crate) trait ApiKeyViewRecord {
     fn user_id(&self) -> &str;
     fn username(&self) -> &str;
     fn name(&self) -> &str;
+    fn principal_type(&self) -> &str;
+    fn purpose(&self) -> Option<&str>;
     fn key_prefix(&self) -> &str;
     fn key_preview(&self) -> &str;
     fn group(&self) -> Option<&str>;
@@ -97,6 +99,8 @@ pub(crate) fn public_api_key<K: ApiKeyViewRecord>(record: &K) -> PublicApiKey {
         user_id: record.user_id().to_owned(),
         username: record.username().to_owned(),
         name: record.name().to_owned(),
+        principal_type: record.principal_type().to_owned(),
+        purpose: record.purpose().map(str::to_owned),
         key_prefix: record.key_prefix().to_owned(),
         key_preview: record.key_preview().to_owned(),
         group: record.group().map(str::to_owned),

@@ -181,10 +181,14 @@ fn restore_backup(path: &str) -> Result<(), AppError> {
     let backup = load_backup(path)?;
     let auth_store = JsonStore::open("auth")?;
     let control_store = JsonStore::open("control")?;
-    backup_existing_state(path, "auth", auth_store.read_value()?)?;
-    backup_existing_state(path, "control", control_store.read_value()?)?;
-    auth_store.write_value(&backup.auth)?;
-    control_store.write_value(&backup.control)?;
+    let auth_current = auth_store.read_versioned()?;
+    let control_current = control_store.read_versioned()?;
+    backup_existing_state(path, "auth", auth_current.value)?;
+    backup_existing_state(path, "control", control_current.value)?;
+    JsonStore::compare_and_swap_pair(
+        (&auth_store, auth_current.revision, &backup.auth),
+        (&control_store, control_current.revision, &backup.control),
+    )?;
     println!(
         "ModelPort backup restored to {} and {}",
         auth_store.location(),

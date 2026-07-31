@@ -13,6 +13,7 @@ mod error;
 mod exchange;
 mod fidelity;
 mod finalization;
+mod governance;
 mod http;
 mod metrics;
 mod oidc;

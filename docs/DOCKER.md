@@ -1,7 +1,10 @@
 # Docker Compose Deployment
 
-Docker Compose is the recommended complete ModelPort deployment. It starts the
-backend, a same-origin dashboard proxy, and PostgreSQL.
+The root Docker Compose file is the recommended local development and
+single-host learning deployment. It starts the backend, a same-origin dashboard
+proxy, and PostgreSQL. The phase-one production profile uses one ModelPort
+instance but an external managed PostgreSQL database and secret-manager-rendered
+runtime environment; see [Single-instance production](#single-instance-production).
 
 | Service/volume | Purpose |
 | --- | --- |
@@ -49,9 +52,14 @@ cp deploy/docker/modelport.env.example .env
 cp config.example.toml config.toml
 # replace every required placeholder
 scripts/build-container.sh
-docker compose up -d
+scripts/compose-up.sh
 docker compose ps
 ```
+
+`compose-up.sh` runs a read-only database alignment check before updating an
+existing deployment. A major-version or data-volume mismatch is a hard stop;
+follow [the PostgreSQL migration runbook](POSTGRESQL_MIGRATION.md) instead of
+using raw `docker compose up` to bypass it.
 
 The build helper refuses a dirty worktree and embeds the Git revision plus
 `io.modelport.source-state=clean` in the backend image. For local-only testing
@@ -93,7 +101,7 @@ docker compose ps
 docker compose logs -f modelport
 docker compose logs -f dashboard
 docker compose restart modelport
-scripts/build-container.sh && docker compose up -d
+scripts/build-container.sh && scripts/compose-up.sh
 docker compose down
 ```
 
@@ -131,11 +139,13 @@ unencoded.
 
 The Compose service always supplies either the explicit or constructed database
 URL. Auth, control, operational request, budget, usage, and audit state have no
-runtime file or memory mode. Start the supported deployment with plain
-`docker compose up -d --build`. Old JSON files are not imported.
+runtime file or memory mode. Start or update this local deployment with
+`scripts/compose-up.sh`. Old JSON files are not imported.
 
 Persistence replaces logical documents only for low-frequency auth/control
-changes. Embedded migrations create normalized tenant, gateway-request,
+changes. Document rows carry monotonic revisions, stale writers are rejected
+instead of silently overwriting newer state, and logical backup restore updates
+both rows atomically. Embedded migrations create normalized tenant, gateway-request,
 Provider-attempt and audit rows, then add hashed idempotency claims, renewable
 instance leases, transactional budget accounts/reservations, and append-only
 evidence events.
@@ -149,12 +159,11 @@ statistics. Response replay remains open.
 The dashboard's CSRF-protected `POST /admin/backup` download is a redacted
 diagnostic snapshot, creates an audit event, and is not a restore artifact.
 
-For the normal PostgreSQL Compose deployment, use the host-side backup helper.
-It creates an atomic `0600` archive containing a portable custom-format
-`pg_dump`, `config.toml`, the Compose environment file, checksums, and source
-provenance. The environment file contains plaintext credentials, so the entire
-archive is credential material and must never be committed or copied to
-unencrypted public storage.
+For the local PostgreSQL Compose deployment, use the host-side backup helper.
+New schema-v2 archives are atomic `0600` files containing a portable
+custom-format `pg_dump`, checksums, and secret-free source/database provenance.
+They deliberately exclude `.env` and `config.toml`; recover configuration from
+Git and credentials from the secret manager.
 
 ```bash
 ./scripts/backup-compose.sh create
@@ -168,6 +177,11 @@ container. It never connects `modelport` to the temporary database and never
 writes to the production database. Completed archives older than
 `MODELPORT_BACKUP_RETENTION_DAYS` (14 by default) are pruned only from the
 configured backup directory.
+
+Legacy schema-v1 archives remain readable but contain plaintext runtime
+configuration and must be treated as credential material. Verification prints
+an explicit warning. See [PostgreSQL Migration](POSTGRESQL_MIGRATION.md) before
+changing a PostgreSQL major version or database endpoint.
 
 The CLI can export a logical auth/control backup from PostgreSQL:
 
@@ -192,13 +206,13 @@ Restore with writers stopped:
 docker compose stop modelport dashboard
 docker compose run --rm modelport \
   model-port backup restore /data/modelport-backup.json --yes
-docker compose up -d
+scripts/compose-up.sh
 ```
 
-Restore saves both previous logical values, then writes auth and control
-sequentially. It is not an atomic two-document transaction; retain the saved
-application values and a database-native backup until the restored service has
-passed smoke and login checks.
+Restore saves both previous logical values, then verifies their observed
+revisions and replaces auth and control in one PostgreSQL transaction. Retain
+the saved application values and a database-native backup until the restored
+service has passed smoke and login checks.
 
 Keep a database-native backup too:
 
@@ -212,6 +226,47 @@ uses volume `modelport_modelport-postgres-18`. PostgreSQL 18 stores data below
 the versioned `PGDATA=/var/lib/postgresql/18/docker`, while Compose mounts the
 parent `/var/lib/postgresql` as required by the official image. Prefer
 `pg_dump` for portable restore instead of copying a live database directory.
+
+## Single-instance Production
+
+[`deploy/production/compose.single.yml`](../deploy/production/compose.single.yml)
+is the accepted phase-one topology. It intentionally contains one ModelPort
+instance and no PostgreSQL service. It requires:
+
+- digest-pinned backend and dashboard images;
+- an external `modelport_default` network, shared with approved local inference
+  Providers when present;
+- a reviewed non-secret `config.toml` whose Provider credentials use
+  `token_env`/`api_key_env` references;
+- a CA file for managed PostgreSQL;
+- a permission-`0600`, short-lived runtime env file rendered outside the
+  repository by the production secret manager.
+
+Do not run `docker compose config` with the real runtime env file in a log
+collection or CI job: Compose renders environment values. Validate with a
+synthetic file containing placeholders. The runtime database URL must use TLS
+`verify-full` and reference `/run/modelport/database-ca.pem` when an explicit
+root certificate is needed.
+
+Before rendering or starting the production profile, run the secret-safe,
+read-only preflight:
+
+```bash
+MODELPORT_IMAGE='registry/modelport@sha256:<digest>' \
+MODELPORT_DASHBOARD_IMAGE='registry/modelport-dashboard@sha256:<digest>' \
+MODELPORT_RUNTIME_ENV_FILE=/run/modelport/runtime.env \
+MODELPORT_CONFIG_FILE=/etc/modelport/config.toml \
+MODELPORT_DATABASE_CA_FILE=/etc/modelport/database-ca.pem \
+  ./scripts/production-preflight.sh
+```
+
+It verifies digest-pinned images, file ownership/permissions, repository-external
+secret placement, strict database TLS, and every Provider credential reference
+without printing values.
+
+This profile is not active-active. A second ModelPort instance remains a later
+milestone governed by
+[ADR-0005](adr/0005-forty-user-hybrid-routing-baseline.md).
 
 The Compose services use bounded `json-file` logging: 10 MiB per file and five
 files by default. Override `MODELPORT_LOG_MAX_SIZE` or

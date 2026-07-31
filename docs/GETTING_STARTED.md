@@ -46,12 +46,24 @@ The sample model is `deepseek-v4-flash`. If the Provider account exposes a
 different ID, update `DEEPSEEK_MODEL`, the `config.toml` model list/default, and
 the request examples together.
 
-## 3. Build And Start
+## 3. Check The Setup
+
+Run the read-only Linux and Compose preflight before a potentially long image
+build:
+
+```bash
+scripts/doctor.sh --setup
+```
+
+Fix the first `[fail]` and rerun it. This mode does not start services or make a
+Provider request.
+
+## 4. Build And Start
 
 ```bash
 docker compose config --quiet
 scripts/build-container.sh
-docker compose up -d
+scripts/compose-up.sh
 docker compose ps
 ```
 
@@ -75,7 +87,7 @@ docker compose logs --tail=100 modelport
 docker compose logs --tail=100 dashboard
 ```
 
-## 4. Verify The Gateway
+## 5. Verify The Gateway
 
 ```bash
 scripts/smoke-test.sh
@@ -88,7 +100,7 @@ Open `http://127.0.0.1:33002` and sign in with the configured administrator
 username and password. The backend API remains at
 `http://127.0.0.1:38082`.
 
-## 5. Send The First Request
+## 6. Send The First Request
 
 This request can consume Provider quota:
 
@@ -116,7 +128,7 @@ Open **Request Logs** in the dashboard and confirm the selected Provider/model,
 status, latency, token provenance, and estimated cost. A Provider-returned usage
 value is still not an authoritative invoice.
 
-## 6. Connect A Client
+## 7. Connect A Client
 
 Claude Code or another Anthropic-compatible client:
 
@@ -138,7 +150,7 @@ For shared use, create a real user and a scoped client API key in the dashboard,
 then set `MODELPORT_REQUIRE_CONTROL_API_KEYS=1` during production hardening.
 Never give a client the upstream Provider key.
 
-## 7. Stop, Restart, Or Upgrade
+## 8. Stop, Restart, Or Upgrade
 
 ```bash
 docker compose stop

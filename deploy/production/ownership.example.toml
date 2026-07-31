@@ -1,0 +1,18 @@
+schema_version = 1
+
+[platform]
+owner = "model-platform-owner@example.com"
+backups = ["model-platform-backup@example.com"]
+
+[coverage]
+timezone = "Asia/Shanghai"
+business_hours = "Monday-Friday 09:00-18:00"
+primary_channel = "team-model-platform-oncall"
+backup_channel = "team-infrastructure-oncall"
+acknowledgement_minutes = 15
+
+[escalation]
+database = "database-platform-oncall"
+identity = "identity-platform-oncall"
+security = "security-oncall"
+cloud_billing = "finops-oncall"

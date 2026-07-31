@@ -110,3 +110,4 @@ volumes:
 networks:
   default:
     name: ${MODELPORT_NETWORK_NAME:-modelport_default}
+    external: true

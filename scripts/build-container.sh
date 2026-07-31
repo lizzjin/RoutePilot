@@ -17,7 +17,7 @@ fi
 source_revision="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 source_state="clean"
 modelport_version="$(
-  sed -n 's/^version = "\\([^"]*\\)"/\\1/p' "$ROOT_DIR/Cargo.toml" | head -n 1
+  sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -n 1
 )"
 if [[ -z "$modelport_version" ]]; then
   die "could not read package version from Cargo.toml"

@@ -5,19 +5,36 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib.sh"
 
+mode="runtime"
 upstream=0
 case "${1:-}" in
   "")
+    ;;
+  --setup)
+    mode="setup"
+    ;;
+  --development)
+    mode="development"
     ;;
   --upstream)
     upstream=1
     ;;
   -h|--help)
     cat <<'USAGE'
-Usage: scripts/doctor.sh [--upstream]
+Usage:
+  scripts/doctor.sh --setup
+  scripts/doctor.sh --development
+  scripts/doctor.sh [--upstream]
 
-Checks local ModelPort configuration without printing secrets.
-Use --upstream to also verify a real /v1/messages call through the configured DeepSeek upstream.
+Modes:
+  --setup        Check Linux, Docker Compose, local files, and required values
+                 before the first container build. Does not start services.
+  --development  Check the pinned Rust/Node toolchain and Linux C compiler.
+                 Does not require local configuration or running services.
+  (no option)    Check configuration plus the running local gateway.
+  --upstream     Run the runtime checks and a paid/provider-backed message call.
+
+No mode prints secret values.
 USAGE
     exit 0
     ;;
@@ -49,6 +66,46 @@ warn() {
 fail() {
   failures=$((failures + 1))
   printf '[fail] %s\n' "$*" >&2
+}
+
+check_command() {
+  local name="$1"
+  local hint="$2"
+  local executable
+
+  executable="$(command -v "$name" 2>/dev/null || true)"
+  if [[ -z "$executable" ]]; then
+    fail "$name is required; $hint"
+  elif [[ "$executable" =~ ^/mnt/[a-zA-Z]/ ]]; then
+    fail "$name resolves to a Windows-mounted executable ($executable); install or activate the Linux version"
+  else
+    ok "$name is available ($executable)"
+  fi
+}
+
+check_linux_platform() {
+  local kernel
+  local architecture
+  kernel="$(uname -s 2>/dev/null || true)"
+  architecture="$(uname -m 2>/dev/null || true)"
+
+  if [[ "$kernel" == "Linux" ]]; then
+    if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
+      ok "Linux environment detected (WSL2, architecture=$architecture)"
+    else
+      ok "Linux environment detected (architecture=$architecture)"
+    fi
+  else
+    fail "ModelPort development and maintained scripts require Linux; detected ${kernel:-unknown}"
+  fi
+
+  case "$architecture" in
+    x86_64|aarch64)
+      ;;
+    *)
+      warn "architecture '$architecture' is not part of the maintained CI matrix"
+      ;;
+  esac
 }
 
 is_placeholder_value() {
@@ -109,12 +166,30 @@ check_env_is_ignored() {
   else
     warn "custom MODELPORT_ENV_FILE is used; verify it is not committed: $ENV_FILE"
   fi
+
+  if git -C "$ROOT_DIR" check-ignore -q config.toml; then
+    ok "config.toml is ignored by git"
+  else
+    fail "config.toml is not ignored by git"
+  fi
+}
+
+check_setup_scripts() {
+  local script
+
+  for script in build-container compose-up database-preflight production-preflight smoke-test doctor; do
+    if [[ -x "$SCRIPT_DIR/$script.sh" ]]; then
+      ok "scripts/$script.sh is executable"
+    else
+      fail "scripts/$script.sh is not executable"
+    fi
+  done
 }
 
 check_binary_and_scripts() {
   local script
 
-  for script in start stop restart status smoke-test acceptance provider-matrix config-validate build-release check doctor; do
+  for script in start stop restart status smoke-test acceptance provider-matrix config-validate build-release check doctor backup-compose compose-up database-preflight production-preflight; do
     if [[ -x "$SCRIPT_DIR/$script.sh" ]]; then
       ok "scripts/$script.sh is executable"
     else
@@ -129,20 +204,39 @@ check_binary_and_scripts() {
   fi
 }
 
-check_deepseek_env() {
+config_has_provider() {
+  local provider="$1"
+  [[ -f "$ROOT_DIR/config.toml" ]] &&
+    grep -Eq "^[[:space:]]*\\[providers\\.${provider}\\][[:space:]]*$" \
+      "$ROOT_DIR/config.toml"
+}
+
+check_provider_env() {
   check_required_value MODELPORT_BIND
   check_required_secret MODELPORT_AUTH_TOKEN
 
-  if is_placeholder_key; then
-    fail "$(upstream_key_name) is missing or placeholder"
+  if config_has_provider deepseek; then
+    if is_placeholder_key; then
+      fail "$(upstream_key_name) is missing or placeholder"
+    else
+      ok "$(upstream_key_name) is set"
+    fi
+
+    if [[ -n "${DEEPSEEK_ANTHROPIC_BASE_URL:-}" ]]; then
+      ok "DEEPSEEK_ANTHROPIC_BASE_URL=$DEEPSEEK_ANTHROPIC_BASE_URL"
+    else
+      ok "DEEPSEEK_ANTHROPIC_BASE_URL defaults to https://api.deepseek.com/anthropic"
+    fi
   else
-    ok "$(upstream_key_name) is set"
+    ok "DeepSeek credential is not required by config.toml"
   fi
 
-  if [[ -n "${DEEPSEEK_ANTHROPIC_BASE_URL:-}" ]]; then
-    ok "DEEPSEEK_ANTHROPIC_BASE_URL=$DEEPSEEK_ANTHROPIC_BASE_URL"
-  else
-    ok "DEEPSEEK_ANTHROPIC_BASE_URL defaults to https://api.deepseek.com/anthropic"
+  if config_has_provider local_qwen; then
+    if [[ -n "${QWEN_LOCAL_BASE_URL:-}" ]]; then
+      ok "QWEN_LOCAL_BASE_URL=$QWEN_LOCAL_BASE_URL"
+    else
+      ok "QWEN_LOCAL_BASE_URL uses the config.toml container-network default"
+    fi
   fi
 
   if [[ "${ANTHROPIC_AUTH_TOKEN:-}" == "$MODELPORT_AUTH_TOKEN" ]]; then
@@ -157,19 +251,157 @@ check_deepseek_env() {
     warn "ANTHROPIC_BASE_URL is '${ANTHROPIC_BASE_URL:-unset}', expected '$(base_url)' for local VS Code"
   fi
 
-  if [[ "${ANTHROPIC_MODEL:-}" == "${DEEPSEEK_MODEL:-deepseek-v4-flash}" ]]; then
+  if config_has_provider local_qwen &&
+    [[ "${ANTHROPIC_MODEL:-}" == qwen3.5-* ]]; then
+    ok "ANTHROPIC_MODEL selects a local Qwen logical model"
+  elif config_has_provider deepseek &&
+    [[ "${ANTHROPIC_MODEL:-}" == "${DEEPSEEK_MODEL:-deepseek-v4-flash}" ]]; then
     ok "ANTHROPIC_MODEL matches DeepSeek model"
   else
-    warn "ANTHROPIC_MODEL is '${ANTHROPIC_MODEL:-unset}', DEEPSEEK_MODEL is '${DEEPSEEK_MODEL:-deepseek-v4-flash}'"
+    warn "ANTHROPIC_MODEL is '${ANTHROPIC_MODEL:-unset}'; verify it is an alias in config.toml"
+  fi
+}
+
+check_compose_values() {
+  check_provider_env
+  check_required_value MODELPORT_ADMIN_USERNAME
+  check_required_secret MODELPORT_ADMIN_PASSWORD
+  check_required_secret MODELPORT_POSTGRES_PASSWORD
+}
+
+check_compose_setup() {
+  check_command git "install it with the Linux distribution package manager"
+  check_command curl "install it with the Linux distribution package manager"
+  check_command docker "install Docker Engine or Docker Desktop with WSL integration"
+
+  if ! command -v docker >/dev/null 2>&1; then
+    return
+  fi
+  if docker info >/dev/null 2>&1; then
+    ok "Docker daemon is reachable"
+  else
+    fail "Docker daemon is not reachable; start Docker and verify current-user access"
+    return
+  fi
+  if docker compose version >/dev/null 2>&1; then
+    ok "Docker Compose v2 is available"
+  else
+    fail "Docker Compose v2 is required; 'docker compose version' failed"
+    return
+  fi
+  if [[ -f "$ROOT_DIR/config.toml" ]]; then
+    ok "local config exists: $ROOT_DIR/config.toml"
+  else
+    fail "missing $ROOT_DIR/config.toml; copy config.example.toml before setup validation"
+    return
+  fi
+
+  local body_file
+  body_file="$(mktemp)"
+  temp_files+=("$body_file")
+  if (
+    cd "$ROOT_DIR"
+    docker compose --env-file "$ENV_FILE" config --quiet
+  ) >"$body_file" 2>&1; then
+    ok "Docker Compose manifest renders successfully"
+  else
+    fail "Docker Compose manifest validation failed"
+    sed -n '1,40p' "$body_file" >&2 || true
+  fi
+}
+
+check_development_tools() {
+  local expected_rust
+  local rust_version
+  local node_major
+  local compiler
+  local probe_source
+  local probe_object
+
+  check_command git "install git"
+  check_command cargo "install Rust through rustup"
+  check_command rustc "install Rust through rustup"
+  check_command rustfmt "run 'rustup component add rustfmt'"
+  check_command clippy-driver "run 'rustup component add clippy'"
+  check_command node "install Node.js 24"
+  check_command npm "install npm with Node.js 24"
+  check_command curl "install curl"
+
+  if command -v rustc >/dev/null 2>&1; then
+    expected_rust="$(
+      sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+        "$ROOT_DIR/rust-toolchain.toml" | head -n 1
+    )"
+    rust_version="$(rustc --version | awk '{print $2}')"
+    if [[ -n "$expected_rust" && "$rust_version" == "$expected_rust" ]]; then
+      ok "Rust matches rust-toolchain.toml ($rust_version)"
+    else
+      fail "Rust version is ${rust_version:-unknown}; expected ${expected_rust:-the pinned toolchain}"
+    fi
+  fi
+
+  if command -v node >/dev/null 2>&1; then
+    node_major="$(node -p 'process.versions.node.split(".")[0]')"
+    if [[ "$node_major" == "24" ]]; then
+      ok "Node.js major version matches CI (24)"
+    else
+      fail "Node.js major version is ${node_major:-unknown}; expected 24"
+    fi
+  fi
+
+  setup_cc_fallback
+  compiler="${CC_x86_64_unknown_linux_gnu:-${CC:-}}"
+  if [[ -z "$compiler" ]]; then
+    if command -v cc >/dev/null 2>&1; then
+      compiler="$(command -v cc)"
+    elif command -v gcc >/dev/null 2>&1; then
+      compiler="$(command -v gcc)"
+    elif command -v clang >/dev/null 2>&1; then
+      compiler="$(command -v clang)"
+    fi
+  fi
+  if [[ -z "$compiler" ]]; then
+    fail "a Linux C compiler is required; install build-essential/clang or Zig"
+  else
+    probe_source="$(mktemp)"
+    probe_object="$(mktemp)"
+    temp_files+=("$probe_source" "$probe_object")
+    printf 'int main(void) { return 0; }\n' >"$probe_source"
+    if "$compiler" -x c -c "$probe_source" -o "$probe_object" >/dev/null 2>&1; then
+      ok "Linux C compiler can compile a probe"
+    else
+      fail "the selected Linux C compiler could not compile a probe: $compiler"
+    fi
+  fi
+
+  if [[ -d "$ROOT_DIR/dashboard/node_modules" ]] &&
+    npm --prefix "$ROOT_DIR/dashboard" ls --depth=0 --silent >/dev/null 2>&1; then
+    ok "dashboard dependencies match package-lock.json"
+  else
+    warn "dashboard dependencies are missing or stale; run 'npm --prefix dashboard ci'"
   fi
 }
 
 check_static_config() {
   local body_file
+  local modelport_container
+  local -a validate_command
   body_file="$(mktemp)"
   temp_files+=("$body_file")
 
-  if "$SCRIPT_DIR/config-validate.sh" > "$body_file" 2>&1; then
+  modelport_container="$(
+    docker compose -f "$ROOT_DIR/docker-compose.yml" ps -q modelport 2>/dev/null || true
+  )"
+  if [[ -n "$modelport_container" ]]; then
+    validate_command=(
+      docker compose -f "$ROOT_DIR/docker-compose.yml"
+      exec -T modelport model-port config validate
+    )
+  else
+    validate_command=("$SCRIPT_DIR/config-validate.sh")
+  fi
+
+  if "${validate_command[@]}" > "$body_file" 2>&1; then
     ok "static config validation passed"
   else
     fail "static config validation failed"
@@ -241,6 +473,28 @@ check_gateway() {
   fi
 }
 
+check_database_alignment() {
+  local body_file
+
+  if ! command -v docker >/dev/null 2>&1; then
+    warn "docker is unavailable; local Compose database alignment check skipped"
+    return
+  fi
+  if [[ -z "$(docker compose -f "$ROOT_DIR/docker-compose.yml" ps -q postgres 2>/dev/null || true)" ]]; then
+    warn "local Compose PostgreSQL is not running; external database alignment is operator-owned"
+    return
+  fi
+
+  body_file="$(mktemp)"
+  temp_files+=("$body_file")
+  if "$SCRIPT_DIR/database-preflight.sh" >"$body_file" 2>&1; then
+    ok "running PostgreSQL image, volume, migrations, and durable state are aligned"
+  else
+    fail "running PostgreSQL does not match the declared Compose database"
+    sed -n '1,40p' "$body_file" >&2 || true
+  fi
+}
+
 check_vscode_settings_text() {
   local settings_file="$1"
 
@@ -285,8 +539,13 @@ check_vscode_settings() {
 }
 
 check_upstream_message() {
+  local selected_model
+  selected_model="$(default_upstream_model)"
+
   if [[ "$upstream" != "1" ]]; then
-    if is_placeholder_key; then
+    if [[ "$selected_model" == qwen3.5-* ]]; then
+      ok "local model is selected; use --upstream only when a real local generation is intended"
+    elif is_placeholder_key; then
       warn "upstream test skipped because $(upstream_key_name) is missing or placeholder"
     else
       ok "upstream key is present; run scripts/doctor.sh --upstream for a real model call"
@@ -294,7 +553,7 @@ check_upstream_message() {
     return
   fi
 
-  if is_placeholder_key; then
+  if [[ "$selected_model" != qwen3.5-* ]] && is_placeholder_key; then
     fail "cannot run upstream test because $(upstream_key_name) is missing or placeholder"
     return
   fi
@@ -304,7 +563,7 @@ check_upstream_message() {
   local status
   body_file="$(mktemp)"
   temp_files+=("$body_file")
-  model="$(default_upstream_model)"
+  model="$selected_model"
 
   status="$(
     curl_local -sS -m 60 \
@@ -324,18 +583,36 @@ check_upstream_message() {
   fi
 }
 
-load_doctor_env
-check_env_is_ignored
-check_binary_and_scripts
-check_deepseek_env
-check_static_config
-check_gateway
-check_vscode_settings
-check_upstream_message
+check_linux_platform
+
+case "$mode" in
+  setup)
+    load_doctor_env
+    check_env_is_ignored
+    check_setup_scripts
+    check_compose_values
+    check_compose_setup
+    ;;
+  development)
+    check_development_tools
+    ;;
+  runtime)
+    load_doctor_env
+    check_env_is_ignored
+    check_binary_and_scripts
+    check_provider_env
+    check_static_config
+    check_database_alignment
+    check_gateway
+    check_vscode_settings
+    check_upstream_message
+    ;;
+esac
 
 if [[ "$failures" -gt 0 ]]; then
-  printf '\nModelPort doctor failed: %d failure(s), %d warning(s).\n' "$failures" "$warnings" >&2
+  printf '\nModelPort doctor (%s) failed: %d failure(s), %d warning(s).\n' \
+    "$mode" "$failures" "$warnings" >&2
   exit 1
 fi
 
-printf '\nModelPort doctor passed: %d warning(s).\n' "$warnings"
+printf '\nModelPort doctor (%s) passed: %d warning(s).\n' "$mode" "$warnings"

@@ -56,6 +56,24 @@ check_shell_syntax() {
   log "Bash syntax valid for $file_count script(s)"
 }
 
+check_shell_lint() {
+  local files=()
+
+  while IFS= read -r -d '' file; do
+    files+=("$file")
+  done < <(
+    find "$ROOT_DIR/scripts" -type f -name '*.sh' -print0 | sort -z
+  )
+
+  if command -v shellcheck >/dev/null 2>&1; then
+    run_check "running ShellCheck for ${#files[@]} script(s)" shellcheck "${files[@]}"
+  elif [[ "${CI:-}" == "true" || "${MODELPORT_REQUIRE_SHELLCHECK:-0}" == "1" ]]; then
+    die "shellcheck is required in CI/release mode but was not found"
+  else
+    log "ShellCheck skipped: install shellcheck or set MODELPORT_REQUIRE_SHELLCHECK=1 to enforce it"
+  fi
+}
+
 npm_has_script() {
   local script_name="$1"
 
@@ -194,7 +212,12 @@ write_config_validation_env() {
 
 validate_config_examples() {
   local config_env_file
+  local config_example
   local env_example
+  local config_examples=(
+    "$ROOT_DIR/config.example.toml"
+    "$ROOT_DIR/deploy/local-inference/modelport.local-qwen.toml"
+  )
   local env_examples=(
     "$ROOT_DIR/.env.example"
     "$ROOT_DIR/deploy/docker/modelport.env.example"
@@ -214,20 +237,21 @@ validate_config_examples() {
     validate_env_example "$env_example"
   done
 
-  if [[ ! -f "$ROOT_DIR/config.example.toml" ]]; then
-    die "missing configuration example: config.example.toml"
-  fi
-
-  config_env_file="$CHECK_TMP_DIR/config-validation.env"
-  write_config_validation_env "$ROOT_DIR/config.example.toml" "$config_env_file"
-  run_check "loading configuration example: config.example.toml" \
-    env -i \
-      HOME="$CHECK_TMP_DIR/home" \
-      PATH="$PATH" \
-      MODELPORT_CONFIG="$ROOT_DIR/config.example.toml" \
-      MODELPORT_ENV_FILE="$config_env_file" \
-      MODELPORT_DATABASE_URL="postgres://modelport:ci-validation@db.example:5432/modelport" \
-      "$ROOT_DIR/target/debug/model-port" config validate
+  for config_example in "${config_examples[@]}"; do
+    if [[ ! -f "$config_example" ]]; then
+      die "missing configuration example: $(relative_path "$config_example")"
+    fi
+    config_env_file="$CHECK_TMP_DIR/$(relative_path "$config_example" | tr '/' '_').env"
+    write_config_validation_env "$config_example" "$config_env_file"
+    run_check "loading configuration example: $(relative_path "$config_example")" \
+      env -i \
+        HOME="$CHECK_TMP_DIR/home" \
+        PATH="$PATH" \
+        MODELPORT_CONFIG="$config_example" \
+        MODELPORT_ENV_FILE="$config_env_file" \
+        MODELPORT_DATABASE_URL="postgres://modelport:ci-validation@db.example:5432/modelport" \
+        "$ROOT_DIR/target/debug/model-port" config validate
+  done
 }
 
 main() {
@@ -247,6 +271,7 @@ main() {
   setup_cc_fallback
 
   check_shell_syntax
+  check_shell_lint
   run_check "checking Markdown links" node "$ROOT_DIR/scripts/check-doc-links.mjs"
   run_check "checking Rust formatting" cargo fmt --all -- --check
   run_check "running Rust tests" cargo test --locked --all-targets

@@ -1,0 +1,84 @@
+name: modelport-production
+
+# Phase-one production profile: one ModelPort instance, an external managed
+# PostgreSQL database, and secret-manager-rendered runtime environment. This
+# file deliberately has no PostgreSQL service and no repository .env mount.
+services:
+  modelport:
+    image: ${MODELPORT_IMAGE:?set a digest-pinned ModelPort image}
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    env_file:
+      - path: ${MODELPORT_RUNTIME_ENV_FILE:?set a secret-manager-rendered runtime env file}
+        required: true
+    environment:
+      MODELPORT_BIND: 0.0.0.0:38082
+      MODELPORT_CONFIG: /config/config.toml
+      MODELPORT_ENV_FILE: /run/modelport/no-repository-env
+      MODELPORT_STATE_DIR: /data
+      MODELPORT_ENTERPRISE_MODE: "1"
+      MODELPORT_DATABASE_TLS_MODE: verify-full
+      MODELPORT_REQUIRE_CONTROL_API_KEYS: "1"
+      MODELPORT_ADMIN_COOKIE_SECURE: "1"
+      MODELPORT_LOCAL_EXECUTING_PER_USER: "1"
+      MODELPORT_LOCAL_QUEUED_PER_USER: "2"
+      MODELPORT_LOCAL_QUEUE_GLOBAL: "16"
+      MODELPORT_BATCH_QUEUE_GLOBAL: "16"
+      MODELPORT_LOCAL_OVERFLOW_AFTER_SECONDS: "5"
+      MODELPORT_LOCAL_STRICT_WAIT_SECONDS: "60"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - ${MODELPORT_API_PUBLISH:-127.0.0.1:38082}:38082
+    volumes:
+      - modelport-data:/data
+      - type: bind
+        source: ${MODELPORT_CONFIG_FILE:?set the reviewed non-secret config.toml path}
+        target: /config/config.toml
+        read_only: true
+      - type: bind
+        source: ${MODELPORT_DATABASE_CA_FILE:?set the managed PostgreSQL CA file}
+        target: /run/modelport/database-ca.pem
+        read_only: true
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${MODELPORT_LOG_MAX_SIZE:-10m}
+        max-file: "${MODELPORT_LOG_MAX_FILES:-5}"
+
+  dashboard:
+    image: ${MODELPORT_DASHBOARD_IMAGE:?set a digest-pinned dashboard image}
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    depends_on:
+      modelport:
+        condition: service_healthy
+    ports:
+      - ${MODELPORT_DASHBOARD_PUBLISH:-127.0.0.1:33002}:8080
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${MODELPORT_LOG_MAX_SIZE:-10m}
+        max-file: "${MODELPORT_LOG_MAX_FILES:-5}"
+
+volumes:
+  modelport-data:
+
+networks:
+  default:
+    name: ${MODELPORT_NETWORK_NAME:-modelport_default}
+    external: true

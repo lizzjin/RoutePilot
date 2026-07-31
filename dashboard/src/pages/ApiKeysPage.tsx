@@ -107,6 +107,9 @@ export function ApiKeysPage() {
   const [form, setForm] = useState({
     userId: '',
     name: '',
+    principalType: 'user' as 'user' | 'service_account',
+    purpose: '',
+    expiresAt: '',
     group: '',
     teamId: '',
     allowedModels: '',
@@ -153,17 +156,27 @@ export function ApiKeysPage() {
     if (!access.canCreate) return
     const user = users.find((item) => item.id === form.userId)
     if (!user || user.status !== 'active' || !form.name.trim()) return
+    const serviceAccount = form.principalType === 'service_account'
+    if (serviceAccount && (
+      form.purpose.trim().length < 8
+      || !form.expiresAt
+      || parsePolicyList(form.allowedModels).length === 0
+      || parsePolicyList(form.allowedProviders).length === 0
+    )) return
     createApiKey.mutate({
       userId: user.id,
       username: user.username,
       name: form.name.trim(),
+      principalType: form.principalType,
+      purpose: form.purpose.trim() || undefined,
+      expiresAt: form.expiresAt ? localDateTimeToMillis(form.expiresAt) : undefined,
       group: form.group.trim() || undefined,
       teamId: form.teamId || undefined,
       allowedModels: parsePolicyList(form.allowedModels),
       allowedProviders: parsePolicyList(form.allowedProviders),
     }, {
       onSuccess: (key) => {
-        setForm({ userId: '', name: '', group: '', teamId: '', allowedModels: '', allowedProviders: '' })
+        setForm({ userId: '', name: '', principalType: 'user', purpose: '', expiresAt: '', group: '', teamId: '', allowedModels: '', allowedProviders: '' })
         if (key.key) {
           setNewKey(key.key)
           toast.success('API 密钥已创建')
@@ -711,6 +724,29 @@ export function ApiKeysPage() {
                 <Input id="create-key-name" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：Alice 的 Claude Code" />
                 <p className="text-xs text-muted-foreground">使用能识别人员、设备或用途的名称，便于泄露时快速定位。</p>
               </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="create-key-principal">主体类型</Label>
+                  <Select value={form.principalType} onValueChange={(value) => setForm({ ...form, principalType: value as 'user' | 'service_account' })}>
+                    <SelectTrigger id="create-key-principal"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="user">个人密钥</SelectItem>
+                      <SelectItem value="service_account">服务账号（自动化）</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="create-key-expires">过期时间{form.principalType === 'service_account' ? '（必填，最长 90 天）' : '（可选）'}</Label>
+                  <Input id="create-key-expires" type="datetime-local" value={form.expiresAt} onChange={(event) => setForm({ ...form, expiresAt: event.target.value })} />
+                </div>
+              </div>
+              {form.principalType === 'service_account' && (
+                <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900 dark:bg-amber-950/30">
+                  <Label htmlFor="create-key-purpose">自动化用途 <span className="text-destructive" aria-hidden="true">*</span></Label>
+                  <Input id="create-key-purpose" value={form.purpose} onChange={(event) => setForm({ ...form, purpose: event.target.value })} placeholder="例如：CI 每晚运行回归评测（仅 production 项目）" />
+                  <p className="text-xs text-muted-foreground">服务账号必须填写至少 8 个字符的用途、明确的模型/Provider 范围，并设置不超过 90 天的有效期；禁止多人共享个人密钥。</p>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="create-key-group">标签（可选）</Label>
                 <Input id="create-key-group" value={form.group} onChange={(event) => setForm({ ...form, group: event.target.value })} placeholder="例如：研发 / CI" />
@@ -747,7 +783,7 @@ export function ApiKeysPage() {
             ) : (
               <>
                 <Button variant="outline" onClick={() => setShowCreateDialog(false)}>取消</Button>
-                <Button onClick={handleCreate} disabled={!form.userId || !form.name.trim() || usersLoading || createApiKey.isPending}>
+                <Button onClick={handleCreate} disabled={!form.userId || !form.name.trim() || usersLoading || createApiKey.isPending || (form.principalType === 'service_account' && (!form.expiresAt || form.purpose.trim().length < 8 || !form.allowedModels.trim() || !form.allowedProviders.trim()))}>
                   <KeyRound className="mr-2 h-4 w-4" />
                   {createApiKey.isPending ? '创建中…' : '创建密钥'}
                 </Button>

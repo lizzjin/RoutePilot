@@ -1,6 +1,7 @@
 import { clearSessionQueries } from '@/lib/query-client'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
+const CHANGE_REQUEST_STORAGE_KEY = 'modelport_change_request_id'
 
 export class ApiError extends Error {
   status: number
@@ -22,6 +23,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
   if (!['GET', 'HEAD'].includes(method) && !headers.has('X-ModelPort-CSRF')) {
     headers.set('X-ModelPort-CSRF', '1')
+  }
+  if (!['GET', 'HEAD'].includes(method) && !headers.has('X-ModelPort-Change-Request-Id')) {
+    const approvedChange = typeof window === 'undefined'
+      ? ''
+      : window.sessionStorage.getItem(CHANGE_REQUEST_STORAGE_KEY)?.trim() || ''
+    if (approvedChange) headers.set('X-ModelPort-Change-Request-Id', approvedChange)
   }
 
   const response = await fetch(`${BASE_URL}${path}`, {

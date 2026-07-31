@@ -17,6 +17,9 @@ const statusConfig: Record<string, { label: string; className: string }> = {
   down: { label: '离线', className: 'border-red-200/80 bg-red-50 text-red-700 dark:border-red-900/70 dark:bg-red-950/45 dark:text-red-300' },
   inactive: { label: '未激活', className: 'border-slate-200/80 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300' },
   revoked: { label: '已吊销', className: 'border-red-200/80 bg-red-50 text-red-700 dark:border-red-900/70 dark:bg-red-950/45 dark:text-red-300' },
+  pending_second_approval: { label: '待第二人审批', className: 'border-amber-200/80 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/45 dark:text-amber-300' },
+  approved: { label: '已双人批准', className: 'border-blue-200/80 bg-blue-50 text-blue-700 dark:border-blue-900/70 dark:bg-blue-950/45 dark:text-blue-300' },
+  applied: { label: '已应用', className: 'border-emerald-200/80 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/45 dark:text-emerald-300' },
 }
 
 export function StatusBadge({ status, className }: StatusBadgeProps) {

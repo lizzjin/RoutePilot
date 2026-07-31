@@ -44,3 +44,13 @@ export type {
 } from './enterprise.types'
 export type { SystemSettings, ServerSettings, AuthSettings, GatewaySettings, SmartRoutingSettings, SmartRouterStatus, RateLimitSettings, RuntimeSettings, SetupStatus, SetupCheck, ConfigReloadResult, AuditEvent, AuditEventsResponse, BackupExport } from './settings.types'
 export type { DashboardStats } from './dashboard.types'
+export type {
+  HybridMode,
+  DataClassification,
+  ProjectPolicy,
+  ChangeApproval,
+  GovernanceChangeRequest,
+  LocalSchedulerSnapshot,
+  GovernanceOverview,
+  GovernanceChangeInput,
+} from './governance.types'

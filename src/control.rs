@@ -5,7 +5,7 @@ use std::{
     env,
     sync::{
         Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -57,6 +57,10 @@ fn default_environment_id() -> String {
     "env_default".to_owned()
 }
 
+fn default_principal_type() -> String {
+    "user".to_owned()
+}
+
 fn normalized_tenant_id(field: &str, value: String) -> Result<String, AppError> {
     let value = value.trim();
     if !valid_tenant_identifier(value) {
@@ -101,6 +105,7 @@ pub(crate) fn validate_backup_document(value: &serde_json::Value) -> Result<(), 
 pub struct ControlStore {
     store: Option<JsonStore>,
     inner: Mutex<ControlInner>,
+    revision: AtomicU64,
     persistence_degraded: AtomicBool,
 }
 
@@ -518,6 +523,10 @@ struct ApiKeyRecord {
     user_id: String,
     username: String,
     name: String,
+    #[serde(default = "default_principal_type")]
+    principal_type: String,
+    #[serde(default)]
+    purpose: Option<String>,
     key_hash: String,
     key_prefix: String,
     key_preview: String,
@@ -573,6 +582,14 @@ impl ApiKeyViewRecord for ApiKeyRecord {
 
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn principal_type(&self) -> &str {
+        &self.principal_type
+    }
+
+    fn purpose(&self) -> Option<&str> {
+        self.purpose.as_deref()
     }
 
     fn key_prefix(&self) -> &str {
@@ -723,6 +740,8 @@ pub struct PublicApiKey {
     pub user_id: String,
     pub username: String,
     pub name: String,
+    pub principal_type: String,
+    pub purpose: Option<String>,
     pub key_prefix: String,
     pub key_preview: String,
     pub group: Option<String>,
@@ -773,6 +792,8 @@ pub struct CreateApiKeyInput {
     pub user_id: String,
     pub username: Option<String>,
     pub name: String,
+    pub principal_type: Option<String>,
+    pub purpose: Option<String>,
     pub group: Option<String>,
     pub team_id: Option<String>,
     pub allowed_models: Option<Vec<String>>,
@@ -838,6 +859,7 @@ pub struct PublicQuota {
 pub struct ClientIdentity {
     pub user_id: String,
     pub username: String,
+    pub principal_type: String,
     pub api_key_id: Option<String>,
     pub api_key_name: Option<String>,
     pub api_key_group: Option<String>,
@@ -973,24 +995,25 @@ pub struct ProviderControlSnapshot {
 impl ControlStore {
     pub fn load() -> Result<Self, AppError> {
         let store = JsonStore::open("control")?;
-        let mut file: ControlFile = store.read_or_default(json!({
-            "teams": [],
-            "apiKeys": [],
-            "quotas": [],
-            "routeConfig": {},
-            "providerTests": [],
-            "providerHealth": [],
-            "providerOverrides": [],
-            "disabledProviders": [],
-            "deletedProviders": [],
-            "providerModelOverrides": [],
-            "providerCredentials": [],
-            "activeProviderCredentials": {},
-            "providerCredentialPoolModes": {},
-            "providerCredentialHealth": [],
-        }))?;
-        if redact_historical_control_errors(&mut file) {
-            store.write_json(&file)?;
+        let (mut file, mut revision): (ControlFile, u64) =
+            store.read_versioned_or_default(json!({
+                "teams": [],
+                "apiKeys": [],
+                "quotas": [],
+                "routeConfig": {},
+                "providerTests": [],
+                "providerHealth": [],
+                "providerOverrides": [],
+                "disabledProviders": [],
+                "deletedProviders": [],
+                "providerModelOverrides": [],
+                "providerCredentials": [],
+                "activeProviderCredentials": {},
+                "providerCredentialPoolModes": {},
+                "providerCredentialHealth": [],
+            }))?;
+        if revision == 0 || redact_historical_control_errors(&mut file) {
+            revision = store.compare_and_swap_json(revision, &file)?;
         }
         let mut provider_model_overrides: BTreeMap<
             String,
@@ -1068,6 +1091,7 @@ impl ControlStore {
                 provider_credential_pool_modes: file.provider_credential_pool_modes,
                 provider_credential_health,
             }),
+            revision: AtomicU64::new(revision),
             persistence_degraded: AtomicBool::new(false),
         })
     }
@@ -1077,6 +1101,7 @@ impl ControlStore {
         Self {
             store: None,
             inner: Mutex::new(ControlInner::default()),
+            revision: AtomicU64::new(0),
             persistence_degraded: AtomicBool::new(false),
         }
     }
@@ -1537,11 +1562,18 @@ impl ControlStore {
                 "control persistence is degraded after a failed write".to_owned(),
             ));
         }
-        self.store
-            .as_ref()
-            .map(JsonStore::read_value)
-            .transpose()
-            .map(|_| ())
+        let Some(store) = &self.store else {
+            return Ok(());
+        };
+        let persisted_revision = store.read_versioned()?.revision;
+        let local_revision = self.revision.load(Ordering::Acquire);
+        if persisted_revision != local_revision {
+            self.persistence_degraded.store(true, Ordering::Release);
+            return Err(AppError::NotReady(format!(
+                "control state is stale at revision {local_revision}; PostgreSQL is at revision {persisted_revision}"
+            )));
+        }
+        Ok(())
     }
 
     pub fn export_snapshot(&self) -> serde_json::Value {
@@ -1946,10 +1978,11 @@ impl ControlStore {
             .expires_at_ms
             .is_some_and(|expires| expires <= now)
         {
+            let previous = inner.clone();
             if let Some(record) = inner.api_keys.get_mut(&api_key_id) {
                 record.status = "revoked".to_owned();
             }
-            self.save_locked(&inner)?;
+            self.save_or_restore_locked(&mut inner, previous)?;
             return Err(AppError::Auth);
         }
 
@@ -1971,6 +2004,7 @@ impl ControlStore {
         let identity = ClientIdentity {
             user_id: record_snapshot.user_id.clone(),
             username: record_snapshot.username.clone(),
+            principal_type: record_snapshot.principal_type.clone(),
             api_key_id: Some(record_snapshot.id.clone()),
             api_key_name: Some(record_snapshot.name.clone()),
             api_key_group: record_snapshot.group.clone(),
@@ -2014,6 +2048,7 @@ impl ControlStore {
         ClientIdentity {
             user_id: "usr_local_admin".to_owned(),
             username: "local-admin".to_owned(),
+            principal_type: "legacy".to_owned(),
             api_key_id: None,
             api_key_name: Some("MODELPORT_AUTH_TOKEN".to_owned()),
             api_key_group: Some("legacy".to_owned()),
@@ -2100,6 +2135,21 @@ impl ControlStore {
         let username = input.username.unwrap_or_else(|| user_id.to_owned());
         let allowed_models = normalize_policy_list(input.allowed_models.unwrap_or_default())?;
         let allowed_providers = normalize_policy_list(input.allowed_providers.unwrap_or_default())?;
+        let principal_type = input
+            .principal_type
+            .as_deref()
+            .unwrap_or("user")
+            .trim()
+            .to_ascii_lowercase();
+        if !matches!(principal_type.as_str(), "user" | "service_account") {
+            return Err(AppError::InvalidRequest(
+                "principalType must be user or service_account".to_owned(),
+            ));
+        }
+        let purpose = input
+            .purpose
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
         let (organization_id, project_id, environment_id) =
             normalize_tenant_scope(None, None, None)?;
         let now = now_millis();
@@ -2119,6 +2169,32 @@ impl ControlStore {
                 "cannot create an expired API key".to_owned(),
             ));
         }
+        if principal_type == "service_account" {
+            let expires_at = expires_at_ms.ok_or_else(|| {
+                AppError::InvalidRequest(
+                    "service accounts require an explicit expiresAt timestamp".to_owned(),
+                )
+            })?;
+            const MAX_SERVICE_ACCOUNT_TTL_MS: u64 = 90 * 24 * 60 * 60 * 1_000;
+            if expires_at.saturating_sub(now) > MAX_SERVICE_ACCOUNT_TTL_MS {
+                return Err(AppError::InvalidRequest(
+                    "service account lifetime cannot exceed 90 days".to_owned(),
+                ));
+            }
+            if allowed_models.is_empty() || allowed_providers.is_empty() {
+                return Err(AppError::InvalidRequest(
+                    "service accounts require explicit model and provider scopes".to_owned(),
+                ));
+            }
+            if purpose
+                .as_deref()
+                .is_none_or(|value| value.len() < 8 || value.len() > 240)
+            {
+                return Err(AppError::InvalidRequest(
+                    "service account purpose must contain 8-240 characters".to_owned(),
+                ));
+            }
+        }
         let key = new_api_key();
         let mut inner = self.inner.lock().expect("control lock poisoned");
         let (team_id, team_name) = resolve_team_ref(&inner, input.team_id)?;
@@ -2127,6 +2203,8 @@ impl ControlStore {
             user_id: user_id.to_owned(),
             username,
             name: name.to_owned(),
+            principal_type,
+            purpose,
             key_hash: hash_secret(&key),
             key_prefix: key.chars().take(12).collect(),
             key_preview: preview_secret(&key),
@@ -2455,7 +2533,9 @@ impl ControlStore {
 
     fn save_locked(&self, inner: &ControlInner) -> Result<(), AppError> {
         let result = if let Some(store) = &self.store {
-            self.write_locked(store, inner)
+            let expected_revision = self.revision.load(Ordering::Acquire);
+            self.write_locked(store, expected_revision, inner)
+                .map(|revision| self.revision.store(revision, Ordering::Release))
         } else {
             Ok(())
         };
@@ -2464,7 +2544,12 @@ impl ControlStore {
         result
     }
 
-    fn write_locked(&self, store: &JsonStore, inner: &ControlInner) -> Result<(), AppError> {
+    fn write_locked(
+        &self,
+        store: &JsonStore,
+        expected_revision: u64,
+        inner: &ControlInner,
+    ) -> Result<u64, AppError> {
         let file = ControlFile {
             teams: inner.teams.values().cloned().collect(),
             api_keys: inner.api_keys.values().cloned().collect(),
@@ -2493,7 +2578,7 @@ impl ControlStore {
                 .flat_map(|health| health.values().cloned())
                 .collect(),
         };
-        store.write_json(&file)
+        store.compare_and_swap_json(expected_revision, &file)
     }
 }
 
@@ -3083,6 +3168,8 @@ mod tests {
             user_id: "usr_test".to_owned(),
             username: Some("test-user".to_owned()),
             name: "local".to_owned(),
+            principal_type: None,
+            purpose: None,
             group: None,
             team_id,
             allowed_models: None,
@@ -3227,6 +3314,8 @@ mod tests {
                 user_id: "usr_test".to_owned(),
                 username: Some("test-user".to_owned()),
                 name: "local".to_owned(),
+                principal_type: None,
+                purpose: None,
                 group: None,
                 team_id: None,
                 allowed_models: None,
@@ -3243,12 +3332,57 @@ mod tests {
     }
 
     #[test]
+    fn service_accounts_require_expiry_purpose_and_explicit_scopes() {
+        let store = ControlStore::for_tests();
+        let input = |expires_at: Option<String>, allowed: bool| CreateApiKeyInput {
+            user_id: "usr_automation".to_owned(),
+            username: Some("automation".to_owned()),
+            name: "nightly batch".to_owned(),
+            principal_type: Some("service_account".to_owned()),
+            purpose: Some("nightly approved document indexing".to_owned()),
+            group: Some("batch".to_owned()),
+            team_id: None,
+            allowed_models: allowed.then(|| vec!["qwen3.5-code".to_owned()]),
+            allowed_providers: allowed.then(|| vec!["local_qwen".to_owned()]),
+            expires_at,
+        };
+
+        assert!(store.create_api_key(input(None, true)).is_err());
+        assert!(
+            store
+                .create_api_key(input(
+                    Some(
+                        now_millis()
+                            .saturating_add(7 * 24 * 60 * 60 * 1_000)
+                            .to_string()
+                    ),
+                    false,
+                ))
+                .is_err()
+        );
+        let created = store
+            .create_api_key(input(
+                Some(
+                    now_millis()
+                        .saturating_add(7 * 24 * 60 * 60 * 1_000)
+                        .to_string(),
+                ),
+                true,
+            ))
+            .unwrap();
+        assert_eq!(created.public.principal_type, "service_account");
+        assert!(created.public.expires_at.is_some());
+    }
+
+    #[test]
     fn api_key_creation_rejects_invalid_or_expired_timestamps() {
         let store = ControlStore::for_tests();
         let create = |expires_at: String| CreateApiKeyInput {
             user_id: "usr_test".to_owned(),
             username: Some("test-user".to_owned()),
             name: "local".to_owned(),
+            principal_type: None,
+            purpose: None,
             group: None,
             team_id: None,
             allowed_models: None,
@@ -3274,6 +3408,8 @@ mod tests {
                 user_id: "usr_test".to_owned(),
                 username: Some("test-user".to_owned()),
                 name: "local".to_owned(),
+                principal_type: None,
+                purpose: None,
                 group: None,
                 team_id: None,
                 allowed_models: None,
@@ -3312,6 +3448,8 @@ mod tests {
                 user_id: "usr_test".to_owned(),
                 username: Some("test-user".to_owned()),
                 name: "local".to_owned(),
+                principal_type: None,
+                purpose: None,
                 group: Some("dev".to_owned()),
                 team_id: None,
                 allowed_models: None,
@@ -3363,6 +3501,7 @@ mod tests {
         let identity = ClientIdentity {
             user_id: "usr_test".to_owned(),
             username: "test-user".to_owned(),
+            principal_type: "user".to_owned(),
             api_key_id: Some("key_test".to_owned()),
             api_key_name: Some("local".to_owned()),
             api_key_group: Some("test".to_owned()),
@@ -3429,6 +3568,8 @@ mod tests {
                 user_id: "usr_test".to_owned(),
                 username: Some("test-user".to_owned()),
                 name: "team key".to_owned(),
+                principal_type: None,
+                purpose: None,
                 group: None,
                 team_id: Some("team_prod".to_owned()),
                 allowed_models: None,
@@ -3471,6 +3612,8 @@ mod tests {
                 user_id: "usr_test".to_owned(),
                 username: Some("test-user".to_owned()),
                 name: "team key".to_owned(),
+                principal_type: None,
+                purpose: None,
                 group: None,
                 team_id: Some("team_safe".to_owned()),
                 allowed_models: None,
@@ -3695,6 +3838,7 @@ mod tests {
         let store = ControlStore {
             store: Some(JsonStore::File(path.clone())),
             inner: Mutex::new(seed.inner.lock().unwrap().clone()),
+            revision: AtomicU64::new(0),
             persistence_degraded: AtomicBool::new(false),
         };
         let expected = provider_routing_state(&store);
@@ -3764,6 +3908,7 @@ mod tests {
         let store = ControlStore {
             store: Some(JsonStore::File(path.clone())),
             inner: Mutex::new(ControlInner::default()),
+            revision: AtomicU64::new(0),
             persistence_degraded: AtomicBool::new(false),
         };
 
@@ -3900,5 +4045,36 @@ mod tests {
         assert!(matches!(store.health_check(), Err(AppError::NotReady(_))));
 
         std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn stale_control_revision_rejects_mutation_and_restores_memory() {
+        let state = std::sync::Arc::new(Mutex::new(crate::storage::VersionedValue {
+            value: None,
+            revision: 0,
+        }));
+        let external_writer = JsonStore::Memory {
+            namespace: "control".to_owned(),
+            state: std::sync::Arc::clone(&state),
+        };
+        let store = ControlStore {
+            store: Some(JsonStore::Memory {
+                namespace: "control".to_owned(),
+                state,
+            }),
+            inner: Mutex::new(ControlInner::default()),
+            revision: AtomicU64::new(0),
+            persistence_degraded: AtomicBool::new(false),
+        };
+
+        external_writer
+            .compare_and_swap_value(0, &serde_json::json!({}))
+            .unwrap();
+        assert!(matches!(store.health_check(), Err(AppError::NotReady(_))));
+        assert!(matches!(
+            store.create_api_key(api_key_input(None)),
+            Err(AppError::StateConflict(_))
+        ));
+        assert!(store.inner.lock().unwrap().api_keys.is_empty());
     }
 }

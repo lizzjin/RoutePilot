@@ -457,6 +457,11 @@ pub struct TokenCountingConfig {
     pub mode: TokenCountingMode,
     pub context_tokens: Option<u64>,
     pub recommended_reasoning_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub model_recommended_input_tokens: HashMap<String, u64>,
+    pub max_output_tokens: Option<u64>,
+    #[serde(default)]
+    pub model_max_output_tokens: HashMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -2578,7 +2583,13 @@ fn validate_provider(
             || provider
                 .token_counting
                 .recommended_reasoning_input_tokens
-                .is_some())
+                .is_some()
+            || !provider
+                .token_counting
+                .model_recommended_input_tokens
+                .is_empty()
+            || provider.token_counting.max_output_tokens.is_some()
+            || !provider.token_counting.model_max_output_tokens.is_empty())
     {
         issues.push(ConfigIssue::error(format!(
             "provider `{id}` context admission requires token_counting.mode=anthropic"
@@ -2593,6 +2604,61 @@ fn validate_provider(
         issues.push(ConfigIssue::error(format!(
             "provider `{id}` token_counting.recommended_reasoning_input_tokens must be positive"
         )));
+    }
+    for (model, limit) in &provider.token_counting.model_recommended_input_tokens {
+        if model.trim().is_empty() || *limit == 0 {
+            issues.push(ConfigIssue::error(format!(
+                "provider `{id}` token_counting.model_recommended_input_tokens requires non-empty model names and positive limits"
+            )));
+        }
+        if provider
+            .token_counting
+            .context_tokens
+            .is_some_and(|context| *limit > context)
+        {
+            issues.push(ConfigIssue::error(format!(
+                "provider `{id}` recommended input limit for `{model}` cannot exceed token_counting.context_tokens"
+            )));
+        }
+    }
+    if provider.token_counting.max_output_tokens == Some(0) {
+        issues.push(ConfigIssue::error(format!(
+            "provider `{id}` token_counting.max_output_tokens must be positive"
+        )));
+    }
+    if let (Some(maximum), Some(context)) = (
+        provider.token_counting.max_output_tokens,
+        provider.token_counting.context_tokens,
+    ) && maximum > context
+    {
+        issues.push(ConfigIssue::error(format!(
+            "provider `{id}` token_counting.max_output_tokens cannot exceed context_tokens"
+        )));
+    }
+    for (model, limit) in &provider.token_counting.model_max_output_tokens {
+        if model.trim().is_empty() || *limit == 0 {
+            issues.push(ConfigIssue::error(format!(
+                "provider `{id}` token_counting.model_max_output_tokens requires non-empty model names and positive limits"
+            )));
+        }
+        if provider
+            .token_counting
+            .max_output_tokens
+            .is_some_and(|maximum| *limit > maximum)
+        {
+            issues.push(ConfigIssue::error(format!(
+                "provider `{id}` output limit for `{model}` cannot exceed token_counting.max_output_tokens"
+            )));
+        }
+        if provider
+            .token_counting
+            .context_tokens
+            .is_some_and(|context| *limit > context)
+        {
+            issues.push(ConfigIssue::error(format!(
+                "provider `{id}` output limit for `{model}` cannot exceed token_counting.context_tokens"
+            )));
+        }
     }
     if let (Some(recommended), Some(context)) = (
         provider.token_counting.recommended_reasoning_input_tokens,
@@ -3074,6 +3140,9 @@ mod tests {
             mode = "anthropic"
             context_tokens = 131072
             recommended_reasoning_input_tokens = 94208
+            model_recommended_input_tokens = { "qwen-fast" = 24576, "qwen-deep" = 94208 }
+            max_output_tokens = 32768
+            model_max_output_tokens = { "qwen-fast" = 4096, "qwen-deep" = 32768 }
 
             [providers.local_vllm.pricing]
             input_per_million = 0
@@ -3104,6 +3173,15 @@ mod tests {
                 mode: TokenCountingMode::Anthropic,
                 context_tokens: Some(131072),
                 recommended_reasoning_input_tokens: Some(94208),
+                model_recommended_input_tokens: HashMap::from([
+                    ("qwen-fast".to_owned(), 24576),
+                    ("qwen-deep".to_owned(), 94208),
+                ]),
+                max_output_tokens: Some(32768),
+                model_max_output_tokens: HashMap::from([
+                    ("qwen-fast".to_owned(), 4096),
+                    ("qwen-deep".to_owned(), 32768),
+                ]),
             })
         );
         assert_eq!(

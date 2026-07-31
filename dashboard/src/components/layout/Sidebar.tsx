@@ -14,6 +14,7 @@ import {
   Settings,
   ShieldCheck,
   BookOpen,
+  Scale,
   ChevronLeft,
   ChevronRight,
   Zap,
@@ -35,6 +36,7 @@ const iconMap: Record<string, React.ElementType> = {
   Settings,
   ShieldCheck,
   BookOpen,
+  Scale,
 }
 
 interface SidebarProps {

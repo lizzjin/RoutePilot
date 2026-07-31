@@ -7,10 +7,13 @@ export interface CreateApiKeyInput {
   userId: string
   username?: string
   name: string
+  principalType?: 'user' | 'service_account'
+  purpose?: string
   group?: string
   teamId?: string
   allowedModels?: string[]
   allowedProviders?: string[]
+  expiresAt?: string
 }
 
 export interface UpdateApiKeyInput {
@@ -173,6 +176,8 @@ export const usersService = {
       userId: data.userId,
       username: data.username,
       name: data.name,
+      principalType: data.principalType || 'user',
+      purpose: data.purpose || null,
       keyPrefix: `${key.slice(0, 12)}...`,
       keyPreview: `${key.slice(0, 12)}...${key.slice(-4)}`,
       key,
@@ -183,7 +188,7 @@ export const usersService = {
       allowedProviders: data.allowedProviders || [],
       createdAt: new Date().toISOString(),
       lastUsedAt: null,
-      expiresAt: null,
+      expiresAt: data.expiresAt || null,
       status: 'active',
       requestsToday: 0,
       tokensToday: 0,

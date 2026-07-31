@@ -13,7 +13,10 @@ use std::{
 
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use sqlx::PgPool;
+use sqlx::{Executor, PgPool, Postgres};
+
+#[cfg(test)]
+use std::sync::Arc;
 
 use crate::{
     database::{connect_pool, database_url, redact_database_url},
@@ -21,28 +24,53 @@ use crate::{
 };
 
 const STATE_TABLE: &str = "modelport_state";
+const STATE_SCHEMA_LOCK_KEY: i64 = 0x4d4f_4445_4c50_4f52;
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
 pub enum JsonStore {
     #[cfg(test)]
     File(PathBuf),
+    #[cfg(test)]
+    Memory {
+        namespace: String,
+        state: Arc<Mutex<VersionedValue>>,
+    },
     Postgres(PostgresJsonStore),
 }
 
 pub struct PostgresJsonStore {
     namespace: String,
+    database_url: String,
     location: String,
     worker: Mutex<mpsc::Sender<PostgresCommand>>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct VersionedValue {
+    pub(crate) value: Option<Value>,
+    pub(crate) revision: u64,
+}
+
+#[derive(Debug)]
+struct StateWrite {
+    namespace: String,
+    expected_revision: u64,
+    value: Value,
+}
+
 enum PostgresCommand {
     Read {
-        respond_to: mpsc::Sender<Result<Option<Value>, String>>,
+        respond_to: mpsc::Sender<Result<VersionedValue, String>>,
     },
-    Write {
+    CompareAndSwap {
         value: Value,
-        respond_to: mpsc::Sender<Result<(), String>>,
+        expected_revision: u64,
+        respond_to: mpsc::Sender<Result<u64, AppError>>,
+    },
+    CompareAndSwapMany {
+        writes: Vec<StateWrite>,
+        respond_to: mpsc::Sender<Result<Vec<u64>, AppError>>,
     },
 }
 
@@ -69,6 +97,7 @@ impl JsonStore {
 
         Ok(Self::Postgres(PostgresJsonStore {
             namespace: namespace.to_owned(),
+            database_url: database_url.clone(),
             location: format!(
                 "{}#{}:{}",
                 redact_database_url(&database_url),
@@ -79,23 +108,38 @@ impl JsonStore {
         }))
     }
 
-    pub fn read_or_default<T>(&self, default: Value) -> Result<T, AppError>
+    pub fn read_versioned_or_default<T>(&self, default: Value) -> Result<(T, u64), AppError>
     where
         T: DeserializeOwned,
     {
-        let value = self.read_value()?.unwrap_or(default);
-        Ok(serde_json::from_value(value)?)
+        let document = self.read_versioned()?;
+        let value = document.value.unwrap_or(default);
+        Ok((serde_json::from_value(value)?, document.revision))
     }
 
     pub fn read_value(&self) -> Result<Option<Value>, AppError> {
+        self.read_versioned().map(|document| document.value)
+    }
+
+    pub(crate) fn read_versioned(&self) -> Result<VersionedValue, AppError> {
         match self {
             #[cfg(test)]
             Self::File(path) => {
                 if !path.exists() {
-                    return Ok(None);
+                    return Ok(VersionedValue {
+                        value: None,
+                        revision: 0,
+                    });
                 }
                 let value = serde_json::from_str(&fs::read_to_string(path)?)?;
-                Ok(Some(value))
+                Ok(VersionedValue {
+                    value: Some(value),
+                    revision: 0,
+                })
+            }
+            #[cfg(test)]
+            Self::Memory { state, .. } => {
+                Ok(state.lock().expect("memory store lock poisoned").clone())
             }
             Self::Postgres(store) => {
                 let (respond_to, response) = mpsc::channel();
@@ -113,33 +157,114 @@ impl JsonStore {
         }
     }
 
-    pub fn write_json<T>(&self, value: &T) -> Result<(), AppError>
+    pub fn compare_and_swap_json<T>(
+        &self,
+        expected_revision: u64,
+        value: &T,
+    ) -> Result<u64, AppError>
     where
         T: Serialize,
     {
-        self.write_value(&serde_json::to_value(value)?)
+        self.compare_and_swap_value(expected_revision, &serde_json::to_value(value)?)
     }
 
-    pub fn write_value(&self, value: &Value) -> Result<(), AppError> {
+    pub fn compare_and_swap_value(
+        &self,
+        expected_revision: u64,
+        value: &Value,
+    ) -> Result<u64, AppError> {
         match self {
             #[cfg(test)]
-            Self::File(path) => write_json_file_atomic(path, value),
+            Self::File(path) => {
+                write_json_file_atomic(path, value)?;
+                Ok(expected_revision)
+            }
+            #[cfg(test)]
+            Self::Memory { namespace, state } => {
+                let mut document = state.lock().expect("memory store lock poisoned");
+                if document.revision != expected_revision {
+                    return Err(state_conflict(namespace, expected_revision));
+                }
+                document.value = Some(value.clone());
+                document.revision = document
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| AppError::Database("state revision exhausted".to_owned()))?;
+                Ok(document.revision)
+            }
             Self::Postgres(store) => {
                 let (respond_to, response) = mpsc::channel();
                 store
                     .worker
                     .lock()
                     .expect("postgres worker lock poisoned")
-                    .send(PostgresCommand::Write {
+                    .send(PostgresCommand::CompareAndSwap {
                         value: value.clone(),
+                        expected_revision,
                         respond_to,
                     })
                     .map_err(|err| AppError::Database(format!("postgres worker stopped: {err}")))?;
                 response
                     .recv()
                     .map_err(|err| AppError::Database(format!("postgres worker stopped: {err}")))?
-                    .map_err(AppError::Database)
             }
+        }
+    }
+
+    pub fn compare_and_swap_pair(
+        first: (&Self, u64, &Value),
+        second: (&Self, u64, &Value),
+    ) -> Result<(u64, u64), AppError> {
+        let (first_store, second_store) = match (first.0, second.0) {
+            (Self::Postgres(first_store), Self::Postgres(second_store)) => {
+                (first_store, second_store)
+            }
+            #[cfg(test)]
+            _ => {
+                return Err(AppError::Config(
+                    "atomic state restore requires PostgreSQL stores".to_owned(),
+                ));
+            }
+        };
+        if first_store.database_url != second_store.database_url {
+            return Err(AppError::Config(
+                "atomic state restore requires auth and control to use the same PostgreSQL database"
+                    .to_owned(),
+            ));
+        }
+        if first_store.namespace == second_store.namespace {
+            return Err(AppError::InvalidRequest(
+                "atomic state restore requires distinct namespaces".to_owned(),
+            ));
+        }
+
+        let writes = vec![
+            StateWrite {
+                namespace: first_store.namespace.clone(),
+                expected_revision: first.1,
+                value: first.2.clone(),
+            },
+            StateWrite {
+                namespace: second_store.namespace.clone(),
+                expected_revision: second.1,
+                value: second.2.clone(),
+            },
+        ];
+        let (respond_to, response) = mpsc::channel();
+        first_store
+            .worker
+            .lock()
+            .expect("postgres worker lock poisoned")
+            .send(PostgresCommand::CompareAndSwapMany { writes, respond_to })
+            .map_err(|err| AppError::Database(format!("postgres worker stopped: {err}")))?;
+        let revisions = response
+            .recv()
+            .map_err(|err| AppError::Database(format!("postgres worker stopped: {err}")))??;
+        match revisions.as_slice() {
+            [first_revision, second_revision] => Ok((*first_revision, *second_revision)),
+            _ => Err(AppError::Database(
+                "atomic state restore returned an invalid revision count".to_owned(),
+            )),
         }
     }
 
@@ -147,6 +272,8 @@ impl JsonStore {
         match self {
             #[cfg(test)]
             Self::File(path) => path.to_string_lossy().into_owned(),
+            #[cfg(test)]
+            Self::Memory { namespace, .. } => format!("memory://{namespace}"),
             Self::Postgres(store) => store.location.clone(),
         }
     }
@@ -237,15 +364,28 @@ fn sync_directory(_path: &Path) -> io::Result<()> {
 }
 
 async fn initialize_postgres(pool: &PgPool) -> Result<(), AppError> {
+    let mut transaction = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(STATE_SCHEMA_LOCK_KEY)
+        .execute(&mut *transaction)
+        .await?;
     sqlx::query(&format!(
         "CREATE TABLE IF NOT EXISTS {STATE_TABLE} (
             namespace TEXT PRIMARY KEY,
             document JSONB NOT NULL,
+            revision BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )"
     ))
-    .execute(pool)
+    .execute(&mut *transaction)
     .await?;
+    sqlx::query(&format!(
+        "ALTER TABLE {STATE_TABLE}
+         ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0"
+    ))
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
     Ok(())
 }
 
@@ -289,10 +429,22 @@ fn spawn_postgres_worker(
                             .map_err(|err| err.to_string());
                         let _ = respond_to.send(result);
                     }
-                    PostgresCommand::Write { value, respond_to } => {
-                        let result = runtime
-                            .block_on(write_postgres_value(&pool, &namespace, &value))
-                            .map_err(|err| err.to_string());
+                    PostgresCommand::CompareAndSwap {
+                        value,
+                        expected_revision,
+                        respond_to,
+                    } => {
+                        let result = runtime.block_on(compare_and_swap_postgres_value(
+                            &pool,
+                            &namespace,
+                            expected_revision,
+                            &value,
+                        ));
+                        let _ = respond_to.send(result);
+                    }
+                    PostgresCommand::CompareAndSwapMany { writes, respond_to } => {
+                        let result =
+                            runtime.block_on(compare_and_swap_postgres_values(&pool, &writes));
                         let _ = respond_to.send(result);
                     }
                 }
@@ -314,32 +466,101 @@ async fn connect_and_initialize(database_url: &str) -> Result<PgPool, AppError> 
     Ok(pool)
 }
 
-async fn read_postgres_value(pool: &PgPool, namespace: &str) -> Result<Option<Value>, AppError> {
-    sqlx::query_scalar::<_, Value>(&format!(
-        "SELECT document FROM {STATE_TABLE} WHERE namespace = $1"
+async fn read_postgres_value(pool: &PgPool, namespace: &str) -> Result<VersionedValue, AppError> {
+    let row = sqlx::query_as::<_, (Value, i64)>(&format!(
+        "SELECT document, revision FROM {STATE_TABLE} WHERE namespace = $1"
     ))
     .bind(namespace)
     .fetch_optional(pool)
-    .await
-    .map_err(AppError::from)
+    .await?;
+    let Some((value, revision)) = row else {
+        return Ok(VersionedValue {
+            value: None,
+            revision: 0,
+        });
+    };
+    Ok(VersionedValue {
+        value: Some(value),
+        revision: revision.try_into().map_err(|_| {
+            AppError::Database(format!(
+                "{STATE_TABLE}.{namespace} contains a negative revision"
+            ))
+        })?,
+    })
 }
 
-async fn write_postgres_value(
-    pool: &PgPool,
+async fn compare_and_swap_postgres_value<'executor, E>(
+    executor: E,
     namespace: &str,
+    expected_revision: u64,
     value: &Value,
-) -> Result<(), AppError> {
-    sqlx::query(&format!(
-        "INSERT INTO {STATE_TABLE} (namespace, document, updated_at) \
-             VALUES ($1, $2, now()) \
-             ON CONFLICT (namespace) DO UPDATE \
-             SET document = EXCLUDED.document, updated_at = now()"
+) -> Result<u64, AppError>
+where
+    E: Executor<'executor, Database = Postgres>,
+{
+    let expected_revision = i64::try_from(expected_revision)
+        .map_err(|_| AppError::Database("state revision exceeds PostgreSQL BIGINT".to_owned()))?;
+    let revision = sqlx::query_scalar::<_, i64>(&format!(
+        "WITH updated AS ( \
+             UPDATE {STATE_TABLE} \
+             SET document = $2, revision = revision + 1, updated_at = now() \
+             WHERE namespace = $1 AND revision = $3 \
+             RETURNING revision \
+         ), inserted AS ( \
+             INSERT INTO {STATE_TABLE} (namespace, document, revision, updated_at) \
+             SELECT $1, $2, 1, now() \
+             WHERE $3 = 0 \
+               AND NOT EXISTS ( \
+                   SELECT 1 FROM {STATE_TABLE} WHERE namespace = $1 \
+               ) \
+             ON CONFLICT (namespace) DO NOTHING \
+             RETURNING revision \
+         ) \
+         SELECT revision FROM updated \
+         UNION ALL \
+         SELECT revision FROM inserted"
     ))
     .bind(namespace)
     .bind(value)
-    .execute(pool)
+    .bind(expected_revision)
+    .fetch_optional(executor)
     .await?;
-    Ok(())
+    let Some(revision) = revision else {
+        return Err(state_conflict(
+            namespace,
+            expected_revision.try_into().unwrap_or(u64::MAX),
+        ));
+    };
+    revision
+        .try_into()
+        .map_err(|_| AppError::Database("PostgreSQL returned a negative state revision".to_owned()))
+}
+
+async fn compare_and_swap_postgres_values(
+    pool: &PgPool,
+    writes: &[StateWrite],
+) -> Result<Vec<u64>, AppError> {
+    let mut transaction = pool.begin().await?;
+    let mut revisions = Vec::with_capacity(writes.len());
+    for write in writes {
+        revisions.push(
+            compare_and_swap_postgres_value(
+                &mut *transaction,
+                &write.namespace,
+                write.expected_revision,
+                &write.value,
+            )
+            .await?,
+        );
+    }
+    transaction.commit().await?;
+    Ok(revisions)
+}
+
+fn state_conflict(namespace: &str, expected_revision: u64) -> AppError {
+    AppError::StateConflict(format!(
+        "{namespace} state changed after revision {expected_revision}; reload the latest state before retrying"
+    ))
 }
 
 #[cfg(test)]
@@ -353,6 +574,170 @@ mod tests {
             "modelport-storage-{label}-{}-{sequence}",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn state_cas_rejects_a_stale_memory_writer() {
+        let state = Arc::new(Mutex::new(VersionedValue {
+            value: None,
+            revision: 0,
+        }));
+        let first = JsonStore::Memory {
+            namespace: "control".to_owned(),
+            state: Arc::clone(&state),
+        };
+        let second = JsonStore::Memory {
+            namespace: "control".to_owned(),
+            state,
+        };
+        let first_snapshot = first.read_versioned().unwrap();
+        let second_snapshot = second.read_versioned().unwrap();
+
+        assert_eq!(
+            first
+                .compare_and_swap_value(first_snapshot.revision, &json!({ "writer": "first" }))
+                .unwrap(),
+            1
+        );
+        assert!(matches!(
+            second.compare_and_swap_value(second_snapshot.revision, &json!({ "writer": "second" })),
+            Err(AppError::StateConflict(_))
+        ));
+        assert_eq!(
+            first.read_value().unwrap().unwrap(),
+            json!({ "writer": "first" })
+        );
+    }
+
+    #[tokio::test]
+    async fn postgres_state_cas_allows_exactly_one_concurrent_writer() {
+        let Ok(database_url) = std::env::var("MODELPORT_TEST_DATABASE_URL") else {
+            return;
+        };
+        let pool = connect_pool(&database_url, Some(4))
+            .await
+            .expect("connect to MODELPORT_TEST_DATABASE_URL");
+        initialize_postgres(&pool)
+            .await
+            .expect("initialize versioned state table");
+        let namespace = format!("test_cas_{}", uuid::Uuid::new_v4().simple());
+
+        let left_value = json!({ "writer": "left" });
+        let right_value = json!({ "writer": "right" });
+        let left = compare_and_swap_postgres_value(&pool, &namespace, 0, &left_value);
+        let right = compare_and_swap_postgres_value(&pool, &namespace, 0, &right_value);
+        let (left, right) = tokio::join!(left, right);
+        assert_eq!(
+            usize::from(left.is_ok()) + usize::from(right.is_ok()),
+            1,
+            "exactly one writer must win the initial revision"
+        );
+        assert_eq!(
+            usize::from(matches!(left, Err(AppError::StateConflict(_))))
+                + usize::from(matches!(right, Err(AppError::StateConflict(_)))),
+            1,
+            "the stale writer must receive a state conflict"
+        );
+
+        let stored = read_postgres_value(&pool, &namespace)
+            .await
+            .expect("read winning state");
+        assert_eq!(stored.revision, 1);
+        assert!(matches!(
+            stored.value,
+            Some(value)
+                if value == json!({ "writer": "left" })
+                    || value == json!({ "writer": "right" })
+        ));
+
+        sqlx::query(&format!("DELETE FROM {STATE_TABLE} WHERE namespace = $1"))
+            .bind(&namespace)
+            .execute(&pool)
+            .await
+            .expect("remove test state");
+    }
+
+    #[tokio::test]
+    async fn postgres_state_batch_cas_is_atomic() {
+        let Ok(database_url) = std::env::var("MODELPORT_TEST_DATABASE_URL") else {
+            return;
+        };
+        let pool = connect_pool(&database_url, Some(2))
+            .await
+            .expect("connect to MODELPORT_TEST_DATABASE_URL");
+        initialize_postgres(&pool)
+            .await
+            .expect("initialize versioned state table");
+        let suffix = uuid::Uuid::new_v4().simple();
+        let auth_namespace = format!("test_auth_{suffix}");
+        let control_namespace = format!("test_control_{suffix}");
+        compare_and_swap_postgres_value(
+            &pool,
+            &auth_namespace,
+            0,
+            &json!({ "version": "auth-original" }),
+        )
+        .await
+        .unwrap();
+        compare_and_swap_postgres_value(
+            &pool,
+            &control_namespace,
+            0,
+            &json!({ "version": "control-original" }),
+        )
+        .await
+        .unwrap();
+
+        let conflict = compare_and_swap_postgres_values(
+            &pool,
+            &[
+                StateWrite {
+                    namespace: auth_namespace.clone(),
+                    expected_revision: 1,
+                    value: json!({ "version": "auth-restored" }),
+                },
+                StateWrite {
+                    namespace: control_namespace.clone(),
+                    expected_revision: 0,
+                    value: json!({ "version": "control-restored" }),
+                },
+            ],
+        )
+        .await;
+        assert!(matches!(conflict, Err(AppError::StateConflict(_))));
+        let auth_after_conflict = read_postgres_value(&pool, &auth_namespace).await.unwrap();
+        assert_eq!(auth_after_conflict.revision, 1);
+        assert_eq!(
+            auth_after_conflict.value.unwrap(),
+            json!({ "version": "auth-original" })
+        );
+
+        let revisions = compare_and_swap_postgres_values(
+            &pool,
+            &[
+                StateWrite {
+                    namespace: auth_namespace.clone(),
+                    expected_revision: 1,
+                    value: json!({ "version": "auth-restored" }),
+                },
+                StateWrite {
+                    namespace: control_namespace.clone(),
+                    expected_revision: 1,
+                    value: json!({ "version": "control-restored" }),
+                },
+            ],
+        )
+        .await
+        .unwrap();
+        assert_eq!(revisions, vec![2, 2]);
+
+        sqlx::query(&format!(
+            "DELETE FROM {STATE_TABLE} WHERE namespace = ANY($1)"
+        ))
+        .bind(vec![auth_namespace, control_namespace])
+        .execute(&pool)
+        .await
+        .expect("remove batch test state");
     }
 
     #[test]

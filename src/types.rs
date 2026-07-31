@@ -248,6 +248,7 @@ pub fn anthropic_error_event(error: &AppError) -> Result<Event, AppError> {
     let kind = match error {
         AppError::InvalidRequest(_)
         | AppError::IdempotencyConflict(_)
+        | AppError::StateConflict(_)
         | AppError::NotFound(_)
         | AppError::ProviderNotFound(_) => "invalid_request_error",
         AppError::Auth => "authentication_error",

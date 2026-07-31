@@ -5,7 +5,7 @@ use std::{
     env,
     sync::{
         Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -39,6 +39,7 @@ const MAX_LOGIN_ATTEMPT_RECORDS: usize = 10_000;
 pub struct AuthStore {
     store: Option<JsonStore>,
     inner: Mutex<AuthInner>,
+    revision: AtomicU64,
     persistence_degraded: AtomicBool,
     session_ttl_seconds: u64,
     cookie_secure: bool,
@@ -172,7 +173,7 @@ pub struct CreateUserInput {
     pub status: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateUserInput {
     pub email: Option<String>,
@@ -224,7 +225,8 @@ impl AuthStore {
             DEFAULT_SESSION_TTL_SECONDS,
         );
         let cookie_secure = env_flag("MODELPORT_ADMIN_COOKIE_SECURE");
-        let file: AuthFile = store.read_or_default(serde_json::json!({ "users": [] }))?;
+        let (file, revision): (AuthFile, u64) =
+            store.read_versioned_or_default(serde_json::json!({ "users": [] }))?;
         let users = file
             .users
             .into_iter()
@@ -238,12 +240,13 @@ impl AuthStore {
                 sessions: HashMap::new(),
                 attempts: HashMap::new(),
             }),
+            revision: AtomicU64::new(revision),
             persistence_degraded: AtomicBool::new(false),
             session_ttl_seconds,
             cookie_secure,
         };
 
-        store.bootstrap_first_admin(config)?;
+        store.bootstrap_initial_admins(config)?;
         Ok(store)
     }
 
@@ -252,6 +255,7 @@ impl AuthStore {
         Self {
             store: None,
             inner: Mutex::new(AuthInner::default()),
+            revision: AtomicU64::new(0),
             persistence_degraded: AtomicBool::new(false),
             session_ttl_seconds: DEFAULT_SESSION_TTL_SECONDS,
             cookie_secure: false,
@@ -330,6 +334,7 @@ impl AuthStore {
         let token_hash = hash_session_token(&token);
         let expires_at_ms = now_ms.saturating_add(self.session_ttl_seconds.saturating_mul(1_000));
 
+        let previous = inner.clone();
         if let Some(user) = inner.users.get_mut(&user_id) {
             user.last_login_at_ms = Some(now_ms);
             user.updated_at_ms = now_ms;
@@ -343,7 +348,7 @@ impl AuthStore {
             },
         );
 
-        self.save_locked(&inner)?;
+        self.save_or_restore_locked(&mut inner, previous)?;
 
         let user = inner
             .users
@@ -590,11 +595,18 @@ impl AuthStore {
                 "auth persistence is degraded after a failed write".to_owned(),
             ));
         }
-        self.store
-            .as_ref()
-            .map(JsonStore::read_value)
-            .transpose()
-            .map(|_| ())
+        let Some(store) = &self.store else {
+            return Ok(());
+        };
+        let persisted_revision = store.read_versioned()?.revision;
+        let local_revision = self.revision.load(Ordering::Acquire);
+        if persisted_revision != local_revision {
+            self.persistence_degraded.store(true, Ordering::Release);
+            return Err(AppError::NotReady(format!(
+                "auth state is stale at revision {local_revision}; PostgreSQL is at revision {persisted_revision}"
+            )));
+        }
+        Ok(())
     }
 
     pub fn create_user(&self, input: CreateUserInput) -> Result<PublicUser, AppError> {
@@ -777,7 +789,7 @@ impl AuthStore {
         cookie
     }
 
-    fn bootstrap_first_admin(&self, config: &AppConfig) -> Result<(), AppError> {
+    fn bootstrap_initial_admins(&self, config: &AppConfig) -> Result<(), AppError> {
         let mut inner = self.inner.lock().expect("auth lock poisoned");
         if !inner.users.is_empty() {
             return Ok(());
@@ -801,21 +813,43 @@ impl AuthStore {
             &env::var("MODELPORT_ADMIN_EMAIL")
                 .unwrap_or_else(|_| "admin@modelport.local".to_owned()),
         )?;
-        let now_ms = now_millis();
-        let user = AdminUserRecord {
-            id: format!("usr_{}", Uuid::new_v4().simple()),
-            username,
-            email,
-            role: "admin".to_owned(),
-            status: "active".to_owned(),
-            password_hash: hash_password(&password)?,
-            created_at_ms: now_ms,
-            updated_at_ms: now_ms,
-            last_login_at_ms: None,
-            federated_identities: Vec::new(),
-        };
+        let primary = new_bootstrap_admin(username, email, &password)?;
+        inner.users.insert(primary.id.clone(), primary);
 
-        inner.users.insert(user.id.clone(), user);
+        let backup_values = (
+            env::var("MODELPORT_BACKUP_ADMIN_USERNAME").ok(),
+            env::var("MODELPORT_BACKUP_ADMIN_EMAIL").ok(),
+            env::var("MODELPORT_BACKUP_ADMIN_PASSWORD").ok(),
+        );
+        let backup_configured =
+            backup_values.0.is_some() || backup_values.1.is_some() || backup_values.2.is_some();
+        if env_flag("MODELPORT_ENTERPRISE_MODE") && !backup_configured {
+            return Err(AppError::Config(
+                "enterprise bootstrap requires MODELPORT_BACKUP_ADMIN_USERNAME, MODELPORT_BACKUP_ADMIN_EMAIL, and MODELPORT_BACKUP_ADMIN_PASSWORD"
+                    .to_owned(),
+            ));
+        }
+        if backup_configured {
+            let (Some(username), Some(email), Some(password)) = backup_values else {
+                return Err(AppError::Config(
+                    "backup administrator bootstrap values must be configured together".to_owned(),
+                ));
+            };
+            validate_bootstrap_password(&password)?;
+            let username = normalize_username(&username)?;
+            let email = validate_email(&email)?;
+            if inner.users.values().any(|user| {
+                user.username.eq_ignore_ascii_case(&username)
+                    || user.email.eq_ignore_ascii_case(&email)
+            }) {
+                return Err(AppError::Config(
+                    "bootstrap Owner and Backup must use different usernames and email addresses"
+                        .to_owned(),
+                ));
+            }
+            let backup = new_bootstrap_admin(username, email, &password)?;
+            inner.users.insert(backup.id.clone(), backup);
+        }
         self.save_locked(&inner)
     }
 
@@ -836,7 +870,10 @@ impl AuthStore {
             let file = AuthFile {
                 users: inner.users.values().cloned().collect(),
             };
-            store.write_json(&file)
+            let expected_revision = self.revision.load(Ordering::Acquire);
+            store
+                .compare_and_swap_json(expected_revision, &file)
+                .map(|revision| self.revision.store(revision, Ordering::Release))
         } else {
             Ok(())
         };
@@ -850,6 +887,26 @@ impl AuthStore {
             .sessions
             .retain(|_, session| session.expires_at_ms > now_ms);
     }
+}
+
+fn new_bootstrap_admin(
+    username: String,
+    email: String,
+    password: &str,
+) -> Result<AdminUserRecord, AppError> {
+    let now_ms = now_millis();
+    Ok(AdminUserRecord {
+        id: format!("usr_{}", Uuid::new_v4().simple()),
+        username,
+        email,
+        role: "admin".to_owned(),
+        status: "active".to_owned(),
+        password_hash: hash_password(password)?,
+        created_at_ms: now_ms,
+        updated_at_ms: now_ms,
+        last_login_at_ms: None,
+        federated_identities: Vec::new(),
+    })
 }
 
 fn public_user(user: &AdminUserRecord, api_key_count: u32, request_count_24h: u64) -> PublicUser {
@@ -1569,6 +1626,7 @@ mod tests {
         let store = AuthStore {
             store: Some(JsonStore::File(path.clone())),
             inner: Mutex::new(AuthInner::default()),
+            revision: AtomicU64::new(0),
             persistence_degraded: AtomicBool::new(false),
             session_ttl_seconds: DEFAULT_SESSION_TTL_SECONDS,
             cookie_secure: false,
@@ -1663,5 +1721,44 @@ mod tests {
         healthy.persistence_degraded.store(true, Ordering::Release);
         healthy.save_locked(&AuthInner::default()).unwrap();
         assert!(healthy.health_check().is_ok());
+    }
+
+    #[test]
+    fn stale_auth_revision_rejects_mutation_and_fails_readiness() {
+        let state = std::sync::Arc::new(Mutex::new(crate::storage::VersionedValue {
+            value: None,
+            revision: 0,
+        }));
+        let external_writer = JsonStore::Memory {
+            namespace: "auth".to_owned(),
+            state: std::sync::Arc::clone(&state),
+        };
+        let store = AuthStore {
+            store: Some(JsonStore::Memory {
+                namespace: "auth".to_owned(),
+                state,
+            }),
+            inner: Mutex::new(AuthInner::default()),
+            revision: AtomicU64::new(0),
+            persistence_degraded: AtomicBool::new(false),
+            session_ttl_seconds: DEFAULT_SESSION_TTL_SECONDS,
+            cookie_secure: false,
+        };
+
+        external_writer
+            .compare_and_swap_value(0, &serde_json::json!({ "users": [] }))
+            .unwrap();
+        assert!(matches!(store.health_check(), Err(AppError::NotReady(_))));
+        assert!(matches!(
+            store.create_user(CreateUserInput {
+                username: "stale-writer".to_owned(),
+                email: "stale-writer@example.com".to_owned(),
+                password: "strong-stale-writer-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            }),
+            Err(AppError::StateConflict(_))
+        ));
+        assert!(store.inner.lock().unwrap().users.is_empty());
     }
 }

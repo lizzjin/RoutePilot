@@ -211,6 +211,8 @@ mod tests {
             user_id: user_id.to_owned(),
             username: Some("forged-name".to_owned()),
             name: "Claude Code".to_owned(),
+            principal_type: None,
+            purpose: None,
             group: None,
             team_id: None,
             allowed_models: None,

@@ -4,18 +4,18 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::*;
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct DeleteProviderQuery {
     force: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ProviderWriteBody {
     id: Option<String>,
@@ -38,13 +38,13 @@ pub(super) struct ProviderWriteBody {
     disabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ProviderDisableBody {
     disabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ProviderModelWriteBody {
     model: String,
@@ -89,9 +89,19 @@ pub(super) async fn admin_create_provider(
         .clone()
         .ok_or_else(|| AppError::InvalidRequest("provider id is required".to_owned()))?;
     let disabled = body.disabled.unwrap_or(false);
+    let approval_payload = serde_json::to_value(&body)?;
+    let approval_id = require_high_risk_change(
+        &state,
+        &headers,
+        "provider.allowlist_change",
+        &format!("provider:{provider_id}"),
+        &approval_payload,
+    )?;
     let record = provider_body_to_record(&provider_id, body, None)?;
+    ensure_organization_approved_provider(&state, &record)?;
     let record = state.control.upsert_provider_override(record)?;
     state.control.set_provider_disabled(&record.id, disabled)?;
+    state.governance.mark_change_applied(&approval_id)?;
     record_admin_activity(
         &state,
         &actor,
@@ -112,16 +122,26 @@ pub(super) async fn admin_update_provider(
 ) -> Result<Json<Value>, AppError> {
     let actor = require_admin_write_user(&state, &headers)?;
     let disabled = body.disabled;
+    let approval_payload = serde_json::to_value(&body)?;
+    let approval_id = require_high_risk_change(
+        &state,
+        &headers,
+        "provider.allowlist_change",
+        &format!("provider:{provider_id}"),
+        &approval_payload,
+    )?;
     let current = management_config(&state)
         .providers
         .get(&provider_id)
         .cloned()
         .ok_or_else(|| AppError::ProviderNotFound(provider_id.clone()))?;
     let record = provider_body_to_record(&provider_id, body, Some(current))?;
+    ensure_organization_approved_provider(&state, &record)?;
     let record = state.control.upsert_provider_override(record)?;
     if let Some(disabled) = disabled {
         state.control.set_provider_disabled(&record.id, disabled)?;
     }
+    state.governance.mark_change_applied(&approval_id)?;
     record_admin_activity(
         &state,
         &actor,
@@ -148,9 +168,18 @@ pub(super) async fn admin_set_provider_disabled(
         return Err(AppError::ProviderNotFound(provider_id));
     }
     let disabled = body.disabled.unwrap_or(true);
+    let approval_payload = serde_json::to_value(&body)?;
+    let approval_id = require_high_risk_change(
+        &state,
+        &headers,
+        "provider.allowlist_change",
+        &format!("provider:{provider_id}"),
+        &approval_payload,
+    )?;
     state
         .control
         .set_provider_disabled(&provider_id, disabled)?;
+    state.governance.mark_change_applied(&approval_id)?;
     record_admin_activity(
         &state,
         &actor,
@@ -174,6 +203,14 @@ pub(super) async fn admin_delete_provider(
     Query(query): Query<DeleteProviderQuery>,
 ) -> Result<Response, AppError> {
     let actor = require_admin_write_user(&state, &headers)?;
+    let approval_payload = json!({ "delete": true, "force": query.force.unwrap_or(false) });
+    let approval_id = require_high_risk_change(
+        &state,
+        &headers,
+        "provider.allowlist_change",
+        &format!("provider:{provider_id}"),
+        &approval_payload,
+    )?;
     let management = management_config(&state);
     if !management.providers.contains_key(&provider_id) {
         return Err(AppError::ProviderNotFound(provider_id));
@@ -205,6 +242,7 @@ pub(super) async fn admin_delete_provider(
 
     let tombstone = state.config.snapshot().providers.contains_key(&provider_id);
     state.control.delete_provider(&provider_id, tombstone)?;
+    state.governance.mark_change_applied(&approval_id)?;
     record_admin_activity(
         &state,
         &actor,
@@ -320,10 +358,19 @@ pub(super) async fn admin_upsert_provider_model(
     Json(body): Json<ProviderModelWriteBody>,
 ) -> Result<Json<Value>, AppError> {
     let actor = require_admin_write_user(&state, &headers)?;
+    let approval_payload = serde_json::to_value(&body)?;
+    let approval_id = require_high_risk_change(
+        &state,
+        &headers,
+        "model.production_promotion",
+        &format!("provider:{provider_id}:model:{}", body.model),
+        &approval_payload,
+    )?;
     let config = management_config(&state);
     let Some(provider) = config.providers.get(&provider_id) else {
         return Err(AppError::ProviderNotFound(provider_id));
     };
+    ensure_organization_approved_model(&state, &provider_id, &body.model)?;
     let status = body.status.unwrap_or_else(|| "active".to_owned());
     if status == "disabled"
         && provider.default_model == body.model
@@ -351,6 +398,7 @@ pub(super) async fn admin_upsert_provider_model(
             created_at_ms: 0,
             updated_at_ms: 0,
         })?;
+    state.governance.mark_change_applied(&approval_id)?;
     record_admin_activity(
         &state,
         &actor,
@@ -382,6 +430,14 @@ pub(super) async fn admin_delete_provider_model(
     Json(body): Json<ProviderModelWriteBody>,
 ) -> Result<Json<Value>, AppError> {
     let actor = require_admin_write_user(&state, &headers)?;
+    let approval_payload = serde_json::to_value(&body)?;
+    let approval_id = require_high_risk_change(
+        &state,
+        &headers,
+        "provider.allowlist_change",
+        &format!("provider:{provider_id}:model:{}", body.model),
+        &approval_payload,
+    )?;
     let config = management_config(&state);
     let Some(provider) = config.providers.get(&provider_id) else {
         return Err(AppError::ProviderNotFound(provider_id));
@@ -402,6 +458,7 @@ pub(super) async fn admin_delete_provider_model(
     let record = state
         .control
         .delete_provider_model_override(&provider_id, &body.model)?;
+    state.governance.mark_change_applied(&approval_id)?;
     record_admin_activity(
         &state,
         &actor,
@@ -417,6 +474,57 @@ pub(super) async fn admin_delete_provider_model(
         "model": provider_model_row(&record),
         "provider": provider_row_by_id(&state, &provider_id)?,
     })))
+}
+
+fn ensure_organization_approved_provider(
+    state: &AppState,
+    record: &ProviderOverrideRecord,
+) -> Result<(), AppError> {
+    let catalog = state.config.snapshot();
+    let approved = catalog.providers.get(&record.id).ok_or_else(|| {
+        AppError::Forbidden(
+            "provider is not present in the organization-reviewed catalog; arbitrary compatible URLs are prohibited"
+                .to_owned(),
+        )
+    })?;
+    let candidate = provider_record_to_config(record)?;
+    if candidate.protocol != approved.protocol || candidate.base_url != approved.base_url {
+        return Err(AppError::Forbidden(
+            "provider protocol and base URL must exactly match the organization-reviewed catalog"
+                .to_owned(),
+        ));
+    }
+    if candidate
+        .models
+        .iter()
+        .any(|model| !approved.models.contains(model))
+        || candidate.passthrough_unknown_models != approved.passthrough_unknown_models
+    {
+        return Err(AppError::Forbidden(
+            "provider models must be an explicit subset of the organization-reviewed catalog"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_organization_approved_model(
+    state: &AppState,
+    provider_id: &str,
+    model: &str,
+) -> Result<(), AppError> {
+    let catalog = state.config.snapshot();
+    let approved = catalog
+        .providers
+        .get(provider_id)
+        .ok_or_else(|| AppError::Forbidden("provider is not organization-approved".to_owned()))?;
+    if approved.models.iter().any(|approved| approved == model) {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden(
+            "model is not present in the organization-reviewed provider catalog".to_owned(),
+        ))
+    }
 }
 
 pub(super) async fn admin_create_provider_credential(

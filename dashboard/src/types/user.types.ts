@@ -32,6 +32,8 @@ export interface ApiKey {
   userId: string
   username?: string
   name: string
+  principalType?: 'user' | 'service_account' | 'legacy'
+  purpose?: string | null
   keyPrefix: string
   keyPreview?: string
   key?: string

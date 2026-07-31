@@ -20,6 +20,8 @@ pub enum AppError {
     Forbidden(String),
     #[error("idempotency conflict: {0}")]
     IdempotencyConflict(String),
+    #[error("state conflict: {0}")]
+    StateConflict(String),
     #[error("quota exceeded: {0}")]
     QuotaExceeded(String),
     #[error("rate limited: {message}")]
@@ -71,6 +73,7 @@ impl AppError {
             Self::Database(_) => "database",
             Self::Forbidden(_) => "forbidden",
             Self::IdempotencyConflict(_) => "idempotency_conflict",
+            Self::StateConflict(_) => "state_conflict",
             Self::QuotaExceeded(_) => "quota_exceeded",
             Self::RateLimited { .. } => "rate_limited",
             Self::InvalidRequest(_) | Self::Json(_) => "invalid_request",
@@ -119,6 +122,7 @@ impl AppError {
             Self::Database(_) => "database error [details redacted]".to_owned(),
             Self::Forbidden(_) => "forbidden [details redacted]".to_owned(),
             Self::IdempotencyConflict(_) => "idempotency conflict [details redacted]".to_owned(),
+            Self::StateConflict(_) => "state conflict [details redacted]".to_owned(),
             Self::QuotaExceeded(_) => "quota exceeded [details redacted]".to_owned(),
             Self::RateLimited { .. } => "rate limited [details redacted]".to_owned(),
             Self::InvalidRequest(_) => "invalid request [details redacted]".to_owned(),
@@ -249,6 +253,7 @@ impl IntoResponse for AppError {
             AppError::Auth => "authentication_error",
             AppError::Forbidden(_) => "forbidden_error",
             AppError::IdempotencyConflict(_) => "invalid_request_error",
+            AppError::StateConflict(_) => "invalid_request_error",
             AppError::QuotaExceeded(_) => "quota_exceeded",
             AppError::RateLimited { .. } => "rate_limit_error",
             AppError::InvalidRequest(_) | AppError::ProviderNotFound(_) => "invalid_request_error",
@@ -295,6 +300,7 @@ fn status_code(error: &AppError) -> StatusCode {
         AppError::Config(_) | AppError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
         AppError::Forbidden(_) => StatusCode::FORBIDDEN,
         AppError::IdempotencyConflict(_) => StatusCode::CONFLICT,
+        AppError::StateConflict(_) => StatusCode::CONFLICT,
         AppError::QuotaExceeded(_) | AppError::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
         AppError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
         AppError::MissingSecret(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -322,6 +328,7 @@ fn error_code(error: &AppError) -> &'static str {
         AppError::Database(_) => "database_error",
         AppError::Forbidden(_) => "forbidden",
         AppError::IdempotencyConflict(_) => "idempotency_conflict",
+        AppError::StateConflict(_) => "state_conflict",
         AppError::QuotaExceeded(_) => "quota_exceeded",
         AppError::RateLimited { .. } => "rate_limited",
         AppError::InvalidRequest(_) => "invalid_request",
@@ -350,6 +357,9 @@ fn error_hint(error: &AppError) -> &'static str {
         AppError::Forbidden(_) => "当前账号权限不足，或 API Key 的归属/IP 策略拒绝了本次操作。",
         AppError::IdempotencyConflict(_) => {
             "该幂等键已被当前租户中的请求占用；请等待原请求完成，或使用新的幂等键。"
+        }
+        AppError::StateConflict(_) => {
+            "另一实例已更新管理状态；请重新加载最新状态后重试，持续冲突时重启陈旧实例。"
         }
         AppError::QuotaExceeded(_) => {
             "检查用户配额或 API Key 的额度限制，必要时提高限额或更换密钥。"
@@ -430,6 +440,17 @@ mod tests {
         let body = response_json(response).await;
         assert_eq!(body["error"]["type"], "invalid_request_error");
         assert_eq!(body["error"]["code"], "idempotency_conflict");
+    }
+
+    #[tokio::test]
+    async fn state_conflict_uses_stable_http_409_envelope() {
+        let response = AppError::StateConflict("control state changed after revision 4".to_owned())
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = response_json(response).await;
+        assert_eq!(body["error"]["type"], "invalid_request_error");
+        assert_eq!(body["error"]["code"], "state_conflict");
     }
 
     #[tokio::test]

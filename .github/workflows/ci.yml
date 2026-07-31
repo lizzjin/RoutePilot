@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_call:
   push:
     branches: [main]
   pull_request:
@@ -40,6 +41,9 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
 
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install --yes shellcheck
+
       - name: Cache Cargo
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.0.4
         with:
@@ -50,6 +54,9 @@ jobs:
           key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
             cargo-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Verify Linux developer toolchain
+        run: ./scripts/doctor.sh --development
 
       - name: Run all checks
         run: ./scripts/check-all.sh
@@ -69,7 +76,42 @@ jobs:
       - name: Validate Docker Compose manifest
         env:
           MODELPORT_COMPOSE_ENV_FILE: deploy/docker/modelport.env.example
-        run: docker compose --env-file deploy/docker/modelport.env.example config --quiet
+        run: |
+          docker compose --env-file deploy/docker/modelport.env.example config --quiet
+          runtime_env="${RUNNER_TEMP}/modelport-runtime.env"
+          database_ca="${RUNNER_TEMP}/database-ca.pem"
+          install -m 600 /dev/null "$runtime_env"
+          install -m 600 /dev/null "$database_ca"
+          printf '%s\n' 'ci-placeholder-ca' > "$database_ca"
+          printf '%s\n' \
+            'MODELPORT_DATABASE_URL=postgres://modelport:ci-only@db.example:5432/modelport?sslmode=verify-full&sslrootcert=/run/modelport/database-ca.pem' \
+            'MODELPORT_AUTH_TOKEN=ci-router-token-with-sufficient-entropy' \
+            'MODELPORT_ADMIN_USERNAME=admin' \
+            'MODELPORT_ADMIN_PASSWORD=MpCi_7vN4qL9tR2xK6m' \
+            'MODELPORT_BACKUP_ADMIN_USERNAME=backup-admin' \
+            'MODELPORT_BACKUP_ADMIN_EMAIL=backup-admin@example.com' \
+            'MODELPORT_BACKUP_ADMIN_PASSWORD=MpCi_8zM5rT1wQ7xL4n' \
+            'MODELPORT_OIDC_ISSUER=https://identity.example.com' \
+            'MODELPORT_OIDC_CLIENT_ID=modelport-ci' \
+            'MODELPORT_OIDC_CLIENT_SECRET=ci-oidc-client-secret-with-sufficient-entropy' \
+            'MODELPORT_OIDC_REDIRECT_URI=https://modelport.example.com/admin/auth/oidc/callback' \
+            'MODELPORT_OIDC_AUTO_PROVISION=0' \
+            'DEEPSEEK_ANTHROPIC_AUTH_TOKEN=ci-provider-token-with-sufficient-entropy' \
+            > "$runtime_env"
+          MODELPORT_IMAGE='modelport:ci@sha256:1111111111111111111111111111111111111111111111111111111111111111' \
+          MODELPORT_DASHBOARD_IMAGE='modelport-dashboard:ci@sha256:2222222222222222222222222222222222222222222222222222222222222222' \
+          MODELPORT_RUNTIME_ENV_FILE="$runtime_env" \
+          MODELPORT_CONFIG_FILE="$PWD/config.example.toml" \
+          MODELPORT_DATABASE_CA_FILE="$database_ca" \
+          MODELPORT_OWNERSHIP_FILE="$PWD/deploy/production/ownership.example.toml" \
+            ./scripts/production-preflight.sh
+          MODELPORT_IMAGE='modelport:ci@sha256:1111111111111111111111111111111111111111111111111111111111111111' \
+          MODELPORT_DASHBOARD_IMAGE='modelport-dashboard:ci@sha256:2222222222222222222222222222222222222222222222222222222222222222' \
+          MODELPORT_RUNTIME_ENV_FILE="$runtime_env" \
+          MODELPORT_CONFIG_FILE="$PWD/config.example.toml" \
+          MODELPORT_DATABASE_CA_FILE="$database_ca" \
+          MODELPORT_OWNERSHIP_FILE="$PWD/deploy/production/ownership.example.toml" \
+            docker compose -f deploy/production/compose.single.yml config --quiet
 
   postgres-e2e:
     name: PostgreSQL dashboard E2E
@@ -141,9 +183,15 @@ jobs:
           cd dashboard
           npx playwright install --with-deps chromium
 
+      - name: Verify PostgreSQL migrations and transactional ledger paths
+        run: |
+          cargo test --locked --test migration_preserves_history \
+            current_schema_migration_preserves_legacy_requests_and_attempts -- --exact
+          cargo test --locked postgres_state_
+          cargo test --locked postgres_critical_paths_use_database_transactions_and_aggregation
+
       - name: Build and start PostgreSQL-backed ModelPort
         run: |
-          cargo test --locked postgres_critical_paths_use_database_transactions_and_aggregation
           cargo build --locked --bin model-port
           export MODELPORT_CONFIG="${RUNNER_TEMP}/modelport-no-config.toml"
           export MODELPORT_ENV_FILE="${RUNNER_TEMP}/modelport-no-env"

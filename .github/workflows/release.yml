@@ -13,8 +13,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate-tag:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Match tag to backend and dashboard versions
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          dashboard_version="$(
+            python3 -c 'import json; print(json.load(open("dashboard/package.json", encoding="utf-8"))["version"])'
+          )"
+          dashboard_lock_version="$(
+            python3 -c 'import json; print(json.load(open("dashboard/package-lock.json", encoding="utf-8"))["packages"][""]["version"])'
+          )"
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          [[ "$cargo_version" == "$version" ]]
+          [[ "$dashboard_version" == "$version" ]]
+          [[ "$dashboard_lock_version" == "$version" ]]
+
+  verification:
+    name: Verify release candidate
+    needs: validate-tag
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   binary:
     name: Build and attest binary
+    needs: verification
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -27,31 +63,6 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
         with:
           persist-credentials: false
-
-      - name: Install Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.3.0
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: dashboard/package-lock.json
-
-      - name: Validate tag and repository
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          cargo_version="$(sed -n 's/^version = \"\\([^\"]*\\)\"/\\1/p' Cargo.toml | head -n 1)"
-          dashboard_version="$(node -p "require('./dashboard/package.json').version")"
-          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
-          [[ "$cargo_version" == "$version" ]]
-          [[ "$dashboard_version" == "$version" ]]
-          ./scripts/check-all.sh
-
-      - name: Audit locked dependencies
-        run: |
-          cargo install cargo-audit --locked --version 0.22.2 --root target/cargo-audit
-          target/cargo-audit/bin/cargo-audit audit --deny warnings --file Cargo.lock
-          cargo install cargo-deny --locked --version 0.20.2 --root target/cargo-deny
-          target/cargo-deny/bin/cargo-deny check
-          node scripts/audit-dashboard.mjs
 
       - name: Build release archive
         env:
@@ -100,6 +111,7 @@ jobs:
 
   containers:
     name: Publish ${{ matrix.title }}
+    needs: binary
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:

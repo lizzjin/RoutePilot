@@ -44,7 +44,7 @@ cover reachability after the local preflight succeeds.
 - `/health` is minimal when unauthenticated. A valid data-plane credential adds
   configured providers, persisted provider-health records, and storage
   locations.
-- `/readyz` requires authentication and verifies that auth/control storage and
+- `/readyz` requires authentication and verifies that auth/control/governance storage and
   the normalized enterprise ledger can be reached before returning detailed
   diagnostics. It still does not fail merely
   because a Provider is degraded or offline, so it is storage readiness rather
@@ -101,7 +101,7 @@ The relational request log records:
 - whether the request declares/selects tools or continues a Tool Use exchange;
 - aggregate Tool Use outcome (`tool_called`, `continuation_tool_called`,
   `final_answer`, `answered_without_tool`, unobserved completion, or failure);
-- bounded traffic class (`business`, `synthetic`, or `diagnostic`);
+- bounded traffic class (`business`, `synthetic`, `diagnostic`, or low-priority `batch`);
 - stream flag, status/status code, lifecycle latency, stream-only first
   semantic latency, retry/fallback;
 - routing mode/profile/policy, selected and recommended candidate, bounded
@@ -404,12 +404,13 @@ scripts/backup-compose.sh verify backups/modelport-<UTC>.tar.gz
 scripts/backup-compose.sh drill backups/modelport-<UTC>.tar.gz
 ```
 
-This includes PostgreSQL, `config.toml`, and the Compose environment file. The
-archive therefore contains Provider and service credentials in plaintext, even
-though its directory/file permissions are restricted to `0700`/`0600`.
-Replicate it only to encrypted access-controlled storage. `drill` restores into
-an isolated temporary PostgreSQL container and verifies required application
-namespaces without stopping or modifying production.
+New schema-v2 archives include PostgreSQL, checksums, and secret-free deployment
+provenance. They exclude `config.toml` and the Compose environment file; recover
+those from Git and the secret manager. Legacy schema-v1 archives include both
+files and may contain plaintext Provider and service credentials. Verification
+warns when it encounters one. Keep every archive access-controlled; `drill`
+restores into an isolated temporary PostgreSQL container and verifies required
+application namespaces without stopping or modifying production.
 
 ```bash
 model-port backup export /secure/modelport-backup.json
@@ -426,12 +427,17 @@ or structurally incompatible data before writes; it is not proof that every
 business relationship or external credential is still usable.
 
 Stop writers before restore. The command saves the previous logical auth and
-control values next to the supplied backup path before replacing them. Auth and
-control are then replaced sequentially, not in one cross-document transaction;
-a second-write failure can require recovery from those saved values. Keep the
+control values next to the supplied backup path, verifies both observed
+revisions, and replaces both rows in one PostgreSQL transaction. A concurrent
+writer causes the entire restore to fail with a state conflict. Keep the
 database-native dump produced by `backup-compose.sh`; the CLI export contains
 only the two logical auth/control documents and not the operational ledger.
 Store both backup forms with restrictive permissions.
+
+Before changing the PostgreSQL major version or moving to a managed database,
+follow [PostgreSQL Migration](POSTGRESQL_MIGRATION.md). Run
+`scripts/database-preflight.sh` before a full local Compose update; a declared
+image or volume mismatch is a stop condition.
 
 ## Provider Diagnosis
 
@@ -522,8 +528,10 @@ pause and the reconciliation interval below the TTL.
   requests can overshoot a tight limit.
 - API-key/team rolling spend is summed from terminal relational request rows.
 - Provider URL checks do not revalidate DNS answers against private ranges.
-- Low-frequency auth/control persistence replaces complete JSON documents;
-  inference usage and audit history do not.
+- Low-frequency auth/control persistence still replaces complete JSON
+  documents, but revision compare-and-swap rejects stale writers and readiness
+  fails closed after detecting a newer database revision. This prevents silent
+  lost updates; it does not provide relational cross-domain transactions.
 - Request and Provider-attempt rows are normalized, tenant-scoped, leased, and
   expired rows are terminalized automatically. Crash recovery cannot infer
   whether a Provider accepted the request or reconstruct missing token usage,

@@ -54,8 +54,9 @@ unique router, administrator, PostgreSQL, and Provider credentials. Keep
 first local test.
 
 ```bash
+scripts/doctor.sh --setup
 scripts/build-container.sh
-docker compose up -d
+scripts/compose-up.sh
 docker compose ps
 scripts/smoke-test.sh
 ```
@@ -111,6 +112,10 @@ set:
 
 - [Getting Started](docs/GETTING_STARTED.md) — install, first login, first
   request, and common startup failures.
+- [Learning Path](docs/LEARNING_PATH.md) — role-based 30–60 minute operator,
+  client-integration, operations, and contributor tracks.
+- [Local inference joint quickstart](docs/LOCAL_INFERENCE_STACK.md) — a
+  Linux/WSL2 contract-first path for ModelPort plus local-inference-stack.
 - [Configuration](docs/CONFIGURATION.md) — environment and TOML reference.
 - [API](docs/API.md) — client and control-plane contracts.
 - [Providers](docs/PROVIDERS.md) — hosted Providers, local runtimes, and

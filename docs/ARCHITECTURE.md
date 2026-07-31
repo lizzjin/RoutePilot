@@ -215,9 +215,14 @@ There are two logical JSON documents:
 
 `MODELPORT_DATABASE_URL` is mandatory. These low-frequency documents are stored
 as two `jsonb` rows in `modelport_state`; there is no runtime file fallback or
-automatic JSON import. Writes replace the complete logical document. The
-synchronous store boundary uses a dedicated SQLx/Tokio worker with rustls and a
-one-connection pool.
+automatic JSON import. Each row carries a monotonic `revision`; complete-document
+writes use compare-and-swap and return a stable HTTP 409 conflict instead of
+overwriting a newer revision. Readiness also fails closed when an instance
+detects that its in-memory revision is stale. Logical backup restore replaces
+the auth and control rows in one PostgreSQL transaction. This is an interim
+lost-update guard, not a substitute for the planned tenant-scoped relational
+repositories and cross-domain transactions. The synchronous store boundary
+uses a dedicated SQLx/Tokio worker with rustls and a one-connection pool.
 
 The async normalized ledger uses `MODELPORT_ENTERPRISE_DATABASE_URL` or falls
 back to `MODELPORT_DATABASE_URL`. Embedded migrations create explicit
@@ -237,18 +242,18 @@ traffic class, Tool Use outcome, pricing provenance, latency/TTFT, repair,
 retry, fallback, ordered Provider attempts, and recent budget evidence.
 
 Low-frequency identity, policy, quota, routing, Provider, and credential
-mutations snapshot the in-memory document before writing. A failed write
-restores that snapshot, returns an error, and makes readiness fail closed until
-a later complete write succeeds; an HTTP 5xx therefore cannot leave a routing
-or authorization change active only in the current process. Request
+mutations snapshot the in-memory document before writing. A failed or stale
+write restores that snapshot, returns an error, and makes readiness fail closed
+until a later complete write succeeds; neither a persistence 5xx nor a state
+conflict 409 can leave a routing or authorization change active only in the
+current process. Request
 finalization after response headers is asynchronous so a persistence failure
 cannot replace a response already paid for and received from an upstream;
 readiness and ledger diagnostics expose such failures.
 
 CLI backup load validates both document schemas and critical auth invariants
-before restore. Restore saves the previous values but replaces auth and control
-sequentially; there is no atomic transaction spanning the two logical
-documents.
+before restore. Restore saves the previous values, verifies both observed
+revisions, and replaces auth and control together in one PostgreSQL transaction.
 
 ## Identity And Budget Boundaries
 

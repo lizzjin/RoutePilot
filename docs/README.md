@@ -5,11 +5,21 @@ read every document: choose the path that matches your task.
 
 ## I Want To Run ModelPort
 
-1. [Getting Started](GETTING_STARTED.md) — go from a clean clone to the first
+1. [Learning Path](LEARNING_PATH.md) — choose a short operator, integration,
+   operations, or contributor track. A
+   [Chinese edition](LEARNING_PATH.zh-CN.md) is also maintained.
+2. [Getting Started](GETTING_STARTED.md) — go from a clean clone to the first
    authenticated request.
-2. [Deployment](DEPLOYMENT.md) — choose Docker Compose or systemd.
-3. [Production](PRODUCTION.md) — harden and accept a shared deployment.
-4. [Operations](OPERATIONS.md) — monitor, back up, troubleshoot, and upgrade it.
+3. [Local inference joint quickstart](LOCAL_INFERENCE_STACK.md) — pair
+   ModelPort with local-inference-stack on Linux/WSL2.
+4. [Deployment](DEPLOYMENT.md) — choose Docker Compose or systemd.
+5. [Production](PRODUCTION.md) — harden and accept a shared deployment.
+6. [Operations](OPERATIONS.md) — monitor, back up, troubleshoot, and upgrade it.
+7. [PostgreSQL migration](POSTGRESQL_MIGRATION.md) — rehearse and cut over a
+   major-version or managed-database migration without reusing an old data
+   directory.
+8. [40 人团队第一阶段生产基线](PRODUCTION_BASELINE_40_USERS.zh-CN.md) — 单
+   ModelPort 现状下的数据库、备份、密钥和投产检查清单。
 
 ## I Want To Connect An Application
 
@@ -61,4 +71,4 @@ proposed enterprise work. Proposed work must not be described as shipped.
 6. Run `node scripts/check-doc-links.mjs` and the relevant checks from
    [Development](DEVELOPMENT.md) before merging.
 
-Last reviewed: 2026-07-27.
+Last reviewed: 2026-07-30.

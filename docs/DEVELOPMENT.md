@@ -15,6 +15,16 @@ The maintained baseline is:
 `scripts/install-deps-ubuntu.sh` installs only a small set of native packages;
 it does not install Rust, Node.js, npm, Docker, or Playwright browsers.
 
+Before installing project dependencies, verify that the current shell resolves
+only Linux tools and matches the pinned versions:
+
+```bash
+scripts/doctor.sh --development
+```
+
+The check rejects Node/npm or other tools resolved from Windows-mounted
+`/mnt/<drive>` paths. NVM users must activate Node.js 24 in the current shell.
+
 ## Backend
 
 ```bash

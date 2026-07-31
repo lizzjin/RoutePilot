@@ -10,7 +10,11 @@ migrations, normalized tenant parents, request/Provider-attempt lifecycle rows,
 hashed idempotency claims, renewable instance leases, expired-row
 reconciliation, transactional budgets, complete operational request snapshots,
 relational usage/quota/spend queries, and append-only audit events. Runtime
-requires PostgreSQL; the memory ledger is test-only. Migration
+requires PostgreSQL; the memory ledger is test-only. The remaining auth/control
+documents now use monotonic revision compare-and-swap, stale-instance readiness
+checks, and atomic two-document backup restore as an interim lost-update guard.
+They still require the relational normalization described by this decision.
+Migration
 `0005_current_operational_schema.sql` preserves normalized request/attempt
 history, uses conservative defaults for dimensions absent from the older
 schema, and derives final Provider/retry snapshots only from existing attempts.

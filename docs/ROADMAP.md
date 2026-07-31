@@ -29,10 +29,16 @@ multi-tenant or horizontally scalable enterprise platform.
 
 ## Near-Term Priorities
 
-1. Prove migration, backup, recovery, Provider, Tool Use, routing, and
+The staged forty-user hybrid-routing target is governed by
+[ADR-0005](adr/0005-forty-user-hybrid-routing-baseline.md); the current release
+remains a single-instance product until each target capability is implemented
+and accepted.
+
+1. Prove migration, secret-free backup, recovery, Provider, Tool Use, routing, and
    accounting behavior with repeatable release evidence.
-2. Normalize the remaining auth/control document domains into tenant-scoped
-   relational repositories and transactions.
+2. Build on the completed auth/control revision-CAS guard by normalizing those
+   document domains into tenant-scoped relational repositories and
+   cross-domain transactions.
 3. Add Provider evidence ingestion and append-only settlement corrections
    without rewriting historical attempts.
 4. Improve Chat Completions conformance and extend the typed exchange model

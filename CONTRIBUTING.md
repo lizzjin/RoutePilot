@@ -15,6 +15,13 @@ The CI baseline is Rust stable and Node.js 24. Install Rust with `rustfmt` and
 `clippy`, Node.js/npm, `curl`, and a native compiler toolchain. Docker Compose is
 needed for the complete stack.
 
+Confirm that the current Linux shell uses the pinned toolchain and does not
+resolve Windows-mounted Node/npm binaries:
+
+```bash
+scripts/doctor.sh --development
+```
+
 `scripts/install-deps-ubuntu.sh` installs only native helper packages; it does
 not install Rust, Node.js, npm, Docker, or Playwright browsers.
 

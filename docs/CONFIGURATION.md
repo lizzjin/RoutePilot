@@ -168,6 +168,11 @@ Omit `DEEPSEEK_ANTHROPIC_AUTH_TOKEN`, `DEEPSEEK_API_KEY`, and every other
 unused upstream credential. For a host process, replace the Docker DNS address
 with the Qwen runtime's reachable loopback URL.
 
+The complete contract-aligned example is
+[`deploy/local-inference/modelport.local-qwen.toml`](../deploy/local-inference/modelport.local-qwen.toml).
+It is validated by the repository checks and should be copied or merged rather
+than edited in place.
+
 ```toml
 default_provider = "local_qwen"
 provider_order = ["local_qwen"]
@@ -195,8 +200,18 @@ streaming_arguments = "best_effort"
 response_validation = "strict"
 repair_invalid_arguments = true
 
+[providers.local_qwen.token_counting]
+mode = "anthropic"
+context_tokens = 131072
+recommended_reasoning_input_tokens = 94208
+model_recommended_input_tokens = { "qwen3.5-fast" = 24576, "qwen3.5-code" = 57344, "qwen3.5-deep" = 94208 }
+max_output_tokens = 32768
+model_max_output_tokens = { "qwen3.5-fast" = 4096, "qwen3.5-code" = 16384, "qwen3.5-deep" = 32768 }
+
 [aliases]
-qwen3_5_local = "local_qwen:qwen3.5-9b-q5km"
+"qwen3.5-fast" = "local_qwen:qwen3.5-9b-q5km"
+"qwen3.5-code" = "local_qwen:qwen3.5-9b-q5km"
+"qwen3.5-deep" = "local_qwen:qwen3.5-9b-q5km"
 ```
 
 Use an environment-backed API key field if the local runtime itself requires
@@ -710,6 +725,9 @@ repeat_penalty = 1.0
 mode = "anthropic"
 context_tokens = 131072
 recommended_reasoning_input_tokens = 94208
+model_recommended_input_tokens = { "example-fast" = 24576, "example-deep" = 94208 }
+max_output_tokens = 32768
+model_max_output_tokens = { "example-fast" = 4096, "example-deep" = 32768 }
 
 [providers.example.pricing]
 input_per_million = 1.0
@@ -800,9 +818,15 @@ upstream count before generation and rejects `input_tokens + max_tokens` above
 that limit with an actionable error; input is never silently truncated.
 `recommended_reasoning_input_tokens` adds a stricter input ceiling while
 thinking is enabled so the model retains room for reasoning and final text.
+`model_recommended_input_tokens` applies a more conservative ceiling to the
+originally requested logical model or alias, falling back to the Provider-wide
+recommendation. `max_output_tokens` and `model_max_output_tokens` similarly
+reject oversized output requests before exact counting or Provider traffic;
+the logical-model value takes precedence over the Provider-wide value.
 Explicit `thinking.type="disabled"` bypasses only the recommendation, never the
-hard context limit. OpenAI Chat Completions remains unchanged because converting
-it to an Anthropic count body would not be lossless.
+hard context or output limit. OpenAI Chat Completions cannot use exact input
+admission because converting it to an Anthropic count body would not be
+lossless, but its configured output limits are still enforced.
 
 ## Reload Versus Restart
 

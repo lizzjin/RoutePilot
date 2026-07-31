@@ -15,6 +15,7 @@ plane plus a dashboard control plane. The default backend origin is
 | `GET /admin/auth/oidc/callback` | none | Requires the matching browser-flow cookie, validates and consumes the OIDC callback, resolves the local user, issues the ModelPort console cookie, and redirects to a local return path. |
 | `GET /readyz` | router/API key | Auth/control and normalized-ledger readiness plus detailed diagnostics; Provider degradation does not fail it. |
 | `GET /v1/models` | router/API key | Configured, visible model and alias catalog. Visibility does not prove upstream health. |
+| `GET /v1/effective-policy` | API key | Effective project routing/egress policy and current local scheduler counters. |
 | `POST /v1/messages` | router/API key | Anthropic-compatible Messages request. |
 | `POST /v1/messages/count_tokens` | router/API key | Exact Provider tokenizer count when the selected Provider enables the capability. |
 | `POST /v1/chat/completions` | router/API key | Scoped OpenAI-compatible Chat Completions request. |
@@ -50,6 +51,21 @@ Successful inference responses include
 `x-modelport-routing-decision-id` and `x-modelport-routing-mode`. Use the
 decision ID to correlate client observations with the authenticated request log
 without exposing prompts or session identifiers.
+
+Hybrid routing is independently bounded by project policy:
+
+```http
+x-modelport-hybrid-mode: local_first
+x-modelport-data-classification: internal
+x-modelport-traffic-class: business
+```
+
+Modes are `local_strict`, `local_first`, `balanced`, and `cloud_first`.
+Classifications are `unknown`, `sensitive`, `internal`, and `public`; the first
+two always force `local_strict`. A caller may request a mode no more permissive
+than the project's maximum. `batch` traffic uses a separate low-priority local
+queue. The successful response exposes the selected local/cloud boundary in
+`x-modelport-execution-mode`.
 
 ## Messages
 
@@ -133,10 +149,13 @@ Resolution is deterministic:
 
 1. `provider:model` selects an enabled provider explicitly.
 2. An exact alias is resolved, with a maximum alias depth.
-3. An exact configured model is selected in provider order.
-4. A model prefix is selected in provider order.
-5. The default provider receives its default model, or the unknown model when
-   that provider enables arbitrary passthrough.
+3. An exact organization-approved model is selected in provider order.
+4. Otherwise the organization-approved default model is selected.
+
+Runtime prefix matching and unknown-model passthrough are disabled at the
+organization boundary even if an upstream adapter supports discovery. A newly
+published model is not routable until it is explicitly added to the reviewed
+catalog and the project policy authorizes it.
 
 An entry in `/v1/models` means it is configured and passes the local credential
 visibility check. Keyless local/custom providers can appear even when their
@@ -319,6 +338,10 @@ Route groups include:
   `/admin/enterprise/requests/{ledger_id}`, and `/admin/enterprise/budget*`:
   administrator-only normalized request/attempt and transactional-budget
   evidence views.
+- `/admin/self-service/governance`: current user's fail-closed project policy
+  and queue facts; it cannot expand egress.
+- `/admin/governance`, `/admin/governance/change-requests*`: administrator
+  policy view and two-person high-risk change workflow.
 - `/admin/users`, `/admin/api-keys`, `/admin/teams`, `/admin/quotas`: identity
   and policy.
 - `/admin/providers`, `/admin/aliases`: provider lifecycle, credentials, model
@@ -372,7 +395,8 @@ recent evidence events. Supply `organizationId`, `projectId`, and
 `org_local/prj_default/env_default`. Partial scope is rejected.
 
 `PUT /admin/enterprise/budget` sets the hard limit. It requires an administrator
-session and `X-ModelPort-CSRF` like every dashboard write:
+session, `X-ModelPort-CSRF`, and an approved matching
+`X-ModelPort-Change-Request-Id`:
 
 ```json
 {
@@ -430,6 +454,28 @@ owner cannot continue using an old key.
 When supplied, API-key `expiresAt` is a decimal Unix epoch millisecond string.
 Malformed values and timestamps at or before the current time return HTTP 400;
 they are never silently converted into a non-expiring key.
+
+Set `principalType=service_account` for automation. Service accounts require a
+purpose of 8–240 characters, explicit non-empty model and Provider scopes, and
+an expiry no more than 90 days in the future. Human clients use individual
+`principalType=user` keys; sharing one personal key across multiple people
+destroys attribution and is not a supported team-access model.
+
+### High-Risk Change Approval
+
+`POST /admin/governance/change-requests` accepts `action`, `target`, `payload`,
+and `reason`. The server stores a canonical SHA-256 of the payload and records
+the requester as the first approver. A different administrator calls
+`POST /admin/governance/change-requests/{id}/approve`. The same actor cannot
+approve twice.
+
+Project policy and budget changes can then use the generic
+`POST /admin/governance/change-requests/{id}/apply`. Provider allowlists,
+`cloud_first`, identity permissions, production model promotion, data egress,
+database migration, and secret rotation use their dedicated API or Runbook and
+must pass the approved ID as `X-ModelPort-Change-Request-Id`. The server rejects
+an ID unless its action, target, and payload digest exactly match the attempted
+operation; an applied ID cannot be reused.
 
 User quotas (`daily`, `weekly`, `monthly`) reset on UTC calendar boundaries:
 00:00 UTC each day, Monday 00:00 UTC each week, and 00:00 UTC on the first day

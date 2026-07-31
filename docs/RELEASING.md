@@ -44,7 +44,12 @@ fact in the release notes rather than implying signature verification.
 
 The release workflow:
 
-- revalidates the repository;
+- rejects a tag that does not match the backend, dashboard, and dashboard
+  lockfile versions;
+- invokes the complete reusable CI workflow, including the explicit
+  PostgreSQL legacy-row migration test, state revision concurrency/atomicity
+  tests, transactional ledger test, and PostgreSQL-backed dashboard E2E;
+- prevents binary or container publication until that verification succeeds;
 - builds the Linux amd64 backend archive;
 - emits SHA-256 checksums and an SPDX JSON SBOM;
 - creates GitHub build-provenance and SBOM attestations;
@@ -84,7 +89,8 @@ Application rollback and database rollback are separate decisions.
   `modelport_modelport-postgres-18` volume and the versioned
   `/var/lib/postgresql/18/docker` data directory. It intentionally does not
   reuse the old PostgreSQL 16 volume. Back up the old deployment before
-  upgrading, and do not delete its volume until restore acceptance passes.
+  upgrading, follow [the migration runbook](POSTGRESQL_MIGRATION.md), and do not
+  delete its volume until restore acceptance passes.
 
 ## Repository Settings
 

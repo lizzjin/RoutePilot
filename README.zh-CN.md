@@ -48,8 +48,9 @@ cp config.example.toml config.toml
 `MODELPORT_AUTH_TOKEN` 与客户端侧 `ANTHROPIC_AUTH_TOKEN` 保持一致。
 
 ```bash
+scripts/doctor.sh --setup
 scripts/build-container.sh
-docker compose up -d
+scripts/compose-up.sh
 docker compose ps
 scripts/smoke-test.sh
 ```
@@ -103,6 +104,10 @@ ModelPort 服务端，不能复制到客户端应用。
 按任务选择文档，不需要通读全部内容：
 
 - [上手指南](docs/GETTING_STARTED.md)：安装、首次登录、首次请求和启动排障。
+- [快速学习路径](docs/LEARNING_PATH.zh-CN.md)：面向使用者、接入人员、运维和
+  贡献者的 30–60 分钟分层课程。
+- [本地推理联合上手](docs/LOCAL_INFERENCE_STACK.md)：在 Linux/WSL2 中配合
+  local-inference-stack 完成只读检查、受控启动和联合验收。
 - [配置参考](docs/CONFIGURATION.md)：环境变量和 TOML。
 - [API 参考](docs/API.md)：客户端和控制面接口契约。
 - [Provider](docs/PROVIDERS.md)：托管 Provider、本地运行时和兼容性证据。

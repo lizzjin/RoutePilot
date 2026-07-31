@@ -17,6 +17,12 @@ Public multi-tenant isolation, active-active operation, distributed
 sessions/rate limits, SCIM, and a maintainer-hosted service are not currently
 supported.
 
+The accepted forty-user hybrid-routing target is defined in
+[ADR-0005](adr/0005-forty-user-hybrid-routing-baseline.md). Its first phase
+still uses one ModelPort instance. Routing modes, per-user queue fairness,
+managed secrets, and active-active operation remain target behavior until their
+individual implementation and acceptance gates pass.
+
 ## Go-Live Checklist
 
 - [ ] Pin a released image digest or verified binary provenance.

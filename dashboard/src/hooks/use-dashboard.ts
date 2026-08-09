@@ -11,8 +11,10 @@ export const queryKeys = {
   userApiKeys: (userId: string) => ['users', userId, 'api-keys'] as const,
   quotas: ['quotas'] as const,
   providers: ['providers'] as const,
+  providersFor: (apiKeyId?: string) => ['providers', { apiKeyId: apiKeyId === undefined ? null : apiKeyId }] as const,
   provider: (id: string) => ['providers', id] as const,
   aliases: ['aliases'] as const,
+  aliasesFor: (apiKeyId?: string) => ['aliases', { apiKeyId: apiKeyId === undefined ? null : apiKeyId }] as const,
   logs: (filters: unknown) => ['logs', filters] as const,
   logById: (id: string) => ['logs', id] as const,
   latencyStats: ['latency-stats'] as const,
@@ -20,10 +22,11 @@ export const queryKeys = {
   routerStatus: ['router-status'] as const,
 } as const
 
-export function useDashboard(params: DashboardStatsParams = {}) {
+export function useDashboard(params: DashboardStatsParams = {}, enabled = true) {
   return useQuery({
     queryKey: queryKeys.dashboardStats(params),
     queryFn: () => dashboardService.getStats(params),
     refetchInterval: 30000,
+    enabled,
   })
 }

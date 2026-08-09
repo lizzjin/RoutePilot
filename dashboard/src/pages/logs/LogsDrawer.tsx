@@ -13,6 +13,8 @@ import {
   DatabaseZap,
   GitBranch,
   Info,
+  Loader2,
+  RefreshCw,
   Route,
   Server,
   Wrench,
@@ -582,9 +584,15 @@ function TraceCheck({ label, value }: { label: string; value: string }) {
 
 export function LogsDrawer({
   log,
+  detailLoading = false,
+  detailError,
+  onRetry,
   onClose,
 }: {
   log: RequestLog | null
+  detailLoading?: boolean
+  detailError?: unknown
+  onRetry?: () => void
   onClose: () => void
 }) {
   const backdropRef = useRef<HTMLDivElement>(null)
@@ -707,6 +715,23 @@ export function LogsDrawer({
 
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto p-5">
+          {detailLoading && (
+            <div className="mb-4 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200" role="status">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              正在从详情接口加载完整请求记录…
+            </div>
+          )}
+          {Boolean(detailError) && !detailLoading && (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200" role="alert">
+              <span>详情接口加载失败；下方暂时显示列表摘要，部分证据可能缺失。</span>
+              {onRetry && (
+                <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  重试
+                </Button>
+              )}
+            </div>
+          )}
           <Tabs defaultValue="overview" className="space-y-4">
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="overview">概览</TabsTrigger>

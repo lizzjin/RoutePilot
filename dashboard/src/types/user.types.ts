@@ -56,6 +56,7 @@ export interface ApiKey {
   dailyLimitUsd?: number
   weeklyLimitUsd?: number
   monthlyLimitUsd?: number
+  supersededByKeyId?: string | null
 }
 
 export interface Team {

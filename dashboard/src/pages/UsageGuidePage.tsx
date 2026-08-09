@@ -1,24 +1,54 @@
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowRight,
   Boxes,
+  Copy,
   KeyRound,
+  Scale,
   ScrollText,
   Terminal,
   Users,
 } from 'lucide-react'
+import { toast } from 'sonner'
+import { useAliases, useApiKeys, useNow, useProviders, useSettings } from '@/hooks'
 import { useAuthStore } from '@/stores'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { availableModelOptions, preferredAvailableModel } from '@/features/models/available-models'
+import { apiKeyExpiryState } from '@/features/api-keys/api-key-view'
 
-const EXAMPLE_MODEL = 'local_qwen:qwen3.5-9b-q5km'
+function CodeBlock({ children, copyLabel, copyDisabled = false }: { children: string; copyLabel: string; copyDisabled?: boolean }) {
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(children)
+      toast.success(`${copyLabel}已复制`)
+    } catch {
+      toast.error('复制失败，请手动选择文本')
+    }
+  }
 
-function CodeBlock({ children }: { children: string }) {
   return (
-    <pre className="overflow-x-auto rounded-md bg-slate-950 p-4 font-mono text-xs leading-6 text-slate-100">
-      <code>{children}</code>
-    </pre>
+    <div className="relative">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="absolute right-2 top-2 z-10 h-8 border border-white/15 bg-white/10 text-slate-100 hover:bg-white/20 hover:text-white"
+        onClick={() => void copy()}
+        disabled={copyDisabled}
+        aria-label={`复制${copyLabel}`}
+      >
+        <Copy className="h-3.5 w-3.5" />
+        复制
+      </Button>
+      <pre className="overflow-x-auto rounded-md bg-slate-950 p-4 pr-24 font-mono text-xs leading-6 text-slate-100">
+        <code>{children}</code>
+      </pre>
+    </div>
   )
 }
 
@@ -68,11 +98,70 @@ function SectionHeading({
 }
 
 export function UsageGuidePage() {
-  const isAdmin = useAuthStore((state) => state.currentUser?.role === 'admin')
-  const gatewayOrigin = window.location.origin
+  const currentUser = useAuthStore((state) => state.currentUser)
+  const isAdmin = currentUser?.role === 'admin'
+  const catalogNow = useNow()
+  const {
+    data: apiKeys = [],
+    isLoading: apiKeysLoading,
+    isFetching: apiKeysFetching,
+    error: apiKeysError,
+  } = useApiKeys(!isAdmin)
+  const usableApiKeys = useMemo(() => apiKeys.filter((key) => (
+    key.status === 'active'
+    && apiKeyExpiryState(key, catalogNow) !== 'expired'
+    && (!key.ipRestricted || (key.allowedIps?.length ?? 0) > 0)
+  )), [apiKeys, catalogNow])
+  const [selectedCatalogKeyId, setSelectedCatalogKeyId] = useState('')
+  const activeCatalogKeyId = usableApiKeys.some((key) => key.id === selectedCatalogKeyId)
+    ? selectedCatalogKeyId
+    : usableApiKeys[0]?.id ?? ''
+  const catalogEnabled = isAdmin || Boolean(activeCatalogKeyId)
+  const {
+    data: providers = [],
+    isLoading: providersLoading,
+    isFetching: providersFetching,
+    error: providersError,
+  } = useProviders(
+    isAdmin ? undefined : activeCatalogKeyId,
+    catalogEnabled,
+  )
+  const {
+    data: aliases = [],
+    isLoading: aliasesLoading,
+    isFetching: aliasesFetching,
+    error: aliasesError,
+  } = useAliases(
+    isAdmin ? undefined : activeCatalogKeyId,
+    catalogEnabled,
+  )
+  const { data: settings } = useSettings(isAdmin)
+  const [selectedModel, setSelectedModel] = useState('')
+  const gatewayOrigin = String(import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/+$/, '')
 
-  const anthropicEnv = `ANTHROPIC_BASE_URL=${gatewayOrigin}\nANTHROPIC_AUTH_TOKEN=<你的 ModelPort API Key>\nANTHROPIC_MODEL=${EXAMPLE_MODEL}`
-  const openAiEnv = `OPENAI_BASE_URL=${gatewayOrigin}/v1\nOPENAI_API_KEY=<你的 ModelPort API Key>\nOPENAI_MODEL=${EXAMPLE_MODEL}`
+  const modelOptions = useMemo(() => {
+    if (providersError || aliasesError || providersFetching || aliasesFetching || (!isAdmin && apiKeysFetching)) return []
+    return availableModelOptions(providers, aliases)
+  }, [aliases, aliasesError, aliasesFetching, apiKeysFetching, isAdmin, providers, providersError, providersFetching])
+  const preferredModel = useMemo(
+    () => preferredAvailableModel(modelOptions, settings?.gateway.defaultProvider),
+    [modelOptions, settings?.gateway.defaultProvider],
+  )
+
+  const catalogLoading = providersLoading
+    || providersFetching
+    || aliasesLoading
+    || aliasesFetching
+    || (!isAdmin && (apiKeysLoading || apiKeysFetching))
+  const catalogError = providersError || aliasesError || (!isAdmin ? apiKeysError : null)
+  const activeModel = modelOptions.some((option) => option.id === selectedModel)
+    ? selectedModel
+    : preferredModel
+  const configuredModel = activeModel || '<先选择可用模型>'
+  const copyDisabled = catalogLoading || Boolean(catalogError) || !activeModel
+
+  const anthropicEnv = `ANTHROPIC_BASE_URL=${gatewayOrigin}\nANTHROPIC_AUTH_TOKEN=<你的 ModelPort API Key>\nANTHROPIC_MODEL=${configuredModel}`
+  const openAiEnv = `OPENAI_BASE_URL=${gatewayOrigin}/v1\nOPENAI_API_KEY=<你的 ModelPort API Key>\nOPENAI_MODEL=${configuredModel}`
 
   return (
     <div className="w-full">
@@ -94,7 +183,7 @@ export function UsageGuidePage() {
         </div>
         <ol className="grid gap-x-8 gap-y-6 sm:grid-cols-2 xl:grid-cols-4">
           <GuideStep index={1} title="获取 API Key" description="使用管理员签发的受限密钥；密钥明文只在创建时展示一次。" to="/api-keys" />
-          <GuideStep index={2} title="确认模型 ID" description={`使用密钥允许访问的模型，例如 ${EXAMPLE_MODEL}。`} />
+          <GuideStep index={2} title="确认模型 ID" description={activeModel ? `当前选择 ${activeModel}；模型来自实时目录，不使用固定示例。` : '选择 API Key，再从它的实时目录选择模型。'} to="/models" />
           <GuideStep index={3} title="选择客户端协议" description="Claude Code 使用 Anthropic Messages；OpenAI SDK 使用 Chat Completions。" />
           <GuideStep index={4} title="核对请求日志" description="确认实际 Provider、模型、Token、计费和终止状态均符合预期。" to="/logs" />
         </ol>
@@ -106,6 +195,66 @@ export function UsageGuidePage() {
           title="配置客户端"
           description="两种客户端协议使用同一套 ModelPort API Key，但 Base URL 规则不同。"
         />
+        <div className="mb-6 rounded-lg border bg-muted/20 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">选择当前可用模型</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {isAdmin
+                  ? '管理员看到组织当前可路由目录；优先使用稳定逻辑别名。'
+                  : '目录由服务端按所选 API Key 的模型、Provider 与项目策略计算；IP 限制请由实际客户端用同一密钥请求 /v1/models 验证。'}
+              </p>
+            </div>
+            <Badge variant="outline">{modelOptions.length} 个可用</Badge>
+          </div>
+          {!isAdmin && usableApiKeys.length > 0 && (
+            <div className="mt-3">
+              <Label htmlFor="guide-api-key" className="text-xs">用于查询目录的 API Key</Label>
+              <Select
+                value={activeCatalogKeyId}
+                onValueChange={(value) => {
+                  setSelectedCatalogKeyId(value)
+                  setSelectedModel('')
+                }}
+                disabled={apiKeysLoading}
+              >
+                <SelectTrigger id="guide-api-key" className="mt-1 w-full bg-background" aria-label="选择用于查询模型目录的 API 密钥">
+                  <SelectValue placeholder="选择 API Key" />
+                </SelectTrigger>
+                <SelectContent>
+                  {usableApiKeys.map((key) => (
+                    <SelectItem key={key.id} value={key.id}>
+                      {key.name}（{key.keyPreview || key.keyPrefix}）
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {catalogError ? (
+            <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" role="alert">
+              无法读取实时模型目录，请检查会话和后端状态后重试。为避免误导，下面不会填入固定模型。
+            </p>
+          ) : modelOptions.length > 0 ? (
+            <Select value={activeModel} onValueChange={setSelectedModel} disabled={catalogLoading}>
+              <SelectTrigger className="mt-3 w-full bg-background" aria-label="选择可用模型">
+                <SelectValue placeholder={catalogLoading ? '正在加载模型目录…' : '选择模型'} />
+              </SelectTrigger>
+              <SelectContent>
+                {modelOptions.map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.displayName}{option.kind === 'alias' ? '（逻辑模型）' : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <span>{catalogLoading ? '正在加载实时模型目录…' : isAdmin ? '当前没有通过凭证解析的启用模型。' : usableApiKeys.length === 0 ? '当前没有可用于查询目录的有效 API Key。' : '所选密钥的模型、Provider 或项目策略未允许任何已启用模型。'}</span>
+              {!catalogLoading && <Button asChild size="sm" variant="outline"><Link to={isAdmin ? '/models' : '/api-keys'}>{isAdmin ? '检查 Provider' : '创建或检查密钥'}</Link></Button>}
+            </div>
+          )}
+        </div>
         <div className="grid gap-8 xl:grid-cols-2 xl:gap-0 xl:divide-x">
           <article className="xl:pr-8">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -113,7 +262,7 @@ export function UsageGuidePage() {
               <span className="text-xs text-muted-foreground">Claude Code / Anthropic SDK</span>
             </div>
             <p className="mb-3 text-sm leading-6 text-muted-foreground">客户端连接 ModelPort，而不是直接连接实际模型上游。</p>
-            <CodeBlock>{anthropicEnv}</CodeBlock>
+            <CodeBlock copyLabel="Anthropic 配置" copyDisabled={copyDisabled}>{anthropicEnv}</CodeBlock>
             <p className="mt-3 text-xs text-muted-foreground">接口：<code className="font-mono">POST /v1/messages</code>，认证头：<code className="font-mono">x-api-key</code>。</p>
           </article>
 
@@ -123,7 +272,7 @@ export function UsageGuidePage() {
               <span className="text-xs text-muted-foreground">OpenAI SDK / Quant</span>
             </div>
             <p className="mb-3 text-sm leading-6 text-muted-foreground">Base URL 需要包含 <code className="font-mono">/v1</code>，模型 ID 与密钥权限保持一致。</p>
-            <CodeBlock>{openAiEnv}</CodeBlock>
+            <CodeBlock copyLabel="OpenAI 配置" copyDisabled={copyDisabled}>{openAiEnv}</CodeBlock>
             <p className="mt-3 text-xs text-muted-foreground">接口：<code className="font-mono">POST /v1/chat/completions</code>，认证头：<code className="font-mono">Authorization: Bearer …</code>。</p>
           </article>
         </div>
@@ -178,14 +327,19 @@ export function UsageGuidePage() {
               <span className="min-w-0 flex-1"><span className="block font-medium">1. 接入模型与渠道</span><span className="mt-1 block text-sm text-muted-foreground">配置上游、凭证和默认路由</span></span>
               <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
             </Link>
+            <Link to="/governance" className="group flex items-center gap-4 py-4">
+              <Scale className="h-5 w-5 shrink-0 text-primary" />
+              <span className="min-w-0 flex-1"><span className="block font-medium">2. 应用项目路由策略</span><span className="mt-1 block text-sm text-muted-foreground">在治理页明确本地与云外发边界；默认不会放行云 Provider</span></span>
+              <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+            </Link>
             <Link to="/users" className="group flex items-center gap-4 py-4">
               <Users className="h-5 w-5 shrink-0 text-primary" />
-              <span className="min-w-0 flex-1"><span className="block font-medium">2. 创建或确认用户</span><span className="mt-1 block text-sm text-muted-foreground">确认角色、状态和归属</span></span>
+              <span className="min-w-0 flex-1"><span className="block font-medium">3. 创建或确认用户</span><span className="mt-1 block text-sm text-muted-foreground">确认角色、状态和归属</span></span>
               <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
             </Link>
             <Link to="/api-keys" className="group flex items-center gap-4 py-4">
               <KeyRound className="h-5 w-5 shrink-0 text-primary" />
-              <span className="min-w-0 flex-1"><span className="block font-medium">3. 签发最小权限密钥</span><span className="mt-1 block text-sm text-muted-foreground">限制模型、Provider 和预算</span></span>
+              <span className="min-w-0 flex-1"><span className="block font-medium">4. 签发最小权限密钥</span><span className="mt-1 block text-sm text-muted-foreground">限制模型、Provider 和预算</span></span>
               <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
             </Link>
           </div>

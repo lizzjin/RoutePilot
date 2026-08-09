@@ -6,6 +6,7 @@ export interface ApiKeyAccess {
   canManageTeams: boolean
   canEdit: boolean
   canManagePolicy: boolean
+  canRotate: boolean
   canRevoke: boolean
   canRestore: boolean
   canDelete: boolean
@@ -17,6 +18,7 @@ const READ_ONLY_ACCESS: ApiKeyAccess = {
   canManageTeams: false,
   canEdit: false,
   canManagePolicy: false,
+  canRotate: false,
   canRevoke: false,
   canRestore: false,
   canDelete: false,
@@ -30,6 +32,7 @@ export function apiKeyAccessForRole(role?: UserRole): ApiKeyAccess {
       canManageTeams: true,
       canEdit: true,
       canManagePolicy: true,
+      canRotate: true,
       canRevoke: true,
       canRestore: true,
       canDelete: true,
@@ -38,7 +41,9 @@ export function apiKeyAccessForRole(role?: UserRole): ApiKeyAccess {
   if (role === 'user') {
     return {
       ...READ_ONLY_ACCESS,
+      canCreate: true,
       canEdit: true,
+      canRotate: true,
       canRevoke: true,
       canDelete: true,
     }

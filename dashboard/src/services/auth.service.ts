@@ -27,11 +27,54 @@ const MOCK_AUTH_METHODS: AuthMethods = {
 }
 
 const MOCK_SESSION_KEY = 'modelport_mock_session'
+export const AUTH_METHODS_TIMEOUT_MS = 8_000
+
+function authMethodsTimeoutError(): Error {
+  const error = new Error('authentication capability probe timed out')
+  error.name = 'TimeoutError'
+  return error
+}
+
+export function normalizeAuthMethods(value: unknown): AuthMethods {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('authentication capability response is invalid')
+  }
+
+  const record = value as Record<string, unknown>
+  if (typeof record.passwordEnabled !== 'boolean') {
+    throw new Error('authentication capability response is missing passwordEnabled')
+  }
+  const oidc = record.oidc && typeof record.oidc === 'object' && !Array.isArray(record.oidc)
+    ? record.oidc as Record<string, unknown>
+    : {}
+  const enabled = oidc.enabled === true
+  const startUrl = typeof oidc.startUrl === 'string' && oidc.startUrl.trim()
+    ? oidc.startUrl
+    : '/admin/auth/oidc/start'
+
+  return {
+    passwordEnabled: record.passwordEnabled,
+    oidc: {
+      enabled,
+      label: typeof oidc.label === 'string' && oidc.label.trim() ? oidc.label : '企业单点登录',
+      startUrl,
+    },
+  }
+}
 
 export const authService = {
-  getMethods: (): Promise<AuthMethods> => {
-    if (!isMockMode) return api.get('/admin/auth/methods')
-    return mockDelay(MOCK_AUTH_METHODS)
+  getMethods: async (): Promise<AuthMethods> => {
+    if (isMockMode) return mockDelay(MOCK_AUTH_METHODS)
+    const controller = new AbortController()
+    const timeout = globalThis.setTimeout(() => controller.abort(), AUTH_METHODS_TIMEOUT_MS)
+    try {
+      return normalizeAuthMethods(await api.get<unknown>('/admin/auth/methods', { signal: controller.signal }))
+    } catch (error) {
+      if (controller.signal.aborted) throw authMethodsTimeoutError()
+      throw error
+    } finally {
+      globalThis.clearTimeout(timeout)
+    }
   },
 
   login: async (username: string, password: string): Promise<User> => {

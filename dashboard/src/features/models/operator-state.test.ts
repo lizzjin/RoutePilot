@@ -27,6 +27,13 @@ function provider(overrides: Partial<Provider> = {}): Provider {
     bufferStreamText: false,
     status: 'active',
     hasApiKey: true,
+    lastTest: {
+      testedAt: '1',
+      success: true,
+      message: 'connected',
+      models: ['gpt-5'],
+      modelCount: 1,
+    },
     ...overrides,
   }
 }
@@ -41,6 +48,19 @@ describe('operator-facing provider state', () => {
     expect(providerReadiness(provider(), true)).toMatchObject({
       level: 'ready',
       label: '默认路由已配置',
+    })
+  })
+
+  it('does not claim production readiness before a connection test succeeds', () => {
+    expect(providerReadiness(provider({ lastTest: null }))).toMatchObject({
+      level: 'attention',
+      label: '等待连接测试',
+    })
+    expect(providerReadiness(provider({
+      lastTest: { testedAt: '2', success: false, message: 'TLS failed' },
+    }))).toMatchObject({
+      level: 'blocked',
+      label: '连接测试失败',
     })
   })
 

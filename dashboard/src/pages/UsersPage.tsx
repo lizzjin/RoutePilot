@@ -3,6 +3,7 @@ import { useUsers, useCreateUser, useUpdateUser, useDeleteUser, useUserApiKeys, 
 import { PageHeader } from '@/components/shared/PageHeader'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { OneTimeSecretGuard } from '@/components/shared/OneTimeSecretGuard'
 import { LoadingPage } from '@/components/shared/LoadingPage'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { PaginationBar } from '@/components/shared/PaginationBar'
@@ -103,6 +104,7 @@ export function UsersPage() {
     editingUser.id === currentUser?.id
     || (editingUser.role === 'admin' && editingUser.status === 'active' && adminUsers <= 1)
   ))
+  const userKeySecretAtRisk = createApiKey.isPending || Boolean(newKeyResult)
 
   const canDeleteUser = (user: User) => user.id !== currentUser?.id && !(user.role === 'admin' && adminUsers <= 1)
 
@@ -534,18 +536,26 @@ export function UsersPage() {
         open={!!showDetailUser}
         onOpenChange={(open) => {
           if (!open) {
-            if (newKeyResult) {
-              toast.warning('请先保存完整密钥，再返回密钥列表')
+            if (userKeySecretAtRisk) {
+              toast.warning(createApiKey.isPending
+                ? '密钥正在生成，请等待请求完成'
+                : '请先保存完整密钥，再返回密钥列表')
               return
             }
             setShowDetailUser(null)
             setNewKeyResult(null)
+            createApiKey.reset()
             setUserKeysPage(1)
             setKeyName('')
           }
         }}
       >
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+        <DialogContent
+          className="max-h-[90vh] max-w-2xl overflow-y-auto"
+          hideCloseButton={userKeySecretAtRisk}
+          onEscapeKeyDown={(event) => { if (userKeySecretAtRisk) event.preventDefault() }}
+          onPointerDownOutside={(event) => { if (userKeySecretAtRisk) event.preventDefault() }}
+        >
           <DialogHeader>
             <DialogTitle>{detailUser?.username || '用户'}的 API 密钥</DialogTitle>
             <DialogDescription>密钥创建后仅展示一次；禁用操作会立即中断后续调用。</DialogDescription>
@@ -566,7 +576,7 @@ export function UsersPage() {
                 </div>
               </FormField>
               <DialogFooter>
-                <Button onClick={() => { setNewKeyResult(null); void refetchUserKeys() }}>已保存，返回列表</Button>
+                <Button onClick={() => { setNewKeyResult(null); createApiKey.reset(); void refetchUserKeys() }}>已保存，返回列表</Button>
               </DialogFooter>
             </div>
           ) : (
@@ -648,6 +658,17 @@ export function UsersPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <OneTimeSecretGuard
+        active={userKeySecretAtRisk}
+        title="API 密钥尚未确认保存，仍要离开？"
+        description="密钥生成请求仍在进行，或完整密钥尚未确认保存。离开后可能永久无法再查看它；默认应留在此页完成保存。"
+        onConfirmLeave={() => {
+          if (!createApiKey.isPending) return true
+          toast.warning('密钥正在生成，请等待服务端返回后再决定是否离开')
+          return false
+        }}
+      />
 
       <ConfirmDialog
         open={!!confirmAction}

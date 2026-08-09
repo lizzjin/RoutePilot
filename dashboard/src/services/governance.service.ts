@@ -9,6 +9,7 @@ import type {
 const emptyOverview: GovernanceOverview = {
   view: 'administrator-control-plane',
   ready: true,
+  dualApprovalRequired: false,
   projectPolicies: [],
   changeRequests: [],
   scheduler: {

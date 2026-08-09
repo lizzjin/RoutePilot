@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useLogs, useProviders } from '@/hooks'
+import { useLogById, useLogs, useProviders } from '@/hooks'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ErrorState } from '@/components/shared/ErrorState'
@@ -29,6 +29,12 @@ export function LogsPage() {
   const { filters, page: logPage, pageSize: logPageSize } = viewState
   const [liveMode, setLiveMode] = useState(false)
   const [selectedLog, setSelectedLog] = useState<RequestLog | null>(null)
+  const {
+    data: selectedLogDetail,
+    error: selectedLogError,
+    isFetching: selectedLogLoading,
+    refetch: refetchSelectedLog,
+  } = useLogById(selectedLog?.id ?? '')
 
   const { data: configuredProviders } = useProviders()
   const {
@@ -227,7 +233,10 @@ export function LogsPage() {
 
       {/* Detail drawer */}
       <LogsDrawer
-        log={selectedLog}
+        log={selectedLogError ? selectedLog : selectedLogDetail ?? selectedLog}
+        detailLoading={Boolean(selectedLog) && selectedLogLoading}
+        detailError={selectedLogError}
+        onRetry={() => void refetchSelectedLog()}
         onClose={closeDrawer}
       />
     </div>

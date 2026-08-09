@@ -10,6 +10,7 @@ describe('API key role access', () => {
       canManageTeams: true,
       canEdit: true,
       canManagePolicy: true,
+      canRotate: true,
       canRevoke: true,
       canRestore: true,
       canDelete: true,
@@ -19,10 +20,11 @@ describe('API key role access', () => {
   it('limits normal users to self-service key operations', () => {
     expect(apiKeyAccessForRole('user')).toEqual({
       isAdmin: false,
-      canCreate: false,
+      canCreate: true,
       canManageTeams: false,
       canEdit: true,
       canManagePolicy: false,
+      canRotate: true,
       canRevoke: true,
       canRestore: false,
       canDelete: true,

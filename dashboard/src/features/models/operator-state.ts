@@ -32,7 +32,9 @@ export function providerReadiness(provider: Provider, isDefault = false): Provid
     }
   }
 
-  const credentialReady = provider.hasApiKey || !provider.apiKeyRequired
+  const credentialReady = provider.hasApiKey
+    || !provider.apiKeyRequired
+    || Boolean(provider.credentials?.some((credential) => credential.status === 'active' && credential.hasApiKey))
   if (!credentialReady) {
     return {
       level: 'blocked',
@@ -57,6 +59,24 @@ export function providerReadiness(provider: Provider, isDefault = false): Provid
       label: provider.status === 'error' ? '配置异常' : '尚未激活',
       detail: 'Provider 当前不参与实际模型解析。',
       nextStep: '检查 Provider 配置和运行日志，修复后重新测试连接。',
+    }
+  }
+
+  if (!provider.lastTest) {
+    return {
+      level: 'attention',
+      label: '等待连接测试',
+      detail: '凭证已由当前进程解析，但尚无成功的上游连接证据。',
+      nextStep: '运行“连接测试并发现模型”；只有测试通过后才应加入生产路由。',
+    }
+  }
+
+  if (!provider.lastTest.success) {
+    return {
+      level: 'blocked',
+      label: '连接测试失败',
+      detail: provider.lastTest.message || '最近一次上游连接测试未通过。',
+      nextStep: '检查环境变量、Base URL、TLS 与上游协议后重新测试。',
     }
   }
 

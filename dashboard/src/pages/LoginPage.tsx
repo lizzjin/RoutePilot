@@ -3,7 +3,9 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores'
 import { authService, type AuthMethods } from '@/services/auth.service'
 import {
+  authCapabilityErrorMessage,
   buildOidcStartUrl,
+  loginErrorMessage,
   oidcErrorMessage,
   safeReturnPath,
   withoutOidcError,
@@ -18,6 +20,8 @@ import {
   Fingerprint,
   KeyRound,
   Loader2,
+  AlertTriangle,
+  RefreshCw,
   ShieldCheck,
   UserRound,
   Zap,
@@ -42,13 +46,18 @@ export function LoginPage() {
   const [error, setError] = useState('')
   const [oidcError, setOidcError] = useState(() => oidcErrorMessage(location.search))
   const [authMethods, setAuthMethods] = useState<AuthMethods | null>(null)
+  const [authMethodsLoading, setAuthMethodsLoading] = useState(true)
+  const [authMethodsError, setAuthMethodsError] = useState('')
+  const [authMethodsAttempt, setAuthMethodsAttempt] = useState(0)
   const [sessionNotice] = useState(() => readSessionValue('modelport_auth_notice'))
   const [storedReturnTo] = useState(() => readSessionValue('modelport_return_to'))
   const login = useAuthStore((s) => s.login)
   const from = (location.state as { from?: { pathname?: string; search?: string; hash?: string } } | null)?.from
   const locationReturnTo = from?.pathname ? `${from.pathname}${from.search || ''}${from.hash || ''}` : ''
   const returnTo = safeReturnPath(locationReturnTo) || safeReturnPath(storedReturnTo) || '/dashboard'
-  const passwordEnabled = authMethods?.passwordEnabled ?? true
+  const passwordEnabled = authMethods?.passwordEnabled === true
+  const offerPasswordRecovery = Boolean(authMethodsError)
+  const showPasswordLogin = passwordEnabled || offerPasswordRecovery
   const oidcEnabled = authMethods?.oidc.enabled === true && !!authMethods.oidc.startUrl.trim()
 
   useEffect(() => {
@@ -64,15 +73,20 @@ export function LoginPage() {
     let active = true
     authService.getMethods()
       .then((methods) => {
-        if (active) setAuthMethods(methods)
+        if (!active) return
+        setAuthMethods(methods)
+        setAuthMethodsLoading(false)
       })
-      .catch(() => {
-        // Keep password login available when capability discovery is temporarily unavailable.
+      .catch((probeError: unknown) => {
+        if (!active) return
+        setAuthMethods(null)
+        setAuthMethodsError(authCapabilityErrorMessage(probeError))
+        setAuthMethodsLoading(false)
       })
     return () => {
       active = false
     }
-  }, [])
+  }, [authMethodsAttempt])
 
   useEffect(() => {
     const message = oidcErrorMessage(location.search)
@@ -94,6 +108,14 @@ export function LoginPage() {
     }
   }
 
+  const handleOidcRecovery = () => {
+    try {
+      window.location.assign(buildOidcStartUrl('/admin/auth/oidc/start', returnTo, window.location.origin))
+    } catch {
+      setOidcError('企业单点登录恢复入口暂不可用，请联系管理员。')
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!username.trim() || !password) {
@@ -108,8 +130,8 @@ export function LoginPage() {
       await login(username.trim(), password)
       window.localStorage.setItem('modelport_last_username', username.trim())
       navigate(returnTo, { replace: true })
-    } catch {
-      setError('登录失败，请检查用户名或密码')
+    } catch (loginError) {
+      setError(loginErrorMessage(loginError))
     } finally {
       setLoading(false)
     }
@@ -139,7 +161,7 @@ export function LoginPage() {
                 </div>
                 <div>
                   <p className="text-lg font-semibold text-slate-950">ModelPort</p>
-                  <p className="text-sm text-slate-600">Enterprise AI Gateway</p>
+                  <p className="text-sm text-slate-600">Self-hosted AI Gateway</p>
                 </div>
               </div>
               <div className="rounded-full border border-teal-700/15 bg-white/65 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-teal-800 backdrop-blur-md">
@@ -178,7 +200,7 @@ export function LoginPage() {
               <div className="space-y-1.5">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-teal-700">ModelPort Console</p>
                 <h1 className="text-2xl font-semibold tracking-[-0.025em] text-slate-950">登录控制台</h1>
-                <p className="text-sm text-slate-500">使用管理员账户进入企业网关</p>
+                <p className="text-sm text-slate-500">使用组织账户进入受治理网关</p>
               </div>
             </CardHeader>
 
@@ -193,8 +215,51 @@ export function LoginPage() {
                   {oidcError}
                 </div>
               )}
+              {authMethodsLoading && (
+                <div role="status" className="mb-5 flex items-center gap-2 border-l-2 border-slate-300 bg-slate-50/80 px-3 py-2.5 text-xs leading-5 text-slate-600">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  正在确认当前实例启用的登录方式…
+                </div>
+              )}
+              {authMethodsError && !authMethodsLoading && (
+                <div role="alert" className="mb-5 border-l-2 border-amber-400 bg-amber-50/70 px-3 py-2.5 text-xs leading-5 text-amber-900">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p>{authMethodsError}</p>
+                      <p className="mt-1 text-amber-800/80">下方密码入口仅作为恢复尝试，并不表示服务端已启用密码登录；若实例只启用 SSO，该尝试会被拒绝。</p>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 border-amber-300 bg-white/60 text-amber-900 hover:bg-white"
+                      onClick={() => {
+                        setAuthMethodsLoading(true)
+                        setAuthMethodsError('')
+                        setAuthMethodsAttempt((attempt) => attempt + 1)
+                      }}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      重新探测
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 border-amber-300 bg-white/60 text-amber-900 hover:bg-white"
+                      onClick={handleOidcRecovery}
+                    >
+                      <Fingerprint className="h-3.5 w-3.5" />
+                      尝试 SSO
+                    </Button>
+                  </div>
+                </div>
+              )}
               {oidcEnabled && (
-                <div className={passwordEnabled ? 'mb-5' : ''}>
+                <div className={showPasswordLogin ? 'mb-5' : ''}>
                   <Button
                     type="button"
                     size="lg"
@@ -204,7 +269,7 @@ export function LoginPage() {
                     <Fingerprint className="h-4 w-4" />
                     {authMethods?.oidc.label.trim() || '企业单点登录'}
                   </Button>
-                  {passwordEnabled && (
+                  {showPasswordLogin && (
                     <div className="mt-5 flex items-center gap-3 text-[11px] text-slate-400" aria-hidden="true">
                       <div className="h-px flex-1 bg-slate-200" />
                       <span>或使用密码</span>
@@ -213,7 +278,7 @@ export function LoginPage() {
                   )}
                 </div>
               )}
-              {passwordEnabled && (
+              {showPasswordLogin && (
                 <form onSubmit={handleSubmit} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="username" className="text-xs font-medium text-slate-700">用户名</Label>
@@ -289,7 +354,7 @@ export function LoginPage() {
                   <p className="text-center text-[11px] text-slate-400">连接当前实例 · 安全会话鉴权</p>
                 </form>
               )}
-              {!passwordEnabled && !oidcEnabled && (
+              {!authMethodsLoading && !authMethodsError && !passwordEnabled && !oidcEnabled && (
                 <p role="status" className="rounded-lg border border-amber-200/80 bg-amber-50/70 px-3 py-3 text-center text-xs leading-5 text-amber-800">
                   当前实例未启用可用的登录方式，请联系管理员。
                 </p>

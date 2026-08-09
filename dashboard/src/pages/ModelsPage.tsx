@@ -1,7 +1,10 @@
 import { Fragment, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   useProviders,
   useAliases,
+  useApiKeys,
+  useNow,
   useBulkToggleModels,
   useCheckProviderBalance,
   useCreateAlias,
@@ -90,6 +93,7 @@ import {
   type ProviderReadinessLevel,
 } from '@/features/models/operator-state'
 import { moveProviderInOrder, normalizeProviderOrder, type ProviderOrderDirection } from '@/features/models/provider-order'
+import { apiKeyExpiryState } from '@/features/api-keys/api-key-view'
 import {
   AlertTriangle,
   ArrowDown,
@@ -145,21 +149,46 @@ interface ModelRow {
 const ALL = '__all__'
 
 export function ModelsPage() {
+  const currentUser = useAuthStore((state) => state.currentUser)
+  const canManage = currentUser?.role === 'admin'
+  const catalogNow = useNow()
+  const {
+    data: apiKeys = [],
+    isLoading: apiKeysLoading,
+    isFetching: apiKeysFetching,
+    error: apiKeysError,
+    refetch: refetchApiKeys,
+  } = useApiKeys(!canManage)
+  const usableApiKeys = useMemo(() => apiKeys.filter((key) => (
+    key.status === 'active'
+    && apiKeyExpiryState(key, catalogNow) !== 'expired'
+    && (!key.ipRestricted || (key.allowedIps?.length ?? 0) > 0)
+  )), [apiKeys, catalogNow])
+  const [selectedCatalogKeyId, setSelectedCatalogKeyId] = useState('')
+  const activeCatalogKeyId = usableApiKeys.some((key) => key.id === selectedCatalogKeyId)
+    ? selectedCatalogKeyId
+    : usableApiKeys[0]?.id ?? ''
+  const catalogEnabled = canManage || Boolean(activeCatalogKeyId)
   const {
     data: providers = [],
     isLoading,
+    isFetching: providersFetching,
     error: providersError,
     refetch: refetchProviders,
-  } = useProviders()
+  } = useProviders(canManage ? undefined : activeCatalogKeyId, catalogEnabled)
   const {
     data: settings,
     isLoading: settingsLoading,
     error: settingsError,
     refetch: refetchSettings,
-  } = useSettings()
-  const { data: aliases = [], error: aliasesError, refetch: refetchAliases } = useAliases()
-  const currentUser = useAuthStore((state) => state.currentUser)
-  const canManage = currentUser?.role === 'admin'
+  } = useSettings(canManage)
+  const {
+    data: aliases = [],
+    isLoading: aliasesLoading,
+    isFetching: aliasesFetching,
+    error: aliasesError,
+    refetch: refetchAliases,
+  } = useAliases(canManage ? undefined : activeCatalogKeyId, catalogEnabled)
   const createAlias = useCreateAlias()
   const deleteAlias = useDeleteAlias()
   const discoverModels = useDiscoverProviderModels()
@@ -247,11 +276,11 @@ export function ModelsPage() {
   const toolUseProviderCount = capabilityRows.filter((row) => row.toolUse.supported).length
   const defaultProviderRecord = providers.find((provider) => provider.id === defaultProvider)
   const providerStates = useMemo(
-    () => providers.map((provider) => ({
+    () => canManage ? providers.map((provider) => ({
       provider,
       readiness: providerReadiness(provider, provider.id === defaultProvider),
-    })),
-    [defaultProvider, providers],
+    })) : [],
+    [canManage, defaultProvider, providers],
   )
   const attentionProviderCount = providerStates.filter(({ readiness }) => readiness.level !== 'ready').length
 
@@ -363,13 +392,6 @@ export function ModelsPage() {
     })
   }
 
-  const openCreateProviderDialog = () => {
-    setEditingProvider(null)
-    setProviderForm(DEFAULT_PROVIDER_FORM)
-    setProviderSubmitAttempted(false)
-    setShowProviderDialog(true)
-  }
-
   const openEditProviderDialog = (provider: Provider) => {
     setEditingProvider(provider)
     setProviderForm(providerToForm(provider))
@@ -408,7 +430,9 @@ export function ModelsPage() {
     const payload = providerPayloadFromForm(providerForm, !editingProvider)
     const options = {
       onSuccess: (provider: Provider) => {
-        toast.success(editingProvider ? `已更新供应商 ${provider.displayName}` : `已新增供应商 ${provider.displayName}`)
+        toast.success(editingProvider
+          ? `已保存 ${provider.displayName}；请核对凭证解析并重新运行连接测试`
+          : `已创建 ${provider.displayName}；完成凭证注入和连接测试后才会标记为可投产`)
         closeProviderDialog()
       },
       onError: (error: unknown) => toast.error(error instanceof Error ? error.message : '保存供应商失败'),
@@ -432,7 +456,9 @@ export function ModelsPage() {
     const data = credentialPayloadFromForm(credentialForm, !editingCredential)
     const options = {
       onSuccess: () => {
-        toast.success(editingCredential ? '账号已更新' : '账号已新增')
+        toast.success(editingCredential
+          ? '账号引用已更新；如环境变量值有变化，请重启进程并重新测试'
+          : '账号引用已新增；注入环境变量、重启进程并重新测试后才会生效')
         closeCredentialDialog()
       },
       onError: (error: unknown) => toast.error(error instanceof Error ? error.message : '保存账号失败'),
@@ -578,16 +604,65 @@ export function ModelsPage() {
     setAliasPage(1)
   }
 
-  if (isLoading) {
+  if ((canManage && (isLoading || aliasesLoading)) || (!canManage && apiKeysLoading)) {
     return <LoadingPage />
   }
 
-  if (providersError && providers.length === 0) {
+  if (!canManage && (
+    isLoading
+    || aliasesLoading
+    || apiKeysFetching
+    || providersFetching
+    || aliasesFetching
+  )) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="模型目录"
+          description="正在重新验证所选密钥的实时模型权限；验证完成前不会展示或复制缓存目录。"
+        />
+        <Card>
+          <CardContent className="flex flex-wrap items-center justify-between gap-4 p-5" role="status" aria-live="polite">
+            <div className="flex min-w-0 items-center gap-3">
+              <Loader2 className="h-5 w-5 shrink-0 animate-spin text-primary" />
+              <div>
+                <p className="font-medium">正在验证模型目录</p>
+                <p className="mt-1 text-xs text-muted-foreground">正在核对 API Key、项目、模型与 Provider 策略。</p>
+              </div>
+            </div>
+            {usableApiKeys.length > 0 && (
+              <Select value={activeCatalogKeyId} onValueChange={setSelectedCatalogKeyId}>
+                <SelectTrigger className="w-full sm:w-[300px]" aria-label="选择用于查询模型目录的 API 密钥">
+                  <SelectValue placeholder="选择 API Key" />
+                </SelectTrigger>
+                <SelectContent>
+                  {usableApiKeys.map((key) => (
+                    <SelectItem key={key.id} value={key.id}>
+                      {key.name}（{key.keyPreview || key.keyPrefix}）
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  const catalogError = providersError || aliasesError || (!canManage ? apiKeysError : null)
+  if (catalogError) {
     return (
       <ErrorState
-        title="Provider 数据加载失败"
-        message={errorMessage(providersError, '无法读取 Provider 与模型目录，请检查会话和后端状态。')}
-        onRetry={() => void refetchProviders()}
+        title="模型目录加载失败"
+        message={errorMessage(catalogError, '无法读取实时模型目录，请检查会话和后端状态。旧目录已停用，避免复制过期权限。')}
+        onRetry={() => {
+          void Promise.all([
+            refetchProviders(),
+            refetchAliases(),
+            ...(!canManage ? [refetchApiKeys()] : []),
+          ])
+        }}
       />
     )
   }
@@ -595,31 +670,56 @@ export function ModelsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Provider 与模型"
-        description="管理上游接入、凭证账号、模型目录、别名和默认路由"
+        title={canManage ? 'Provider 与模型' : '模型目录'}
+        description={canManage
+          ? '管理上游接入、凭证账号、模型目录、别名和默认路由'
+          : '查看组织当前的模型、稳定别名和协议能力；此页面不提供任何配置写操作'}
       />
 
       {!canManage && (
-        <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-100" role="status">
+        <div className="flex flex-wrap items-start justify-between gap-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-100" role="status">
           <KeyRound className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>
+          <div className="min-w-[220px] flex-1">
             <p className="font-medium">当前为只读视图</p>
-            <p className="mt-1 text-xs opacity-80">只有管理员可以修改 Provider、凭证、模型状态、别名和默认路由；复制路由与查看诊断不受影响。</p>
+            <p className="mt-1 text-xs opacity-80">只有管理员可以修改上游配置；下方按所选 API Key 的模型、Provider 与项目策略展示目录，IP 限制以实际客户端请求为准。</p>
           </div>
+          {usableApiKeys.length > 0 ? (
+            <Select
+              value={activeCatalogKeyId}
+              onValueChange={(value) => {
+                setSelectedCatalogKeyId(value)
+                setExpandedModel(null)
+                setModelPage(1)
+              }}
+            >
+              <SelectTrigger className="w-full bg-background text-foreground sm:w-[300px]" aria-label="选择用于查询模型目录的 API 密钥">
+                <SelectValue placeholder="选择 API Key" />
+              </SelectTrigger>
+              <SelectContent>
+                {usableApiKeys.map((key) => (
+                  <SelectItem key={key.id} value={key.id}>
+                    {key.name}（{key.keyPreview || key.keyPrefix}）
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Button asChild size="sm" variant="outline"><Link to="/api-keys">创建或检查密钥</Link></Button>
+          )}
         </div>
       )}
 
-      <ProviderRoutingOverview
-        defaultProvider={defaultProviderRecord}
-        defaultProviderId={defaultProvider}
-        readiness={defaultProviderRecord ? providerReadiness(defaultProviderRecord, true) : null}
-        routeState={settingsLoading ? 'loading' : settingsError && !settings ? 'error' : 'loaded'}
-        providerCount={providers.length}
-        attentionCount={attentionProviderCount}
-        canManage={canManage}
-        onOpenProviders={() => setActiveTab('providers')}
-        onOpenRouting={() => setActiveTab('routing')}
-      />
+      {canManage && <ProviderRoutingOverview
+          defaultProvider={defaultProviderRecord}
+          defaultProviderId={defaultProvider}
+          readiness={defaultProviderRecord ? providerReadiness(defaultProviderRecord, true) : null}
+          routeState={settingsLoading ? 'loading' : settingsError && !settings ? 'error' : 'loaded'}
+          providerCount={providers.length}
+          attentionCount={attentionProviderCount}
+          canManage={canManage}
+          onOpenProviders={() => setActiveTab('providers')}
+          onOpenRouting={() => setActiveTab('routing')}
+        />}
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Card>
@@ -661,8 +761,8 @@ export function ModelsPage() {
               <AlertTriangle className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">需要处理</p>
-              <p className="text-2xl font-semibold">{attentionProviderCount}</p>
+              <p className="text-sm text-muted-foreground">{canManage ? '需要处理' : '可用别名'}</p>
+              <p className="text-2xl font-semibold">{canManage ? attentionProviderCount : aliases.length}</p>
             </div>
           </CardContent>
         </Card>
@@ -672,11 +772,11 @@ export function ModelsPage() {
         <div className="overflow-x-auto pb-1">
           <TabsList className="h-auto min-w-max justify-start">
             <TabsTrigger value="library">模型与路由</TabsTrigger>
-            <TabsTrigger value="providers">Provider 与凭证</TabsTrigger>
             <TabsTrigger value="capabilities">协议能力</TabsTrigger>
             <TabsTrigger value="aliases">别名</TabsTrigger>
-            <TabsTrigger value="routing">默认路由</TabsTrigger>
-            <TabsTrigger value="templates">配置模板</TabsTrigger>
+            {canManage && <TabsTrigger value="providers">Provider 与凭证</TabsTrigger>}
+            {canManage && <TabsTrigger value="routing">默认路由</TabsTrigger>}
+            {canManage && <TabsTrigger value="templates">配置模板</TabsTrigger>}
           </TabsList>
         </div>
 
@@ -732,16 +832,22 @@ export function ModelsPage() {
                       <TableCell colSpan={5} className="p-0">
                         <EmptyState
                           icon={Layers3}
-                          title={providers.length === 0 ? '尚未配置 Provider' : '没有匹配的模型'}
+                          title={providers.length === 0
+                            ? canManage ? '尚未配置 Provider' : '当前没有可访问模型'
+                            : '没有匹配的模型'}
                           description={providers.length === 0
-                            ? '先添加 Provider，再发现或填写上游模型。'
+                            ? canManage
+                              ? '先从模板生成组织审查配置，重载或重启后再发现模型。'
+                              : '创建或检查个人 API 密钥；若仍为空，请联系管理员确认模型与项目策略。'
                             : '清除搜索词或切换模型系列后重试。'}
-                          action={canManage && providers.length === 0 ? (
-                            <Button size="sm" onClick={() => { setActiveTab('providers'); openCreateProviderDialog() }}>
-                              <Plus className="mr-2 h-4 w-4" />
-                              添加 Provider
-                            </Button>
-                          ) : undefined}
+                          action={providers.length === 0
+                            ? canManage
+                              ? <Button size="sm" onClick={() => setActiveTab('templates')}>
+                                  <FileText className="mr-2 h-4 w-4" />
+                                  查看接入模板
+                                </Button>
+                              : <Button asChild size="sm" variant="outline"><Link to="/api-keys">检查个人密钥</Link></Button>
+                            : undefined}
                         />
                       </TableCell>
                     </TableRow>
@@ -797,7 +903,9 @@ export function ModelsPage() {
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
                                       <p className="font-medium">{modelRouteTitle(channel.provider, row.model)}</p>
-                                      <p className="truncate text-xs text-muted-foreground">{channel.provider.baseUrl}</p>
+                                      <p className="truncate text-xs text-muted-foreground">
+                                        {canManage ? channel.provider.baseUrl : PROVIDER_PROTOCOL_LABELS[channel.provider.protocol]}
+                                      </p>
                                     </div>
                                     <StatusBadge status={channel.provider.status} />
                                   </div>
@@ -884,11 +992,26 @@ export function ModelsPage() {
         </TabsContent>
 
         <TabsContent value="providers" className="space-y-4">
+          {canManage && (
+            <Card className="border-blue-200 bg-blue-50/60 dark:border-blue-900 dark:bg-blue-950/30">
+              <CardContent className="flex flex-col gap-3 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="font-medium text-blue-950 dark:text-blue-100">新 Provider 先进入组织审查目录</p>
+                  <p className="mt-1 text-xs leading-5 text-blue-800 dark:text-blue-200">
+                    从接入模板生成 TOML 与 Secret 环境变量，保存后重载或重启；控制台只编辑已批准的 Provider，不能临时添加任意端点。
+                  </p>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => setActiveTab('templates')}>
+                  <FileText className="mr-2 h-4 w-4" />查看接入模板
+                </Button>
+              </CardContent>
+            </Card>
+          )}
           <TableToolbar
             actions={canManage ? (
-              <Button onClick={openCreateProviderDialog}>
-                <Plus className="mr-2 h-4 w-4" />
-                新增 Provider
+              <Button onClick={() => setActiveTab('templates')}>
+                <FileText className="mr-2 h-4 w-4" />
+                接入新 Provider
               </Button>
             ) : undefined}
           >
@@ -899,6 +1022,7 @@ export function ModelsPage() {
                   type="button"
                   size="sm"
                   variant={providerFilter === filter.value ? 'default' : 'outline'}
+                  aria-pressed={providerFilter === filter.value}
                   onClick={() => {
                     setProviderFilter(filter.value)
                     setExpandedProvider(null)
@@ -919,9 +1043,9 @@ export function ModelsPage() {
                   <EmptyState
                     icon={KeyRound}
                     title={providers.length === 0 ? '尚未配置 Provider' : '当前筛选没有结果'}
-                    description={providers.length === 0 ? '添加首个上游接入后，才能配置凭证和模型目录。' : '切换状态筛选以查看其他 Provider。'}
+                    description={providers.length === 0 ? '先从模板生成组织审查配置，重载或重启后再管理凭证与模型。' : '切换状态筛选以查看其他 Provider。'}
                     action={canManage && providers.length === 0 ? (
-                      <Button size="sm" onClick={openCreateProviderDialog}><Plus className="mr-2 h-4 w-4" />新增 Provider</Button>
+                      <Button size="sm" onClick={() => setActiveTab('templates')}><FileText className="mr-2 h-4 w-4" />查看接入模板</Button>
                     ) : undefined}
                   />
                 </CardContent>
@@ -993,11 +1117,13 @@ export function ModelsPage() {
             <Card>
               <CardContent className="flex items-center gap-3 p-4">
                 <div className="flex h-10 w-10 items-center justify-center rounded-md bg-amber-500/10 text-amber-600">
-                  <AlertTriangle className="h-5 w-5" />
+                  {canManage ? <AlertTriangle className="h-5 w-5" /> : <Route className="h-5 w-5" />}
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">需要关注</p>
-                  <p className="text-2xl font-semibold">{degradedProviders.length}</p>
+                  <p className="text-sm text-muted-foreground">{canManage ? '需要关注' : 'OpenAI-compatible'}</p>
+                  <p className="text-2xl font-semibold">
+                    {canManage ? degradedProviders.length : providers.filter((provider) => provider.protocol === 'openai-compat').length}
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -1057,8 +1183,12 @@ export function ModelsPage() {
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-2">
-                          <StatusBadge status={providerRuntimeState(provider)} />
-                          {providerNeedsRecharge(provider) && <Badge variant="warning">等待充值</Badge>}
+                          {canManage ? (
+                            <>
+                              <StatusBadge status={providerRuntimeState(provider)} />
+                              {providerNeedsRecharge(provider) && <Badge variant="warning">等待充值</Badge>}
+                            </>
+                          ) : <Badge variant="success">所选密钥可路由</Badge>}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -1083,17 +1213,7 @@ export function ModelsPage() {
             </div>
           </TableToolbar>
 
-          {aliasesError && aliases.length === 0 ? (
-            <Card>
-              <CardContent>
-                <ErrorState
-                  title="别名加载失败"
-                  message={errorMessage(aliasesError, '无法读取模型别名。')}
-                  onRetry={() => void refetchAliases()}
-                />
-              </CardContent>
-            </Card>
-          ) : <Card>
+          <Card>
             <CardContent className="p-0">
               <Table>
                 <TableHeader>
@@ -1147,7 +1267,7 @@ export function ModelsPage() {
                 onPageSizeChange={handleAliasPageSizeChange}
               />
             </CardFooter>
-          </Card>}
+          </Card>
         </TabsContent>
 
         <TabsContent value="routing" className="space-y-4">
@@ -1305,9 +1425,12 @@ export function ModelsPage() {
           <DialogHeader>
             <DialogTitle>{editingProvider ? '编辑供应商' : '新增供应商'}</DialogTitle>
             <DialogDescription>
-              供应商配置会写入控制面存储并立即参与运行时路由，无需重启后端。
+              结构配置会写入控制面；这里只保存 Secret 环境变量引用。新增或修改真实环境变量后必须重启 ModelPort，并通过连接测试后才可投产。
             </DialogDescription>
           </DialogHeader>
+          <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100">
+            生效顺序：保存引用 → 在部署环境注入 Secret → 重启 ModelPort → 回到 Provider 卡片运行“连接测试并发现模型”。保存表单本身不代表凭证可用。
+          </div>
           <ScrollArea className="max-h-[70vh] pr-3">
             <div className="grid gap-4 md:grid-cols-2">
               <FormSectionHeader
@@ -1356,7 +1479,7 @@ export function ModelsPage() {
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="默认 API Key 环境变量" htmlFor="provider-api-key-env" error={providerSubmitAttempted ? providerValidation.errors.apiKeyEnv : undefined} description="这里只保存变量名；清空会显式移除旧引用。">
+              <Field label="Secret 环境变量引用" htmlFor="provider-api-key-env" error={providerSubmitAttempted ? providerValidation.errors.apiKeyEnv : undefined} description="这里只保存变量名，不保存明文。清空会显式移除旧引用；新增或修改变量值后需重启进程。">
                 <Input
                   id="provider-api-key-env"
                   value={providerForm.apiKeyEnv}
@@ -1547,7 +1670,7 @@ export function ModelsPage() {
           <DialogHeader>
             <DialogTitle>{editingCredential ? '编辑上游账号' : '新增上游账号'}</DialogTitle>
             <DialogDescription>
-              账号只保存环境变量名；真实 API Key 仍放在 .env 或系统环境变量中。
+              账号只保存环境变量名；真实 API Key 仍放在 .env、容器 Secret 或系统环境变量中。保存后需重启并重新运行 Provider 连接测试。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -1998,16 +2121,22 @@ function ProviderCard({
   credentialBusy: boolean
   defaultModelMutationKey: string | null
 }) {
-  const credentialReady = provider.hasApiKey || !provider.apiKeyRequired
-  const routeReady = provider.status === 'active' && credentialReady
+  const credentials = provider.credentials ?? []
+  const credentialReady = provider.hasApiKey
+    || !provider.apiKeyRequired
+    || credentials.some((credential) => credential.status === 'active' && credential.hasApiKey)
   const lastTest = provider.lastTest
+  const connectionVerified = lastTest?.success === true
+  const routeReady = provider.status === 'active'
+    && credentialReady
+    && connectionVerified
+    && provider.models.length > 0
   const discoveredCount = lastTest?.modelCount ?? lastTest?.models?.length
   const defaultRoute = `${provider.id}:${provider.defaultModel}`
   const runtimeStatus = provider.runtimeStatus || provider.health?.status
   const modelListId = `provider-models-${provider.id}`
   const identity = providerIdentity(provider)
   const displayTitle = providerDisplayTitle(provider)
-  const credentials = provider.credentials ?? []
   const activeCredential = credentials.find((credential) => credential.active)
     ?? credentials.find((credential) => credential.id === provider.activeCredentialId)
     ?? null
@@ -2063,7 +2192,7 @@ function ProviderCard({
 
         <div className="flex flex-wrap gap-2">
           <Badge variant={routeReady ? 'success' : credentialReady ? 'secondary' : 'destructive'}>
-            {routeReady ? '配置已启用' : credentialReady ? '未激活' : '缺少密钥'}
+            {routeReady ? '连接已验证 · 可投产' : credentialReady ? '尚未验证投产' : '缺少密钥'}
           </Badge>
           {provider.fidelityMode && <Badge variant="outline">{fidelityModeLabel(provider.fidelityMode)}</Badge>}
           {provider.toolUse?.supported && <Badge variant="outline">Tool Use</Badge>}
@@ -2072,6 +2201,29 @@ function ProviderCard({
           )}
           {provider.toolUse && !provider.toolUse.parallelToolCalls && <Badge variant="secondary">单工具调用</Badge>}
           {provider.passthroughUnknownModels && <Badge variant="warning">透传未知模型</Badge>}
+        </div>
+
+        <div className="grid overflow-hidden rounded-md border bg-background sm:grid-cols-2 xl:grid-cols-4">
+          <ProviderActivationState
+            label="Secret 引用"
+            value={provider.apiKeyRequired ? (activeCredential?.apiKeyEnv || provider.apiKeyEnv || credentials[0]?.apiKeyEnv || '未配置') : '无需 API Key'}
+            ready={!provider.apiKeyRequired || Boolean(provider.apiKeyEnv) || credentials.length > 0}
+          />
+          <ProviderActivationState
+            label="当前进程解析"
+            value={credentialReady ? '已解析' : '未读取到 Secret'}
+            ready={credentialReady}
+          />
+          <ProviderActivationState
+            label="重启状态"
+            value={credentialReady ? '当前进程已有值' : '注入后必须重启'}
+            ready={credentialReady}
+          />
+          <ProviderActivationState
+            label="连接测试"
+            value={lastTest ? (lastTest.success ? '已通过' : '最近失败') : '尚未测试'}
+            ready={connectionVerified}
+          />
         </div>
 
         {provider.health?.recommendedAction && provider.health.failureKind !== 'none' && (
@@ -2275,7 +2427,7 @@ function ProviderCard({
             aria-label={`发现 ${displayTitle} 模型`}
           >
             {discovering ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-            {discovering ? '发现中' : '发现模型'}
+            {discovering ? '测试中' : '连接测试并发现模型'}
           </Button>}
           <Button
             variant="outline"
@@ -2303,10 +2455,16 @@ function ProviderCard({
           </Button>}
         </div>
 
+        {canManage && credentialReady && (
+          <p className="text-xs leading-5 text-muted-foreground">
+            连接测试会先读取模型目录，再向默认模型发送固定、无用户数据的最小请求；最多生成 1 Token，可能产生极小费用。
+          </p>
+        )}
+
         {!credentialReady && (
           <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>需要配置 {provider.apiKeyEnv || '供应商 API Key'} 后才能发现上游模型。</span>
+              <span>控制面只保存 Secret 引用。请在部署环境注入 {provider.apiKeyEnv || '供应商 API Key'} 并重启 ModelPort；当前进程解析成功后才能测试上游。</span>
           </div>
         )}
 
@@ -2322,11 +2480,14 @@ function ProviderCard({
             <div className="flex items-center gap-2 font-medium">
               {lastTest.success ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
               <span>
-                {lastTest.success ? `最近发现 ${discoveredCount ?? provider.models.length} 个模型，已合并到模型目录` : '上次发现失败'}
+                {lastTest.success ? `连接测试通过，发现 ${discoveredCount ?? provider.models.length} 个模型` : '最近一次连接测试失败'}
               </span>
               <span className="ml-auto text-xs font-normal opacity-75">{formatRelativeTime(lastTest.testedAt)}</span>
             </div>
             <p className="mt-1 line-clamp-2 text-xs opacity-85">{lastTest.message}</p>
+            {lastTest.testedCredentialId && (
+              <p className="mt-1 font-mono text-xs opacity-75">实际凭据：{lastTest.testedCredentialId}</p>
+            )}
           </div>
         )}
 
@@ -2488,6 +2649,28 @@ function InfoRow({ label, value, mono }: { label: string; value: string; mono?: 
     <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-3">
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className={cn('min-w-0 truncate text-xs', mono && 'font-mono')}>{value}</span>
+    </div>
+  )
+}
+
+function ProviderActivationState({
+  label,
+  value,
+  ready,
+}: {
+  label: string
+  value: string
+  ready: boolean
+}) {
+  return (
+    <div className="min-w-0 border-b px-3 py-2.5 last:border-b-0 sm:[&:nth-child(odd)]:border-r sm:[&:nth-last-child(-n+2)]:border-b-0 xl:border-b-0 xl:border-r xl:last:border-r-0">
+      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <div className="mt-1 flex min-w-0 items-center gap-1.5">
+        {ready
+          ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+          : <CircleAlert className="h-3.5 w-3.5 shrink-0 text-amber-600" />}
+        <span className="truncate text-xs font-medium" title={value}>{value}</span>
+      </div>
     </div>
   )
 }

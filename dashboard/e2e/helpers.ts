@@ -41,6 +41,9 @@ export async function login(page: Page, env = requireE2EEnv()) {
 }
 
 export async function seedFailedGatewayRequest(page: Page, env = requireE2EEnv()) {
+  // The E2E profile deliberately points the reviewed `custom` Provider at a
+  // closed loopback port. This creates a terminal ledger row without contacting
+  // a real or billable upstream and without weakening the Provider catalog gate.
   const response = await page.request.post('/v1/chat/completions', {
     headers: {
       Authorization: `Bearer ${env.authToken}`,

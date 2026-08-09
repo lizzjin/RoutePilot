@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { useAuditEvents, useExportBackup, useProviders, useReloadConfig, useRouterStatus, useSettings, useTestProviderConnection } from '@/hooks'
+import { useAuditEvents, useExportBackup, useNow, useProviders, useReloadConfig, useRouterStatus, useRunRetention, useSettings, useTestProviderConnection } from '@/hooks'
 import { useAuthStore } from '@/stores'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { StatusBadge } from '@/components/shared/StatusBadge'
@@ -30,11 +30,13 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import type { AuditEvent, BackupExport, Provider, SetupCheck, SmartRouterStatus, SystemSettings } from '@/types'
+import type { RetentionResult } from '@/services/settings.service'
 
 type ProviderTestResult = {
   success: boolean
   message: string
   testedAt: string
+  testedCredentialId?: string | null
   models?: string[]
   modelCount?: number
 }
@@ -66,6 +68,7 @@ function SettingsForm({ initialSettings }: { initialSettings: SystemSettings }) 
   const testConnection = useTestProviderConnection()
   const reloadConfig = useReloadConfig()
   const exportBackup = useExportBackup()
+  const runRetention = useRunRetention()
   const {
     data: routerStatus,
     isLoading: routerStatusLoading,
@@ -98,6 +101,8 @@ function SettingsForm({ initialSettings }: { initialSettings: SystemSettings }) 
   const [activeTab, setActiveTab] = useState<SettingsOperatorTab>('service')
   const [showReloadConfirm, setShowReloadConfirm] = useState(false)
   const [showExportConfirm, setShowExportConfirm] = useState(false)
+  const [showRetentionConfirm, setShowRetentionConfirm] = useState(false)
+  const [retentionResult, setRetentionResult] = useState<RetentionResult | null>(null)
 
   // Auto-dismiss notices after 5 seconds
   useEffect(() => {
@@ -177,6 +182,41 @@ function SettingsForm({ initialSettings }: { initialSettings: SystemSettings }) 
       onError: (error) => {
         setShowReloadConfirm(false)
         setNotice({ type: 'error', message: error instanceof Error ? error.message : '热加载失败' })
+      },
+    })
+  }
+
+  const handleRetention = (dryRun: boolean) => {
+    if (!canOperate) return
+    const previewToken = retentionResult?.previewToken || undefined
+    if (!dryRun && (!previewToken || !retentionResult?.previewExpiresAtMs || retentionResult.previewExpiresAtMs <= Date.now())) {
+      setShowRetentionConfirm(false)
+      setNotice({ type: 'error', message: '保留策略预览已失效，请重新预览后再执行。' })
+      return
+    }
+    setNotice(null)
+    runRetention.mutate({ dryRun, ...(!dryRun && previewToken ? { previewToken } : {}) }, {
+      onSuccess: (result) => {
+        setRetentionResult(result)
+        setShowRetentionConfirm(false)
+        const affected = Object.values(result.counts).reduce((sum, value) => sum + value, 0)
+        if (result.skippedReason === 'legal_hold') {
+          setNotice({ type: 'success', message: 'Legal hold 已启用；本次未修改任何数据。' })
+          return
+        }
+        setNotice({
+          type: 'success',
+          message: result.dryRun
+            ? `保留策略预览完成：${affected} 项记录将被处理`
+            : `保留策略已执行：处理 ${affected} 项记录`,
+        })
+      },
+      onError: (error) => {
+        setShowRetentionConfirm(false)
+        // The server consumes a valid apply token before mutation begins, even
+        // if storage returns an uncertain error. Never offer the same token again.
+        if (!dryRun) setRetentionResult(null)
+        setNotice({ type: 'error', message: error instanceof Error ? error.message : '保留策略执行失败' })
       },
     })
   }
@@ -406,6 +446,15 @@ function SettingsForm({ initialSettings }: { initialSettings: SystemSettings }) 
             </Card>
           </div>
 
+          <RetentionCard
+            className="mt-4"
+            result={retentionResult}
+            isPending={runRetention.isPending}
+            isDisabled={!canOperate}
+            onPreview={() => handleRetention(true)}
+            onApply={() => setShowRetentionConfirm(true)}
+          />
+
           <Card className="mt-4">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -449,6 +498,16 @@ function SettingsForm({ initialSettings }: { initialSettings: SystemSettings }) 
         confirmLabel="确认导出"
         isPending={exportBackup.isPending}
         onConfirm={handleExportBackup}
+      />
+
+      <OperationConfirmDialog
+        open={showRetentionConfirm}
+        onOpenChange={setShowRetentionConfirm}
+        title="执行数据保留策略"
+        description="此操作会按刚才预览的 30/90/395 天策略脱敏或删除符合条件的运维元数据，并写入审计记录。预算证据不会删除；操作不可撤销。"
+        confirmLabel="确认执行"
+        isPending={runRetention.isPending}
+        onConfirm={() => handleRetention(false)}
       />
     </div>
   )
@@ -807,6 +866,119 @@ function ConfigReloadCard({
   )
 }
 
+function RetentionCard({
+  className,
+  result,
+  isPending,
+  isDisabled,
+  onPreview,
+  onApply,
+}: {
+  className?: string
+  result: RetentionResult | null
+  isPending: boolean
+  isDisabled: boolean
+  onPreview: () => void
+  onApply: () => void
+}) {
+  const now = useNow(1_000)
+  const counts = result?.counts
+  const affected = counts ? Object.values(counts).reduce((sum, value) => sum + value, 0) : 0
+  const previewExpired = Boolean(result?.dryRun && result.previewExpiresAtMs && result.previewExpiresAtMs <= now)
+  const previewReady = Boolean(result?.dryRun && result.previewToken && !result.policy.legalHold && !previewExpired)
+
+  return (
+    <Card className={className}>
+      <CardHeader className="flex-col items-start justify-between gap-3 space-y-0 sm:flex-row">
+        <div>
+          <CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" />数据保留</CardTitle>
+          <CardDescription className="mt-2">先预览，再按 30 / 90 / 395 天策略处理运维元数据；ModelPort 不持久化提示词和响应正文。</CardDescription>
+        </div>
+        {result && (
+          <Badge variant={result.policy.legalHold ? 'warning' : result.applied ? 'success' : 'secondary'}>
+            {result.policy.legalHold ? 'Legal hold' : result.applied ? '已执行' : previewExpired ? '预览已过期' : '预览'}
+          </Badge>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-3">
+          <RuntimeFact
+            label="请求明细"
+            value={`${result?.policy.requestDetailDays ?? 30} 天`}
+            hint={result ? `截止 ${formatRetentionCutoff(result.requestDetailCutoffMs)}` : '脱敏身份、IP、错误与路由证据'}
+          />
+          <RuntimeFact
+            label="用户用量"
+            value={`${result?.policy.userUsageDays ?? 90} 天`}
+            hint={result ? `截止 ${formatRetentionCutoff(result.userUsageCutoffMs)}` : '去标识化用户级用量'}
+          />
+          <RuntimeFact
+            label="普通审计事件"
+            value={`${result?.policy.auditDays ?? 395} 天`}
+            hint={result ? `截止 ${formatRetentionCutoff(result.auditCutoffMs)}` : '删除普通治理事件，保留预算证据'}
+          />
+        </div>
+
+        {result && (
+          <div className="rounded-lg border bg-muted/30 p-4" role="status" aria-live="polite">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-medium">{result.dryRun ? '预览结果' : '执行结果'} · 共 {affected} 项</p>
+              <span className="text-xs text-muted-foreground">评估于 {new Date(result.evaluatedAtMs).toLocaleString()}</span>
+            </div>
+            <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-5">
+              <RetentionCount label="请求明细脱敏" value={result.counts.requestDetailsRedacted} />
+              <RetentionCount label="尝试记录脱敏" value={result.counts.providerAttemptsRedacted} />
+              <RetentionCount label="路由证据删除" value={result.counts.routingDecisionsDeleted} />
+              <RetentionCount label="用量去标识" value={result.counts.userUsageRowsDeidentified} />
+              <RetentionCount label="审计事件删除" value={result.counts.auditEventsDeleted} />
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              {result.policy.legalHold
+                ? 'Legal hold 已启用，预览和执行都不会修改数据。'
+                : result.immutableBudgetEventsRetained
+                  ? '追加式预算与计费证据始终保留。'
+                  : '预算证据保留状态未确认。'}
+            </p>
+            {result.dryRun && result.previewExpiresAtMs && (
+              <p className={previewExpired ? 'mt-2 text-xs text-destructive' : 'mt-2 text-xs text-muted-foreground'}>
+                {previewExpired
+                  ? '此预览已过期，执行已禁用；请重新预览。'
+                  : `执行令牌有效至 ${new Date(result.previewExpiresAtMs).toLocaleTimeString()}，实际执行固定使用本次预览的截止时间。`}
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+          <Button variant="outline" onClick={onPreview} disabled={isPending || isDisabled}>
+            {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            预览影响
+          </Button>
+          <Button onClick={onApply} disabled={isPending || isDisabled || !previewReady}>
+            执行保留策略
+          </Button>
+        </div>
+        {!result?.dryRun && !isDisabled && <p className="text-right text-xs text-muted-foreground">执行前必须重新完成一次预览。</p>}
+        {isDisabled && <p className="text-xs text-muted-foreground">需要管理员权限。</p>}
+      </CardContent>
+    </Card>
+  )
+}
+
+function RetentionCount({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-mono font-semibold">{value}</span>
+    </div>
+  )
+}
+
+function formatRetentionCutoff(value: number) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleDateString()
+}
+
 function AuditList({ events }: { events: AuditEvent[] }) {
   if (events.length === 0) {
     return <div className="rounded-md border py-10 text-center text-sm text-muted-foreground">暂无审计事件</div>
@@ -930,9 +1102,10 @@ function ProviderCredentialRow({
         <p className="font-mono text-xs text-muted-foreground">{apiKeyEnv}</p>
         <p className="max-w-[560px] truncate text-xs text-muted-foreground">{baseUrl}</p>
         {lastTest && (
-          <p className={lastTest.success ? 'text-xs text-green-700 dark:text-green-300' : 'text-xs text-red-700 dark:text-red-300'}>
-            {lastTest.message} · {formatTestTime(lastTest.testedAt)}
-          </p>
+          <div className={lastTest.success ? 'text-xs text-green-700 dark:text-green-300' : 'text-xs text-red-700 dark:text-red-300'}>
+            <p>{lastTest.message} · {formatTestTime(lastTest.testedAt)}</p>
+            {lastTest.testedCredentialId && <p className="font-mono opacity-80">实际凭据：{lastTest.testedCredentialId}</p>}
+          </div>
         )}
         {!lastTest && readiness && (
           <p className={readiness.level === 'ready' ? 'text-xs text-green-700 dark:text-green-300' : 'text-xs text-amber-700 dark:text-amber-300'}>

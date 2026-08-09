@@ -29,8 +29,10 @@ let mockProviderStore: Provider[] = mockProviders.map((provider) => ({
 }))
 
 export const modelsService = {
-  getProviders: (): Promise<Provider[]> =>
-    isMockMode ? mockDelay(mockProviderStore) : api.get('/admin/providers'),
+  getProviders: (apiKeyId?: string): Promise<Provider[]> =>
+    isMockMode
+      ? mockDelay(mockProviderStore)
+      : api.get(`/admin/providers${apiKeyId ? `?apiKeyId=${encodeURIComponent(apiKeyId)}` : ''}`),
 
   getProvider: async (id: string): Promise<Provider> => {
     const providers = isMockMode ? mockProviderStore : await api.get<Provider[]>('/admin/providers')
@@ -91,6 +93,7 @@ export const modelsService = {
       toolUse: payload.toolUse ?? current.toolUse,
       modelInventory: models.map((model) => ({ model, status: 'active', default: model === (payload.defaultModel ?? current.defaultModel) })),
       status: payload.disabled === undefined ? current.status : payload.disabled ? 'disabled' : 'active',
+      lastTest: null,
     }
     mockProviderStore = mockProviderStore.map((item) => item.id === providerId ? next : item)
     return mockDelay(next)
@@ -100,7 +103,7 @@ export const modelsService = {
     if (!isMockMode) return api.post(`/admin/providers/${encodeURIComponent(providerId)}/disable`, { disabled })
     const provider = mockProviderStore.find((item) => item.id === providerId)
     if (!provider) throw new Error('供应商不存在')
-    const next = { ...provider, status: disabled ? 'disabled' as const : 'active' as const }
+    const next = { ...provider, status: disabled ? 'disabled' as const : 'active' as const, lastTest: null }
     mockProviderStore = mockProviderStore.map((item) => item.id === providerId ? next : item)
     return mockDelay(next)
   },
@@ -127,6 +130,7 @@ export const modelsService = {
       testedAt: discoveredAt,
       success: true,
       message,
+      testedCredentialId: provider.activeCredentialId ?? null,
       models,
       modelCount: models.length,
     }
@@ -135,6 +139,7 @@ export const modelsService = {
       providerId,
       success: true,
       message,
+      testedCredentialId: provider.activeCredentialId ?? null,
       models,
       modelCount: models.length,
       discoveredAt,
@@ -181,7 +186,7 @@ export const modelsService = {
       contextWindow: payload.contextWindow,
       default: payload.model === provider.defaultModel,
     })
-    const next = { ...provider, models, modelInventory: inventory }
+    const next = { ...provider, models, modelInventory: inventory, lastTest: null }
     mockProviderStore = mockProviderStore.map((item) => item.id === providerId ? next : item)
     return mockDelay(next)
   },
@@ -200,6 +205,7 @@ export const modelsService = {
       ...provider,
       credentials: credentials.map((item) => ({ ...item, active: item.id === activeCredentialId })),
       activeCredentialId,
+      lastTest: null,
     }
     mockProviderStore = mockProviderStore.map((item) => item.id === providerId ? next : item)
     return mockDelay(next)
@@ -219,6 +225,7 @@ export const modelsService = {
       ...provider,
       activeCredentialId,
       credentials: credentials.map((item) => ({ ...item, active: item.id === activeCredentialId })),
+      lastTest: null,
     }
     mockProviderStore = mockProviderStore.map((item) => item.id === providerId ? next : item)
     return mockDelay(next)
@@ -238,6 +245,7 @@ export const modelsService = {
       ...provider,
       activeCredentialId: credentialId,
       credentials: (provider.credentials ?? []).map((item) => ({ ...item, active: item.id === credentialId })),
+      lastTest: null,
     }
     mockProviderStore = mockProviderStore.map((item) => item.id === providerId ? next : item)
     return mockDelay(next)
@@ -253,6 +261,7 @@ export const modelsService = {
     const next = {
       ...provider,
       credentialPoolMode: mode,
+      lastTest: null,
     }
     mockProviderStore = mockProviderStore.map((item) => item.id === providerId ? next : item)
     return mockDelay(next)
@@ -271,6 +280,7 @@ export const modelsService = {
       ...provider,
       activeCredentialId,
       credentials: credentials.map((item) => ({ ...item, active: item.id === activeCredentialId })),
+      lastTest: null,
     }
     mockProviderStore = mockProviderStore.map((item) => item.id === providerId ? next : item)
     return mockDelay(next)
@@ -289,13 +299,16 @@ export const modelsService = {
       defaultModel: model,
       models,
       modelInventory: (provider.modelInventory ?? []).map((item) => ({ ...item, default: item.model === model })),
+      lastTest: null,
     }
     mockProviderStore = mockProviderStore.map((item) => item.id === providerId ? next : item)
     return mockDelay(next)
   },
 
-  getAliases: (): Promise<ModelAlias[]> =>
-    isMockMode ? mockDelay(mockAliasStore) : api.get('/admin/aliases'),
+  getAliases: (apiKeyId?: string): Promise<ModelAlias[]> =>
+    isMockMode
+      ? mockDelay(mockAliasStore)
+      : api.get(`/admin/aliases${apiKeyId ? `?apiKeyId=${encodeURIComponent(apiKeyId)}` : ''}`),
 
   createAlias: (alias: Omit<ModelAlias, 'resolvedProvider' | 'resolvedModel'>): Promise<ModelAlias> => {
     if (!isMockMode) return api.post('/admin/aliases', alias)

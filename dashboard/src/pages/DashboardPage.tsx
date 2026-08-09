@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useDashboard, useLogs } from '@/hooks'
+import { useApiKeys, useDashboard, useLogs, useNow, useProviders, useSettings } from '@/hooks'
 import { useAuthStore } from '@/stores'
 import { MetricCard } from '@/components/shared/MetricCard'
 import { LoadingPage } from '@/components/shared/LoadingPage'
@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn, formatNumber, formatRelativeTime, formatLatency } from '@/lib/utils'
 import {
@@ -32,16 +33,21 @@ import {
   type TokenTrendPoint,
 } from '@/features/dashboard/dashboard-data'
 import type { DashboardRange } from '@/services/dashboard.service'
-import type { DashboardStats, RequestLog } from '@/types'
+import type { ApiKey, DashboardStats, Provider, RequestLog } from '@/types'
+import { buildOnboardingState, type OnboardingState } from '@/features/dashboard/onboarding'
+import { apiKeyAccessForRole } from '@/features/api-keys/api-key-access'
+import { apiKeyExpiryState } from '@/features/api-keys/api-key-view'
 import {
   Activity,
   ArrowRight,
   Box,
   CheckCircle2,
+  Circle,
   Database,
   Gauge,
   KeyRound,
   Layers,
+  Loader2,
   ScrollText,
   TriangleAlert,
   WalletCards,
@@ -120,6 +126,7 @@ function RangeSelector({
           type="button"
           size="sm"
           variant={value === option.value ? 'default' : 'outline'}
+          aria-pressed={value === option.value}
           className={cn(
             'h-8 rounded-lg text-xs',
             value === option.value && 'shadow-sm',
@@ -137,6 +144,7 @@ function RangeSelector({
             value={customFrom}
             onChange={(e) => onCustomFromChange(e.target.value)}
             aria-invalid={!!error}
+            aria-describedby={error ? 'dashboard-custom-range-error' : undefined}
             className="h-8 w-full text-xs sm:w-[160px]"
           />
           <span className="hidden text-xs text-muted-foreground sm:inline">至</span>
@@ -146,12 +154,13 @@ function RangeSelector({
             value={customTo}
             onChange={(e) => onCustomToChange(e.target.value)}
             aria-invalid={!!error}
+            aria-describedby={error ? 'dashboard-custom-range-error' : undefined}
             className="h-8 w-full text-xs sm:w-[160px]"
           />
         </div>
       )}
       </div>
-      {error && <p role="alert" className="max-w-lg text-xs text-destructive">{error}</p>}
+      {error && <p id="dashboard-custom-range-error" role="alert" className="max-w-lg text-xs text-destructive">{error}</p>}
     </div>
   )
 }
@@ -542,12 +551,23 @@ function RecentUsageCard({ logs }: { logs: RequestLog[] }) {
 }
 
 function QuickActionsCard() {
-  const isAdmin = useAuthStore((state) => state.currentUser?.role === 'admin')
+  const role = useAuthStore((state) => state.currentUser?.role)
+  const access = apiKeyAccessForRole(role)
   const actions = [
-    { to: '/api-keys', icon: KeyRound, title: '创建 API 密钥', desc: '生成新的 API 密钥' },
+    ...(access.canCreate || access.canEdit ? [{
+      to: '/api-keys',
+      icon: KeyRound,
+      title: access.isAdmin ? '创建 API 密钥' : access.canCreate ? '创建我的密钥' : '管理我的密钥',
+      desc: access.isAdmin ? '签发受限 API 密钥' : '只管理当前账号自己的密钥',
+    }] : []),
     { to: '/logs', icon: ScrollText, title: '查看使用记录', desc: '排查错误、成本和延迟' },
-    { to: '/models', icon: Layers, title: '管理模型路由', desc: '检查供应商和别名' },
-  ].filter((action) => isAdmin || action.to === '/logs')
+    {
+      to: '/models',
+      icon: Layers,
+      title: access.isAdmin ? '管理模型路由' : '查看模型目录',
+      desc: access.isAdmin ? '检查供应商和别名' : '复制当前可用模型名',
+    },
+  ]
 
   return (
     <Card className="h-full">
@@ -581,6 +601,144 @@ function QuickActionsCard() {
   )
 }
 
+function PersonalDashboard({
+  username,
+  providers,
+  logs,
+  apiKeys,
+  selectedApiKeyId,
+  onSelectApiKey,
+  catalogRefreshing,
+}: {
+  username?: string
+  providers: Provider[]
+  logs: RequestLog[]
+  apiKeys: ApiKey[]
+  selectedApiKeyId: string
+  onSelectApiKey: (apiKeyId: string) => void
+  catalogRefreshing: boolean
+}) {
+  const models = new Set(providers.flatMap((provider) => provider.models)).size
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">我的工作台</h1>
+        <p className="text-sm text-muted-foreground">
+          {username ? `${username}，` : ''}这里仅展示你的请求记录，以及所选密钥当前可访问的模型目录。
+        </p>
+      </div>
+      <Card>
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div>
+            <p className="text-sm font-medium">模型目录使用的 API Key</p>
+            <p className="mt-1 text-xs text-muted-foreground">服务端会应用该密钥的模型、Provider 与项目策略；IP 限制由实际客户端验证。</p>
+          </div>
+          {apiKeys.length > 0 ? (
+            <Select value={selectedApiKeyId} onValueChange={onSelectApiKey}>
+              <SelectTrigger className="w-full sm:w-[300px]" aria-label="选择工作台模型目录的 API 密钥">
+                <SelectValue placeholder="选择 API Key" />
+              </SelectTrigger>
+              <SelectContent>
+                {apiKeys.map((key) => (
+                  <SelectItem key={key.id} value={key.id}>
+                    {key.name}（{key.keyPreview || key.keyPrefix}）
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Button asChild size="sm" variant="outline"><Link to="/api-keys">创建或检查密钥</Link></Button>
+          )}
+        </CardContent>
+      </Card>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Card>
+          <CardContent className="flex items-center gap-3 p-5">
+            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <Layers className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">所选密钥可访问模型</p>
+              {catalogRefreshing ? (
+                <p className="mt-1 flex items-center gap-2 text-sm font-medium text-primary" role="status">
+                  <Loader2 className="h-4 w-4 animate-spin" />正在重新验证权限…
+                </p>
+              ) : (
+                <>
+                  <p className="text-2xl font-semibold">{formatNumber(models)}</p>
+                  <p className="text-xs text-muted-foreground">由服务端按密钥与项目策略计算</p>
+                </>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex items-center gap-3 p-5">
+            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600">
+              <ScrollText className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">已加载的最近记录</p>
+              <p className="text-2xl font-semibold">{formatNumber(logs.length)}</p>
+              <p className="text-xs text-muted-foreground">不包含其他用户的调用或管理活动</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <QuickActionsCard />
+        <RecentUsageCard logs={logs} />
+      </div>
+    </div>
+  )
+}
+
+function OnboardingChecklist({ state }: { state: OnboardingState }) {
+  return (
+    <Card className="overflow-hidden border-primary/30 bg-primary/[0.025]">
+      <CardHeader className="border-b pb-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-base">完成首次受治理请求</CardTitle>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              清单由当前运行状态自动判断；保存配置不等于凭证已解析或连接已验证。
+            </p>
+          </div>
+          <Badge variant="outline">{state.completed} / {state.total} 已完成</Badge>
+        </div>
+        <div
+          className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"
+          role="progressbar"
+          aria-label="接入进度"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={state.percent}
+        >
+          <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${state.percent}%` }} />
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-px bg-border p-0 sm:grid-cols-2 xl:grid-cols-3">
+        {state.steps.map((step, index) => (
+          <Link
+            key={step.id}
+            to={step.to}
+            className="group flex min-w-0 items-start gap-3 bg-card px-4 py-4 transition-colors hover:bg-muted/35"
+          >
+            {step.complete
+              ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+              : <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">{index + 1}. {step.title}</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">{step.detail}</p>
+            </div>
+            <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+          </Link>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
 function OperationalStat({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
     <div className="min-w-0 px-4 py-3 sm:px-5 sm:py-4">
@@ -596,6 +754,10 @@ function OperationalStat({ label, value, detail }: { label: string; value: strin
 // ---------------------------------------------------------------------------
 
 export function DashboardPage() {
+  const currentUser = useAuthStore((state) => state.currentUser)
+  const isAdmin = currentUser?.role === 'admin'
+  const catalogNow = useNow()
+  const [selectedCatalogKeyId, setSelectedCatalogKeyId] = useState('')
   const [trendRange, setTrendRange] = useState<DashboardRange>('1d')
   const [customFrom, setCustomFrom] = useState(() => toDateTimeLocal(Date.now() - DAY_MS))
   const [customTo, setCustomTo] = useState(() => toDateTimeLocal(Date.now()))
@@ -608,8 +770,42 @@ export function DashboardPage() {
     () => customRangeError(trendRange, customFrom, customTo),
     [customFrom, customTo, trendRange],
   )
-  const { data: stats, isLoading, isFetching, error, refetch, dataUpdatedAt } = useDashboard(dashboardParams)
-  const { data: logsData } = useLogs(undefined, 1, 5)
+  const { data: stats, isLoading, isFetching, error, refetch, dataUpdatedAt } = useDashboard(dashboardParams, isAdmin)
+  const {
+    data: apiKeys = [],
+    isLoading: apiKeysLoading,
+    isFetching: apiKeysFetching,
+    error: apiKeysError,
+    refetch: refetchApiKeys,
+  } = useApiKeys(!isAdmin)
+  const usableApiKeys = useMemo(() => apiKeys.filter((key) => (
+    key.status === 'active'
+    && apiKeyExpiryState(key, catalogNow) !== 'expired'
+    && (!key.ipRestricted || (key.allowedIps?.length ?? 0) > 0)
+  )), [apiKeys, catalogNow])
+  const activeCatalogKeyId = usableApiKeys.some((key) => key.id === selectedCatalogKeyId)
+    ? selectedCatalogKeyId
+    : usableApiKeys[0]?.id ?? ''
+  const {
+    data: logsData,
+    isLoading: logsLoading,
+    error: logsError,
+    refetch: refetchLogs,
+  } = useLogs(undefined, 1, 5)
+  const {
+    data: providers = [],
+    isLoading: providersLoading,
+    isFetching: providersFetching,
+    error: providersError,
+    refetch: refetchProviders,
+  } = useProviders(isAdmin ? undefined : activeCatalogKeyId, isAdmin || Boolean(activeCatalogKeyId))
+  const { data: settings } = useSettings(isAdmin)
+
+  const onboarding = useMemo(() => stats ? buildOnboardingState({
+    providers,
+    settings,
+    stats,
+  }) : null, [providers, settings, stats])
 
   // ---- Derived / memoized data ----
 
@@ -666,6 +862,37 @@ export function DashboardPage() {
   }, [stats])
 
   // ---- Loading / Error ----
+
+  if (!isAdmin) {
+    if (
+      apiKeysLoading
+      || logsLoading
+    ) {
+      return <LoadingPage />
+    }
+    const personalError = apiKeysError || logsError || providersError
+    if (personalError) {
+      return (
+        <ErrorState
+          message="个人工作台数据加载失败；为避免把旧权限显示为当前状态，已停止展示缓存数据。"
+          onRetry={() => {
+            void Promise.all([refetchApiKeys(), refetchLogs(), refetchProviders()])
+          }}
+        />
+      )
+    }
+    return (
+      <PersonalDashboard
+        username={currentUser?.username}
+        providers={providers}
+        logs={logsData?.logs ?? []}
+        apiKeys={usableApiKeys}
+        selectedApiKeyId={activeCatalogKeyId}
+        onSelectApiKey={setSelectedCatalogKeyId}
+        catalogRefreshing={apiKeysFetching || providersLoading || providersFetching}
+      />
+    )
+  }
 
   if (error && !stats) {
     return (
@@ -754,6 +981,10 @@ export function DashboardPage() {
             </>
           )}
         </div>
+      )}
+
+      {currentUser?.role === 'admin' && onboarding && !onboarding.complete && (
+        <OnboardingChecklist state={onboarding} />
       )}
 
       {/* ---------------------------------------------------------------- */}

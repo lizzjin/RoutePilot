@@ -90,7 +90,7 @@ const router = createBrowserRouter([
       { path: 'api-keys', element: lazyPage(<ApiKeysPage />) },
       { path: 'users', element: <RoleRoute roles={['admin']}>{lazyPage(<UsersPage />)}</RoleRoute> },
       { path: 'quotas', element: <RoleRoute roles={['admin']}>{lazyPage(<QuotasPage />)}</RoleRoute> },
-      { path: 'models', element: <RoleRoute roles={['admin']}>{lazyPage(<ModelsPage />)}</RoleRoute> },
+      { path: 'models', element: lazyPage(<ModelsPage />) },
       { path: 'logs', element: lazyPage(<LogsPage />) },
       { path: 'enterprise', element: <RoleRoute roles={['admin']}>{lazyPage(<EnterprisePage />)}</RoleRoute> },
       { path: 'governance', element: <RoleRoute roles={['admin']}>{lazyPage(<GovernancePage />)}</RoleRoute> },

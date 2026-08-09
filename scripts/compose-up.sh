@@ -25,6 +25,11 @@ declared_postgres_volume() {
   ' "$COMPOSE_FILE"
 }
 
+compose_has_service() {
+  docker compose -f "$COMPOSE_FILE" config --services \
+    | grep -Fxq "$1"
+}
+
 resolved_default_network() {
   docker compose -f "$COMPOSE_FILE" config \
     | awk '
@@ -53,31 +58,53 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<'USAGE'
 Usage: scripts/compose-up.sh [SERVICE ...]
 
-Starts or updates the local Compose deployment. If PostgreSQL is already
-running, a read-only major-version, volume, migration, and state check must pass
-before Compose may recreate any service.
+Starts or updates the selected Compose deployment. For a profile with the
+bundled PostgreSQL service, a read-only major-version, volume, migration, and
+state check must pass before Compose may recreate any service. An external-
+database profile skips that local-volume check; run its documented production
+preflight first.
+
+Set MODELPORT_COMPOSE_FILE to select a manifest; it defaults to the root
+source-build profile.
+
+Set MODELPORT_LOCAL_BUILD=1 after scripts/build-container.sh to use the local
+modelport:local and modelport-dashboard:local images without pulling GHCR.
 USAGE
   exit 0
 fi
 
-if [[ -n "$(docker compose -f "$COMPOSE_FILE" ps -q postgres)" ]]; then
-  "$ROOT_DIR/scripts/database-preflight.sh"
-else
-  project_name="$(declared_project_name)"
-  target_volume="$(declared_postgres_volume)"
-  [[ -n "$project_name" && -n "$target_volume" ]] \
-    || die "cannot determine the declared project/PostgreSQL volume"
-  expected_volume="${project_name}_${target_volume}"
-  legacy_volumes="$(
-    docker volume ls --format '{{.Name}}' \
-      | awk -v prefix="${project_name}_modelport-postgres" -v expected="$expected_volume" \
-          'index($0, prefix) == 1 && $0 != expected { print }'
-  )"
-  if [[ -n "$legacy_volumes" ]]; then
-    printf '[modelport-compose] legacy PostgreSQL volume(s) detected:\n%s\n' \
-      "$legacy_volumes" >&2
-    die "refusing a stopped-database major-version cutover; follow docs/POSTGRESQL_MIGRATION.md"
+if [[ "${MODELPORT_LOCAL_BUILD:-0}" == "1" ]]; then
+  for local_image in modelport:local modelport-dashboard:local; do
+    docker image inspect "$local_image" >/dev/null 2>&1 \
+      || die "missing $local_image; run scripts/build-container.sh first"
+  done
+  export MODELPORT_IMAGE=modelport:local
+  export MODELPORT_DASHBOARD_IMAGE=modelport-dashboard:local
+  export MODELPORT_PULL_POLICY=never
+fi
+
+if compose_has_service postgres; then
+  if [[ -n "$(docker compose -f "$COMPOSE_FILE" ps -q postgres)" ]]; then
+    "$ROOT_DIR/scripts/database-preflight.sh"
+  else
+    project_name="$(declared_project_name)"
+    target_volume="$(declared_postgres_volume)"
+    [[ -n "$project_name" && -n "$target_volume" ]] \
+      || die "cannot determine the declared project/PostgreSQL volume"
+    expected_volume="${project_name}_${target_volume}"
+    legacy_volumes="$(
+      docker volume ls --format '{{.Name}}' \
+        | awk -v prefix="${project_name}_modelport-postgres" -v expected="$expected_volume" \
+            'index($0, prefix) == 1 && $0 != expected { print }'
+    )"
+    if [[ -n "$legacy_volumes" ]]; then
+      printf '[modelport-compose] legacy PostgreSQL volume(s) detected:\n%s\n' \
+        "$legacy_volumes" >&2
+      die "refusing a stopped-database major-version cutover; follow docs/POSTGRESQL_MIGRATION.md"
+    fi
   fi
+else
+  printf '[modelport-compose] external PostgreSQL profile: local database-volume preflight skipped\n'
 fi
 
 ensure_default_network

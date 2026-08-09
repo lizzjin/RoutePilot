@@ -18,6 +18,13 @@ import pathlib
 import sys
 import tomllib
 
+PLACEHOLDER_MARKERS = ("replace", "placeholder", "todo", "example.com")
+
+
+def is_placeholder(value: str) -> bool:
+    normalized = value.strip().lower()
+    return not normalized or any(marker in normalized for marker in PLACEHOLDER_MARKERS)
+
 path = pathlib.Path(sys.argv[1])
 document = tomllib.loads(path.read_text(encoding="utf-8"))
 if document.get("schema_version") != 1:
@@ -26,9 +33,9 @@ if document.get("schema_version") != 1:
 platform = document.get("platform", {})
 owner = str(platform.get("owner", "")).strip()
 backups = [str(value).strip() for value in platform.get("backups", [])]
-if not owner or "replace" in owner.lower() or "todo" in owner.lower():
+if is_placeholder(owner):
     raise SystemExit("a named platform Owner is required")
-if not backups or any(not value for value in backups):
+if not backups or any(is_placeholder(value) for value in backups):
     raise SystemExit("at least one named platform Backup is required")
 if owner in backups:
     raise SystemExit("platform Owner and Backup must be different people")
@@ -40,7 +47,11 @@ required_coverage = (
     "primary_channel",
     "backup_channel",
 )
-missing = [key for key in required_coverage if not str(coverage.get(key, "")).strip()]
+missing = [
+    key
+    for key in required_coverage
+    if is_placeholder(str(coverage.get(key, "")))
+]
 if missing:
     raise SystemExit("ownership coverage is missing: " + ", ".join(missing))
 ack = coverage.get("acknowledgement_minutes")
@@ -49,7 +60,11 @@ if not isinstance(ack, int) or not 1 <= ack <= 60:
 
 escalation = document.get("escalation", {})
 required_escalation = ("database", "identity", "security", "cloud_billing")
-missing = [key for key in required_escalation if not str(escalation.get(key, "")).strip()]
+missing = [
+    key
+    for key in required_escalation
+    if is_placeholder(str(escalation.get(key, "")))
+]
 if missing:
     raise SystemExit("ownership escalation is missing: " + ", ".join(missing))
 

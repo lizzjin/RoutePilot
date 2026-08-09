@@ -250,7 +250,8 @@ pub fn anthropic_error_event(error: &AppError) -> Result<Event, AppError> {
         | AppError::IdempotencyConflict(_)
         | AppError::StateConflict(_)
         | AppError::NotFound(_)
-        | AppError::ProviderNotFound(_) => "invalid_request_error",
+        | AppError::ProviderNotFound(_)
+        | AppError::PricingUnverified(_) => "invalid_request_error",
         AppError::Auth => "authentication_error",
         AppError::Forbidden(_) => "permission_error",
         AppError::QuotaExceeded(_) | AppError::RateLimited { .. } => "rate_limit_error",
@@ -271,7 +272,7 @@ pub fn anthropic_error_event(error: &AppError) -> Result<Event, AppError> {
             "type": "error",
             "error": {
                 "type": kind,
-                "message": error.to_string()
+                "message": error.client_message()
             }
         }),
     )

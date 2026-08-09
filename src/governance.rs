@@ -357,6 +357,18 @@ impl GovernanceStore {
             .collect()
     }
 
+    pub(crate) fn has_policy(&self, tenant: &TenantScope) -> bool {
+        self.inner
+            .lock()
+            .expect("governance lock poisoned")
+            .project_policies
+            .contains_key(&policy_key(
+                tenant.organization_id.as_str(),
+                tenant.project_id.as_str(),
+                tenant.environment_id.as_str(),
+            ))
+    }
+
     pub(crate) fn list_change_requests(&self) -> Vec<ChangeRequest> {
         self.inner
             .lock()
@@ -444,16 +456,29 @@ impl GovernanceStore {
     }
 
     pub(crate) fn approved_change(&self, request_id: &str) -> Result<ChangeRequest, AppError> {
+        self.change_for_application(request_id, true)
+    }
+
+    pub(crate) fn change_for_application(
+        &self,
+        request_id: &str,
+        require_dual_approval: bool,
+    ) -> Result<ChangeRequest, AppError> {
         let inner = self.inner.lock().expect("governance lock poisoned");
         let request = inner
             .change_requests
             .get(request_id)
             .cloned()
             .ok_or_else(|| AppError::NotFound("change request not found".to_owned()))?;
-        if request.status != "approved" || request.approvals.len() < 2 {
-            return Err(AppError::Forbidden(
-                "high-risk change requires two distinct administrator approvals".to_owned(),
-            ));
+        let minimum_approvals = if require_dual_approval { 2 } else { 1 };
+        let status_allows_application = request.status == "approved"
+            || (!require_dual_approval && request.status == "pending_second_approval");
+        if !status_allows_application || request.approvals.len() < minimum_approvals {
+            return Err(AppError::Forbidden(if require_dual_approval {
+                "high-risk change requires two distinct administrator approvals".to_owned()
+            } else {
+                "change request requires an administrator approval before application".to_owned()
+            }));
         }
         Ok(request)
     }
@@ -479,16 +504,29 @@ impl GovernanceStore {
     }
 
     pub(crate) fn mark_change_applied(&self, request_id: &str) -> Result<(), AppError> {
+        self.mark_change_applied_for_mode(request_id, true)
+    }
+
+    pub(crate) fn mark_change_applied_for_mode(
+        &self,
+        request_id: &str,
+        require_dual_approval: bool,
+    ) -> Result<(), AppError> {
         let mut inner = self.inner.lock().expect("governance lock poisoned");
         let previous = inner.clone();
         let request = inner
             .change_requests
             .get_mut(request_id)
             .ok_or_else(|| AppError::NotFound("change request not found".to_owned()))?;
-        if request.status != "approved" || request.approvals.len() < 2 {
-            return Err(AppError::Forbidden(
-                "high-risk change requires two distinct administrator approvals".to_owned(),
-            ));
+        let minimum_approvals = if require_dual_approval { 2 } else { 1 };
+        let status_allows_application = request.status == "approved"
+            || (!require_dual_approval && request.status == "pending_second_approval");
+        if !status_allows_application || request.approvals.len() < minimum_approvals {
+            return Err(AppError::Forbidden(if require_dual_approval {
+                "high-risk change requires two distinct administrator approvals".to_owned()
+            } else {
+                "change request requires an administrator approval before application".to_owned()
+            }));
         }
         request.status = "applied".to_owned();
         request.applied_at_ms = Some(now_millis());
@@ -500,8 +538,9 @@ impl GovernanceStore {
         &self,
         request_id: &str,
         actor_id: &str,
+        require_dual_approval: bool,
     ) -> Result<ProjectPolicy, AppError> {
-        let request = self.approved_change(request_id)?;
+        let request = self.change_for_application(request_id, require_dual_approval)?;
         if request.action != "project_policy.upsert" {
             return Err(AppError::InvalidRequest(
                 "change request is not a project policy update".to_owned(),
@@ -1158,6 +1197,45 @@ mod tests {
             .unwrap();
         assert_eq!(approved.status, "approved");
         assert_eq!(approved.approvals.len(), 2);
+    }
+
+    #[test]
+    fn small_team_mode_can_apply_an_audited_project_policy_with_one_administrator() {
+        let store = GovernanceStore::for_tests();
+        let tenant = tenant();
+        let payload = json!({
+            "organizationId": tenant.organization_id.as_str(),
+            "projectId": tenant.project_id.as_str(),
+            "environmentId": tenant.environment_id.as_str(),
+            "maximumMode": "cloud_first",
+            "defaultClassification": "internal",
+            "allowedProviders": ["deepseek"],
+            "allowedModels": ["deepseek-v4-flash"],
+            "allowedRegions": ["global"],
+            "allowedApiVersions": ["anthropic-v1"],
+            "cloudEnabled": true
+        });
+        let change = store
+            .create_change_request(
+                "usr_admin",
+                "admin",
+                ChangeRequestInput {
+                    action: "project_policy.upsert".to_owned(),
+                    target: "org_local/prj_default/env_default".to_owned(),
+                    payload,
+                    reason: "enable the reviewed default cloud route".to_owned(),
+                },
+            )
+            .unwrap();
+
+        assert!(store.change_for_application(&change.id, true).is_err());
+        let policy = store
+            .apply_project_policy(&change.id, "usr_admin", false)
+            .unwrap();
+
+        assert!(policy.cloud_enabled);
+        assert_eq!(policy.maximum_mode, HybridMode::CloudFirst);
+        assert_eq!(store.effective_policy(&tenant), policy);
     }
 
     #[tokio::test]

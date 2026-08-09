@@ -38,7 +38,16 @@ pub async fn chat_completions(
 
     if request.stream {
         let include_usage = request.include_stream_usage();
-        let frames = state.transport.post_json_sse(url, headers, body).await?;
+        let frames = state
+            .transport
+            .post_json_sse(
+                &resolved.provider_id,
+                state.security.allow_private_provider_urls(),
+                url,
+                headers,
+                body,
+            )
+            .await?;
         let events = anthropic_stream_to_openai(
             frames,
             request.requested_model.clone(),
@@ -49,7 +58,16 @@ pub async fn chat_completions(
             .keep_alive(KeepAlive::default())
             .into_response())
     } else {
-        let upstream = state.transport.post_json(&url, &headers, &body).await?;
+        let upstream = state
+            .transport
+            .post_json(
+                &resolved.provider_id,
+                state.security.allow_private_provider_urls(),
+                &url,
+                &headers,
+                &body,
+            )
+            .await?;
         let usage = pricing::anthropic_usage_if_present(&upstream);
         let converted = anthropic_response_to_openai(&upstream, &request.requested_model)?;
         stream_lifecycle.observe_openai_response(&converted);
@@ -94,7 +112,16 @@ pub async fn messages(
     let url = resolved.provider.endpoint("/v1/messages");
 
     if request.stream.unwrap_or(false) {
-        let frames = state.transport.post_json_sse(url, headers, body).await?;
+        let frames = state
+            .transport
+            .post_json_sse(
+                &resolved.provider_id,
+                state.security.allow_private_provider_urls(),
+                url,
+                headers,
+                body,
+            )
+            .await?;
         let events: Pin<Box<dyn Stream<Item = Result<Event, AppError>> + Send>> =
             Box::pin(normalize_anthropic_stream(
                 frames,
@@ -105,7 +132,16 @@ pub async fn messages(
             .keep_alive(KeepAlive::default())
             .into_response())
     } else {
-        let response = state.transport.post_json(&url, &headers, &body).await?;
+        let response = state
+            .transport
+            .post_json(
+                &resolved.provider_id,
+                state.security.allow_private_provider_urls(),
+                &url,
+                &headers,
+                &body,
+            )
+            .await?;
         let usage = pricing::anthropic_usage_if_present(&response);
         stream_lifecycle.observe_anthropic_response(&response);
         let mut response = Json(response).into_response();

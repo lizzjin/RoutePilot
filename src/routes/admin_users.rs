@@ -16,7 +16,7 @@ pub(super) async fn admin_users(
     let actor = require_console_user(&state, &headers)?;
     let usage = state.ledger.management_usage().await?;
     let mut users = state.auth.list_users(0);
-    if actor.role == "user" {
+    if actor.role != "admin" {
         users.retain(|user| user.id == actor.id);
     }
     for user in &mut users {
@@ -48,7 +48,7 @@ pub(super) async fn admin_create_user(
     let user = tokio::task::spawn_blocking(move || auth.create_user(body))
         .await
         .map_err(|error| AppError::Config(format!("password worker failed: {error}")))??;
-    state.governance.mark_change_applied(&approval_id)?;
+    mark_high_risk_change_applied(&state, approval_id.as_deref())?;
     record_admin_activity(
         &state,
         &actor,
@@ -69,7 +69,7 @@ pub(super) async fn admin_update_user(
 ) -> Result<Json<Value>, AppError> {
     let current_user = require_admin_write_user(&state, &headers)?;
     let approval_id = if body.role.is_some() || body.status.is_some() {
-        Some(require_high_risk_change(
+        require_high_risk_change(
             &state,
             &headers,
             "identity.permission",
@@ -78,7 +78,7 @@ pub(super) async fn admin_update_user(
                 "role": body.role.clone(),
                 "status": body.status.clone(),
             }),
-        )?)
+        )?
     } else {
         None
     };
@@ -103,9 +103,7 @@ pub(super) async fn admin_update_user(
     if user.status != "active" {
         state.control.delete_user_resources(&user.id)?;
     }
-    if let Some(approval_id) = approval_id {
-        state.governance.mark_change_applied(&approval_id)?;
-    }
+    mark_high_risk_change_applied(&state, approval_id.as_deref())?;
     record_admin_activity(
         &state,
         &current_user,
@@ -133,7 +131,7 @@ pub(super) async fn admin_delete_user(
     )?;
     state.auth.delete_user(&user_id, &current_user.id)?;
     state.control.delete_user_resources(&user_id)?;
-    state.governance.mark_change_applied(&approval_id)?;
+    mark_high_risk_change_applied(&state, approval_id.as_deref())?;
     record_admin_activity(
         &state,
         &current_user,

@@ -22,7 +22,8 @@ use crate::{
     control::{UsageEstimate, UsageEventInput},
     domain::{AttemptId, RequestContext, RequestId},
     enterprise_ledger::{
-        LedgerAttempt, LedgerLease, LedgerOutcome, LedgerRequest, LedgerRequestMetadata,
+        AttemptPricingEvidence, LedgerAttempt, LedgerLease, LedgerOutcome, LedgerRequest,
+        LedgerRequestMetadata,
     },
     exchange::{ClientRequest, ExchangeRequest, OpenAiChatRequest},
     governance::{
@@ -44,24 +45,47 @@ use super::*;
 
 pub(super) async fn models(
     State(state): State<AppState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let started = Instant::now();
     let result = (|| {
         let identity = authenticate_client(&state, &headers)?;
+        let request_client_ip = client_ip(&headers, Some(peer_addr), &state.trusted_proxies);
+        identity
+            .api_key_policy
+            .enforce_client_ip(request_client_ip.as_deref())?;
         let tenant = state.control.tenant_scope(&identity)?;
         let policy = state.governance.effective_policy(&tenant);
         let config = effective_config(&state);
-        let data = public_model_rows(&config)
+        let api_key_policy = identity
+            .api_key_id
+            .as_ref()
+            .map(|_| &identity.api_key_policy);
+        let data = catalog_model_rows(&config)
             .into_iter()
             .filter(|row| {
                 let Some(model) = row.get("id").and_then(Value::as_str) else {
                     return false;
                 };
+                if config.smart_route_group(model).is_some() {
+                    return !super::provider_view::catalog_smart_alias_candidates(
+                        &state,
+                        &config,
+                        model,
+                        api_key_policy,
+                        &policy,
+                    )
+                    .is_empty();
+                }
                 config.resolve(model).is_ok_and(|resolved| {
-                    policy.enforce_attempt(&resolved).is_ok()
-                        && (policy.cloud_enabled
-                            || ProviderBoundary::for_resolved(&resolved) == ProviderBoundary::Local)
+                    super::provider_view::catalog_candidate_is_allowed(
+                        &state,
+                        api_key_policy,
+                        &policy,
+                        model,
+                        &resolved,
+                    )
                 })
             })
             .collect::<Vec<_>>();
@@ -98,7 +122,16 @@ pub(super) async fn effective_policy(
     })))
 }
 
+#[cfg(test)]
 pub(super) fn public_model_rows(config: &AppConfig) -> Vec<Value> {
+    build_public_model_rows(config, true)
+}
+
+fn catalog_model_rows(config: &AppConfig) -> Vec<Value> {
+    build_public_model_rows(config, false)
+}
+
+fn build_public_model_rows(config: &AppConfig, require_static_credential: bool) -> Vec<Value> {
     let mut seen = BTreeSet::new();
     let mut models = Vec::new();
 
@@ -106,7 +139,7 @@ pub(super) fn public_model_rows(config: &AppConfig) -> Vec<Value> {
         let Some(provider) = config.providers.get(id) else {
             continue;
         };
-        if !provider_is_configured(provider) {
+        if require_static_credential && !provider_is_configured(provider) {
             continue;
         }
 
@@ -130,7 +163,7 @@ pub(super) fn public_model_rows(config: &AppConfig) -> Vec<Value> {
         let Ok(resolved) = config.resolve(alias) else {
             continue;
         };
-        if !provider_is_configured(&resolved.provider) {
+        if require_static_credential && !provider_is_configured(&resolved.provider) {
             continue;
         }
         if seen.insert(alias.clone()) {
@@ -171,6 +204,7 @@ struct SentAttempt {
     provider_id: String,
     model: String,
     protocol: String,
+    boundary: ProviderBoundary,
     credential_id: Option<String>,
     estimate: UsageEstimate,
     pricing: Option<ModelPricing>,
@@ -319,6 +353,7 @@ async fn count_tokens_inner(
     headers: &HeaderMap,
     request: AnthropicCountTokensRequest,
 ) -> Result<Json<Value>, AppError> {
+    ensure_accepting_inference(&state)?;
     let identity = authenticate_client(&state, headers)?;
     validate_count_tokens_request(&request)?;
     let requested_model = request.model.clone();
@@ -389,7 +424,7 @@ async fn count_tokens_inner(
     )?;
     state
         .ledger
-        .check_usage_policy(&usage_policy, UsageEstimate::default())
+        .check_usage_policy(&usage_policy, UsageEstimate::default(), true)
         .await?;
     state
         .control
@@ -397,11 +432,12 @@ async fn count_tokens_inner(
             &resolved.provider_id,
             &mut resolved.provider,
         )?;
-    crate::config::validate_provider_base_url_for_request(
+    crate::config::validate_provider_base_url_dns_for_request(
         &resolved.provider_id,
         &resolved.provider.base_url,
         state.security.allow_private_provider_urls,
-    )?;
+    )
+    .await?;
     if resolved.provider.api_key_required {
         let _ = resolved.provider.api_key()?;
     }
@@ -435,6 +471,11 @@ async fn handle_inference(
 ) -> Result<Response, AppError> {
     let started = Instant::now();
     let route_name = request.route_name();
+    if let Err(error) = ensure_accepting_inference(&state) {
+        return Err(record_inference_rejection(
+            &state, route_name, "draining", error, started,
+        ));
+    }
     let identity = match authenticate_client(&state, &headers) {
         Ok(identity) => identity,
         Err(err) => {
@@ -764,6 +805,7 @@ async fn handle_inference(
                 tool_use_requested: exchange.uses_tools(),
                 username: identity.username.clone(),
                 api_key_id: identity.api_key_id.clone(),
+                quota_subject_id: identity.quota_subject_id.clone(),
                 api_key_name: identity.api_key_name.clone(),
                 api_key_group: identity.api_key_group.clone(),
                 team_id: identity.team_id.clone(),
@@ -875,6 +917,7 @@ async fn handle_inference(
                 continue;
             }
         };
+        let pricing_verified = attempt.provider.pricing.is_some();
         let estimate = estimate_usage(&exchange, &upstream_model, attempt.provider.pricing);
         let usage_policy = match state.control.check_quotas(
             &identity,
@@ -889,15 +932,7 @@ async fn handle_inference(
                 continue;
             }
         };
-        if let Err(err) = state
-            .ledger
-            .check_usage_policy(&usage_policy, estimate)
-            .await
-        {
-            result = Err(err);
-            continue;
-        }
-        if let Err(err) = validate_inference_attempt(&state, &attempt, &exchange) {
+        if let Err(err) = validate_inference_attempt(&state, &attempt, &exchange).await {
             result = Err(err);
             continue;
         }
@@ -910,13 +945,17 @@ async fn handle_inference(
         }
         let ledger_attempt = match state
             .ledger
-            .begin_attempt(
+            .begin_attempt_with_pricing(
                 &ledger_request,
                 &attempt_id,
                 &provider_id,
                 &upstream_model,
                 &protocol,
-                estimate,
+                AttemptPricingEvidence {
+                    estimate,
+                    verified: pricing_verified,
+                    usage_policy: &usage_policy,
+                },
             )
             .await
         {
@@ -949,6 +988,7 @@ async fn handle_inference(
             provider_id: provider_id.clone(),
             model: upstream_model.clone(),
             protocol: protocol.clone(),
+            boundary: attempt_boundary,
             credential_id: credential_id.clone(),
             estimate,
             pricing: attempt.provider.pricing,
@@ -1176,14 +1216,24 @@ async fn handle_inference(
         fallback_from_provider,
         error_message,
     };
+    let cloud_egress = last_sent
+        .as_ref()
+        .is_some_and(|sent| sent.boundary == ProviderBoundary::Cloud);
 
     if stream && success {
         let mut response = result.expect("successful stream result must contain a response");
         attach_routing_response_headers(
             &mut response,
-            &routing_decision_id,
-            &routing_mode,
-            hybrid_mode,
+            &RoutingResponseEvidence {
+                request_id: request_context.request_id.as_str(),
+                logical_model: &requested_model,
+                provider_id: &usage.provider,
+                resolved_model: &usage.resolved_model,
+                decision_id: &routing_decision_id,
+                mode: &routing_mode,
+                hybrid_mode,
+                cloud_egress,
+            },
         )?;
         let permit = stream_permit.expect("stream request must hold a stream permit");
         let sent = last_sent.expect("successful stream must have a sent attempt");
@@ -1235,15 +1285,34 @@ async fn handle_inference(
             "failed to finalize request ledger row"
         );
     }
-    if let Ok(response) = &mut result {
-        attach_routing_response_headers(
-            response,
-            &routing_decision_id,
-            &routing_mode,
+    let mut response = match result {
+        Ok(response) => response,
+        Err(error) => error.into_response(),
+    };
+    attach_routing_response_headers(
+        &mut response,
+        &RoutingResponseEvidence {
+            request_id: request_context.request_id.as_str(),
+            logical_model: &requested_model,
+            provider_id: &usage.provider,
+            resolved_model: &usage.resolved_model,
+            decision_id: &routing_decision_id,
+            mode: &routing_mode,
             hybrid_mode,
-        )?;
+            cloud_egress,
+        },
+    )?;
+    Ok(response)
+}
+
+fn ensure_accepting_inference(state: &AppState) -> Result<(), AppError> {
+    if state.is_draining() {
+        Err(AppError::NotReady(
+            "gateway is draining and is not accepting new inference requests".to_owned(),
+        ))
+    } else {
+        Ok(())
     }
-    result
 }
 
 fn record_inference_rejection(
@@ -1338,11 +1407,12 @@ async fn enforce_context_admission(
             &counting_provider.provider_id,
             &mut counting_provider.provider,
         )?;
-    crate::config::validate_provider_base_url_for_request(
+    crate::config::validate_provider_base_url_dns_for_request(
         &counting_provider.provider_id,
         &counting_provider.provider.base_url,
         state.security.allow_private_provider_urls,
-    )?;
+    )
+    .await?;
     if counting_provider.provider.api_key_required {
         let _ = counting_provider.provider.api_key()?;
     }
@@ -1852,16 +1922,17 @@ async fn send_inference_attempt(
     }
 }
 
-fn validate_inference_attempt(
+async fn validate_inference_attempt(
     state: &AppState,
     resolved: &ResolvedProvider,
     request: &ExchangeRequest,
 ) -> Result<(), AppError> {
-    crate::config::validate_provider_base_url_for_request(
+    crate::config::validate_provider_base_url_dns_for_request(
         &resolved.provider_id,
         &resolved.provider.base_url,
         state.security.allow_private_provider_urls,
-    )?;
+    )
+    .await?;
     if resolved.provider.api_key_required {
         let _ = resolved.provider.api_key()?;
     }
@@ -1905,26 +1976,78 @@ fn request_routing_header(
     Ok(Some(value.to_owned()))
 }
 
+struct RoutingResponseEvidence<'a> {
+    request_id: &'a str,
+    logical_model: &'a str,
+    provider_id: &'a str,
+    resolved_model: &'a str,
+    decision_id: &'a str,
+    mode: &'a str,
+    hybrid_mode: HybridMode,
+    cloud_egress: bool,
+}
+
 fn attach_routing_response_headers(
     response: &mut Response,
-    decision_id: &str,
-    mode: &str,
-    hybrid_mode: HybridMode,
+    evidence: &RoutingResponseEvidence<'_>,
 ) -> Result<(), AppError> {
+    insert_safe_response_header(response, &X_REQUEST_ID, evidence.request_id, "request ID")?;
+    insert_safe_response_header(
+        response,
+        &LOGICAL_MODEL,
+        evidence.logical_model,
+        "logical model",
+    )?;
+    insert_safe_response_header(
+        response,
+        &RESOLVED_PROVIDER,
+        evidence.provider_id,
+        "resolved provider",
+    )?;
+    insert_safe_response_header(
+        response,
+        &RESOLVED_MODEL,
+        evidence.resolved_model,
+        "resolved model",
+    )?;
     response.headers_mut().insert(
         ROUTING_DECISION_ID.clone(),
-        axum::http::HeaderValue::from_str(decision_id)
+        axum::http::HeaderValue::from_str(evidence.decision_id)
             .map_err(|_| AppError::Config("invalid routing decision ID".to_owned()))?,
     );
     response.headers_mut().insert(
         ROUTING_MODE.clone(),
-        axum::http::HeaderValue::from_str(mode)
+        axum::http::HeaderValue::from_str(evidence.mode)
             .map_err(|_| AppError::Config("invalid routing mode".to_owned()))?,
     );
     response.headers_mut().insert(
         EXECUTION_MODE.clone(),
-        axum::http::HeaderValue::from_static(hybrid_mode.as_str()),
+        axum::http::HeaderValue::from_static(evidence.hybrid_mode.as_str()),
     );
+    response.headers_mut().insert(
+        ROUTING_POLICY.clone(),
+        axum::http::HeaderValue::from_static(evidence.hybrid_mode.as_str()),
+    );
+    response.headers_mut().insert(
+        CLOUD_EGRESS.clone(),
+        axum::http::HeaderValue::from_static(if evidence.cloud_egress {
+            "true"
+        } else {
+            "false"
+        }),
+    );
+    Ok(())
+}
+
+fn insert_safe_response_header(
+    response: &mut Response,
+    name: &axum::http::HeaderName,
+    value: &str,
+    label: &str,
+) -> Result<(), AppError> {
+    let value = axum::http::HeaderValue::from_str(value)
+        .map_err(|_| AppError::Config(format!("invalid {label} response metadata")))?;
+    response.headers_mut().insert(name.clone(), value);
     Ok(())
 }
 

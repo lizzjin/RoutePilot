@@ -42,7 +42,16 @@ pub async fn input_tokens(
             )
         }
     };
-    let upstream = state.transport.post_json(&url, &headers, &body).await?;
+    let upstream = state
+        .transport
+        .post_json(
+            &resolved.provider_id,
+            state.security.allow_private_provider_urls(),
+            &url,
+            &headers,
+            &body,
+        )
+        .await?;
     let input_tokens = upstream
         .get("input_tokens")
         .and_then(Value::as_u64)

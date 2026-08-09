@@ -8,6 +8,9 @@ use crate::control::UsageEstimate;
 
 const MAX_MESSAGE_SERIES: usize = 512;
 const TRAFFIC_CLASS_COUNT: usize = 3;
+const MESSAGE_LATENCY_BUCKETS_MS: [u64; 10] = [
+    100, 250, 500, 1_000, 2_500, 5_000, 10_000, 30_000, 60_000, 120_000,
+];
 const OVERFLOW_PROVIDER_LABEL: &str = "__overflow__";
 const OVERFLOW_MODEL_LABEL: &str = "__other__";
 const OVERFLOW_TRAFFIC_LABEL: &str = "__overflow__";
@@ -55,6 +58,14 @@ struct MetricsInner {
     routing_shadow_disagreements_total: u64,
     reconciled_requests_total: u64,
     reconciled_attempts_total: u64,
+    message_latency: LatencyHistogram,
+}
+
+#[derive(Debug, Default)]
+struct LatencyHistogram {
+    cumulative_buckets: [u64; MESSAGE_LATENCY_BUCKETS_MS.len()],
+    count: u64,
+    sum_ms: u64,
 }
 
 #[derive(Debug, Default)]
@@ -137,6 +148,7 @@ impl Metrics {
                 | "admission"
                 | "concurrency"
                 | "ledger"
+                | "draining"
         ));
         let mut inner = self.inner.lock().expect("metrics lock poisoned");
         let count = inner
@@ -158,6 +170,7 @@ impl Metrics {
         usage: UsageEstimate,
     ) {
         let mut inner = self.inner.lock().expect("metrics lock poisoned");
+        inner.message_latency.record(duration);
         let mut key = MessageKey {
             provider: labels.provider.to_owned(),
             model: labels.model.to_owned(),
@@ -341,6 +354,29 @@ impl Metrics {
         output.push('\n');
 
         output.push_str(
+            "# HELP modelport_message_latency_ms End-to-end inference request latency in milliseconds.\n",
+        );
+        output.push_str("# TYPE modelport_message_latency_ms histogram\n");
+        for (index, upper_bound) in MESSAGE_LATENCY_BUCKETS_MS.iter().enumerate() {
+            output.push_str(&format!(
+                "modelport_message_latency_ms_bucket{{le=\"{upper_bound}\"}} {}\n",
+                inner.message_latency.cumulative_buckets[index]
+            ));
+        }
+        output.push_str(&format!(
+            "modelport_message_latency_ms_bucket{{le=\"+Inf\"}} {}\n",
+            inner.message_latency.count
+        ));
+        output.push_str(&format!(
+            "modelport_message_latency_ms_sum {}\n",
+            inner.message_latency.sum_ms
+        ));
+        output.push_str(&format!(
+            "modelport_message_latency_ms_count {}\n\n",
+            inner.message_latency.count
+        ));
+
+        output.push_str(
             "# HELP modelport_ledger_operation_failures_total Ledger operation failures by bounded operation.\n",
         );
         output.push_str("# TYPE modelport_ledger_operation_failures_total counter\n");
@@ -444,6 +480,19 @@ impl UsageCounterSet {
     }
 }
 
+impl LatencyHistogram {
+    fn record(&mut self, duration: Duration) {
+        let duration_ms = duration_ms(duration);
+        self.count = self.count.saturating_add(1);
+        self.sum_ms = self.sum_ms.saturating_add(duration_ms);
+        for (index, upper_bound) in MESSAGE_LATENCY_BUCKETS_MS.iter().enumerate() {
+            if duration_ms <= *upper_bound {
+                self.cumulative_buckets[index] = self.cumulative_buckets[index].saturating_add(1);
+            }
+        }
+    }
+}
+
 fn duration_ms(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
@@ -536,6 +585,13 @@ mod tests {
             crate::version::VERSION
         )));
         assert!(rendered.contains(r#"modelport_route_requests_total{route="messages"} 1"#));
+        assert_eq!(
+            rendered
+                .matches(r#"modelport_route_requests_total{route="messages"} 1"#)
+                .count(),
+            1,
+            "a Prometheus scrape must not contain duplicate route samples"
+        );
         assert!(rendered.contains(
             r#"modelport_message_requests_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 1"#
         ));
@@ -554,6 +610,10 @@ mod tests {
         assert!(rendered.contains(
             r#"modelport_message_cost_estimate_usd_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 0.000123"#
         ));
+        assert!(rendered.contains(r#"modelport_message_latency_ms_bucket{le="100"} 1"#));
+        assert!(rendered.contains(r#"modelport_message_latency_ms_bucket{le="+Inf"} 1"#));
+        assert!(rendered.contains("modelport_message_latency_ms_sum 12"));
+        assert!(rendered.contains("modelport_message_latency_ms_count 1"));
         assert!(rendered.contains(
             r#"modelport_inference_rejections_total{route="messages",phase="validation",reason="invalid_request"} 1"#
         ));

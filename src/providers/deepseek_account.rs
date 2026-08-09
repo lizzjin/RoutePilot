@@ -45,7 +45,9 @@ pub async fn fetch_balance(
         ("authorization".to_owned(), format!("Bearer {api_key}")),
         ("accept".to_owned(), "application/json".to_owned()),
     ];
-    let value = transport.get_json(DEEPSEEK_BALANCE_URL, &headers).await?;
+    let value = transport
+        .get_json("deepseek", false, DEEPSEEK_BALANCE_URL, &headers)
+        .await?;
     let balance: DeepSeekBalance = serde_json::from_value(value).map_err(|error| {
         AppError::UpstreamProtocol(format!(
             "DeepSeek balance response does not match the documented schema: {error}"

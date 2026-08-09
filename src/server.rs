@@ -1,4 +1,10 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use tokio::net::TcpListener;
 use tracing::{info, warn};
@@ -15,7 +21,10 @@ use crate::{
     http::HttpTransport,
     metrics::Metrics,
     oidc::OidcService,
-    routes::{self, AppState, GatewaySecurityPolicy, RateLimiter, TrustedProxyConfig},
+    routes::{
+        self, AppState, GatewaySecurityPolicy, RateLimiter, RetentionPreviewStore,
+        TrustedProxyConfig,
+    },
     smart_router::SmartRouter,
     version,
 };
@@ -45,6 +54,7 @@ pub(crate) async fn serve() -> Result<(), AppError> {
     let bind_addr = config.bind_addr;
     let ledger = Arc::new(EnterpriseLedger::connect_from_env().await?);
     let finalizers = Arc::new(FinalizationTracker::default());
+    let draining = Arc::new(AtomicBool::new(false));
     let metrics = Arc::new(Metrics::new());
     let reconciled = ledger.reconcile_expired().await?;
     metrics.record_ledger_operation("lease_reconciliation", true);
@@ -75,6 +85,8 @@ pub(crate) async fn serve() -> Result<(), AppError> {
         local_scheduler: LocalScheduler::new(LocalSchedulerConfig::from_env()?),
         ledger,
         finalizers: finalizers.clone(),
+        draining: draining.clone(),
+        retention_previews: Arc::new(RetentionPreviewStore::default()),
     };
 
     let listener = TcpListener::bind(bind_addr).await?;
@@ -90,7 +102,7 @@ pub(crate) async fn serve() -> Result<(), AppError> {
         listener,
         routes::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(shutdown_signal(draining))
     .await?;
 
     let drain_timeout = finalization_drain_timeout();
@@ -123,7 +135,7 @@ fn finalization_drain_timeout() -> Duration {
     )
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(draining: Arc<AtomicBool>) {
     let ctrl_c = async {
         if let Err(error) = tokio::signal::ctrl_c().await {
             tracing::error!(%error, "failed to install Ctrl+C handler");
@@ -147,4 +159,6 @@ async fn shutdown_signal() {
         _ = ctrl_c => {},
         _ = terminate => {},
     }
+    draining.store(true, Ordering::Release);
+    info!("shutdown signal received; readiness disabled and new inference is draining");
 }

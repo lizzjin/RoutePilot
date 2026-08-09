@@ -128,6 +128,18 @@ impl LogsQuery {
         query
     }
 
+    /// Applies the server-side principal boundary for request-log reads.
+    ///
+    /// This deliberately overwrites (rather than trusts) a caller supplied
+    /// `userId`.  Keeping the ownership predicate in the query object means it
+    /// is applied by both the PostgreSQL and in-memory ledger backends before
+    /// pagination and summary aggregation.
+    pub(super) fn scoped_to_user(&self, user_id: &str) -> Self {
+        let mut query = self.clone();
+        query.user_id = Some(user_id.to_owned());
+        query
+    }
+
     fn operational_query(&self) -> OperationalLogQuery {
         OperationalLogQuery {
             page: self.page.unwrap_or(1).max(1),
@@ -173,6 +185,10 @@ pub(super) async fn logs_body(state: &AppState, query: &LogsQuery) -> Result<Val
 
 pub(super) async fn log_body(state: &AppState, id: &str) -> Result<Option<Value>, AppError> {
     state.ledger.usage_row(id).await
+}
+
+pub(super) fn log_belongs_to_user(row: &Value, user_id: &str) -> bool {
+    row.get("userId").and_then(Value::as_str) == Some(user_id)
 }
 
 fn logs_body_from_rows(mut logs: Vec<Value>, query: &LogsQuery) -> Value {

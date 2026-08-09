@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 use crate::{
     control::{ProviderUsageStats, UsageSummary},
+    domain::TenantScope,
     enterprise_ledger::DashboardLedgerSnapshot,
     error::AppError,
 };
@@ -122,6 +123,8 @@ pub(super) async fn dashboard_body(
         .collect::<Vec<_>>();
     sort_and_limit_top_models(&mut persisted_top_models);
     let (recent_activity, _) = state.ledger.audit_events(8).await?;
+    let (has_request_ever, has_successful_request_ever) =
+        state.ledger.onboarding_milestones().await?;
     let config = effective_config(state);
 
     Ok(json!({
@@ -158,6 +161,13 @@ pub(super) async fn dashboard_body(
         "rangeDataAtRetentionLimit": false,
         "providerHealth": provider_health_rows(&providers, &persisted_provider_usage),
         "recentActivity": recent_activity,
+        "onboardingMilestones": {
+            "hasRequestEver": has_request_ever,
+            "hasSuccessfulRequestEver": has_successful_request_ever,
+            "hasDefaultProjectPolicy": state
+                .governance
+                .has_policy(&TenantScope::legacy_local()),
+        },
     }))
 }
 

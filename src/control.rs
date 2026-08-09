@@ -189,6 +189,8 @@ struct ProviderTestRecord {
     success: bool,
     message: String,
     #[serde(default)]
+    tested_credential_id: Option<String>,
+    #[serde(default)]
     discovered_models: Vec<String>,
 }
 
@@ -549,6 +551,25 @@ struct ApiKeyRecord {
     last_used_at_ms: Option<u64>,
     expires_at_ms: Option<u64>,
     status: String,
+    /// Set only on a prepared replacement credential. Prepared credentials are
+    /// not accepted for authentication and stay out of management listings
+    /// until the operator explicitly confirms the handover.
+    #[serde(default)]
+    rotation_from_key_id: Option<String>,
+    /// Permanent rotation provenance on the retired source credential. This
+    /// prevents a confirmed source from being restored as an ordinary revoked
+    /// key and making both the old and replacement secrets active.
+    #[serde(default)]
+    superseded_by_key_id: Option<String>,
+    /// Stable internal subject for key-scoped spend and rate limits. It is
+    /// inherited across every rotation while `id` remains the audit identity.
+    #[serde(default)]
+    quota_subject_id: String,
+    /// Historical concrete key IDs and their pseudonymous forms that belong to
+    /// this subject. This preserves pre-upgrade ledger usage across multi-hop
+    /// rotations without exposing the aliases in management responses.
+    #[serde(default)]
+    quota_subject_aliases: Vec<String>,
     #[serde(default)]
     ip_restricted: bool,
     #[serde(default)]
@@ -648,6 +669,10 @@ impl ApiKeyViewRecord for ApiKeyRecord {
         &self.status
     }
 
+    fn superseded_by_key_id(&self) -> Option<&str> {
+        self.superseded_by_key_id.as_deref()
+    }
+
     fn ip_restricted(&self) -> bool {
         self.ip_restricted
     }
@@ -678,6 +703,26 @@ impl ApiKeyViewRecord for ApiKeyRecord {
 
     fn monthly_limit_usd(&self) -> f64 {
         self.monthly_limit_usd
+    }
+}
+
+impl ApiKeyRecord {
+    fn effective_quota_subject_id(&self) -> &str {
+        if self.quota_subject_id.is_empty() {
+            &self.id
+        } else {
+            &self.quota_subject_id
+        }
+    }
+
+    fn effective_quota_subject_aliases(&self) -> Vec<String> {
+        let mut aliases = self.quota_subject_aliases.clone();
+        aliases.push(self.id.clone());
+        aliases.push(quota_subject_for_seed(&self.id));
+        aliases.push(self.effective_quota_subject_id().to_owned());
+        aliases.sort();
+        aliases.dedup();
+        aliases
     }
 }
 
@@ -756,6 +801,7 @@ pub struct PublicApiKey {
     pub last_used_at: Option<String>,
     pub expires_at: Option<String>,
     pub status: String,
+    pub superseded_by_key_id: Option<String>,
     pub requests_today: u64,
     pub tokens_today: u64,
     pub ip_restricted: bool,
@@ -861,6 +907,8 @@ pub struct ClientIdentity {
     pub username: String,
     pub principal_type: String,
     pub api_key_id: Option<String>,
+    pub(crate) quota_subject_id: Option<String>,
+    pub(crate) quota_subject_aliases: Vec<String>,
     pub api_key_name: Option<String>,
     pub api_key_group: Option<String>,
     pub team_id: Option<String>,
@@ -886,6 +934,43 @@ pub struct ApiKeyPolicy {
     pub daily_limit_usd: f64,
     pub weekly_limit_usd: f64,
     pub monthly_limit_usd: f64,
+}
+
+impl ApiKeyPolicy {
+    pub(crate) fn enforce_client_ip(&self, client_ip: Option<&str>) -> Result<(), AppError> {
+        enforce_ip_policy(self.ip_restricted, &self.allowed_ips, client_ip)
+    }
+
+    /// Enforce the routing portion of an API key policy. Catalog generation
+    /// intentionally uses the same model/provider checks as live requests so
+    /// the console cannot advertise a route that the key or its team forbids.
+    pub(crate) fn enforce_route(
+        &self,
+        requested_model: &str,
+        resolved_model: &str,
+        provider_id: &str,
+    ) -> Result<(), AppError> {
+        enforce_model_policy(
+            "API key",
+            &self.allowed_models,
+            requested_model,
+            resolved_model,
+        )?;
+        enforce_provider_policy("API key", &self.allowed_providers, provider_id)?;
+        enforce_model_policy(
+            "team",
+            &self.team_allowed_models,
+            requested_model,
+            resolved_model,
+        )?;
+        enforce_provider_policy("team", &self.team_allowed_providers, provider_id)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct UserCatalogGrant {
+    pub(crate) policy: ApiKeyPolicy,
+    pub(crate) tenant: TenantScope,
 }
 
 #[derive(Debug, Clone)]
@@ -937,6 +1022,8 @@ pub(crate) struct UsagePolicySnapshot {
     pub(crate) user_id: String,
     pub(crate) username: String,
     pub(crate) api_key_id: Option<String>,
+    pub(crate) quota_subject_id: Option<String>,
+    pub(crate) quota_subject_aliases: Vec<String>,
     pub(crate) team_id: Option<String>,
     pub(crate) api_key_policy: ApiKeyPolicy,
     pub(crate) quotas: Vec<UsageQuotaLimit>,
@@ -1012,7 +1099,9 @@ impl ControlStore {
                 "providerCredentialPoolModes": {},
                 "providerCredentialHealth": [],
             }))?;
-        if revision == 0 || redact_historical_control_errors(&mut file) {
+        let redacted_historical_errors = redact_historical_control_errors(&mut file);
+        let repaired_api_key_rotations = repair_api_key_rotation_invariants(&mut file);
+        if revision == 0 || redacted_historical_errors || repaired_api_key_rotations {
             revision = store.compare_and_swap_json(revision, &file)?;
         }
         let mut provider_model_overrides: BTreeMap<
@@ -1050,6 +1139,7 @@ impl ControlStore {
             .collect::<BTreeMap<_, _>>();
         let api_key_hash_index = api_keys
             .iter()
+            .filter(|(_, record)| !record.key_hash.is_empty())
             .map(|(id, record)| (record.key_hash.clone(), id.clone()))
             .collect();
         Ok(Self {
@@ -1241,6 +1331,7 @@ impl ControlStore {
         record.created_at_ms = created_at_ms;
         record.updated_at_ms = now;
         inner.provider_overrides.insert(id.clone(), record.clone());
+        inner.provider_tests.remove(&id);
         inner.deleted_providers.remove(&id);
         if let Some(order) = &mut inner.route_config.provider_order
             && !order.contains(&id)
@@ -1256,10 +1347,11 @@ impl ControlStore {
         let mut inner = self.inner.lock().expect("control lock poisoned");
         let previous = inner.clone();
         if disabled {
-            inner.disabled_providers.insert(provider_id);
+            inner.disabled_providers.insert(provider_id.clone());
         } else {
             inner.disabled_providers.remove(&provider_id);
         }
+        inner.provider_tests.remove(&provider_id);
         self.save_or_restore_locked(&mut inner, previous)
     }
 
@@ -1320,6 +1412,7 @@ impl ControlStore {
         record.created_at_ms = created_at_ms;
         record.updated_at_ms = now;
         models.insert(record.model.clone(), record.clone());
+        inner.provider_tests.remove(&record.provider_id);
         self.save_or_restore_locked(&mut inner, previous)?;
         Ok(record)
     }
@@ -1353,6 +1446,7 @@ impl ControlStore {
             updated_at_ms: now,
         };
         models.insert(model, record.clone());
+        inner.provider_tests.remove(&record.provider_id);
         self.save_or_restore_locked(&mut inner, previous)?;
         Ok(record)
     }
@@ -1404,10 +1498,11 @@ impl ControlStore {
         if let Some(next_active_id) = next_active_id {
             inner
                 .active_provider_credentials
-                .insert(provider_id, next_active_id);
+                .insert(provider_id.clone(), next_active_id);
         } else {
             inner.active_provider_credentials.remove(&provider_id);
         }
+        inner.provider_tests.remove(&provider_id);
         self.save_or_restore_locked(&mut inner, previous)?;
         Ok(record)
     }
@@ -1426,8 +1521,9 @@ impl ControlStore {
         } else {
             inner
                 .provider_credential_pool_modes
-                .insert(provider_id, mode.clone());
+                .insert(provider_id.clone(), mode.clone());
         }
+        inner.provider_tests.remove(&provider_id);
         self.save_or_restore_locked(&mut inner, previous)?;
         Ok(mode)
     }
@@ -1459,6 +1555,7 @@ impl ControlStore {
         inner
             .active_provider_credentials
             .insert(provider_id.clone(), credential_id);
+        inner.provider_tests.remove(&provider_id);
         self.save_or_restore_locked(&mut inner, previous)?;
         Ok(record)
     }
@@ -1514,6 +1611,7 @@ impl ControlStore {
                 inner.provider_credential_health.remove(&provider_id);
             }
         }
+        inner.provider_tests.remove(&provider_id);
         self.save_or_restore_locked(&mut inner, previous)?;
         Ok(record)
     }
@@ -1602,12 +1700,30 @@ impl ControlStore {
         })
     }
 
+    #[cfg(test)]
     pub fn record_provider_test(
         &self,
         provider_id: String,
         success: bool,
         message: String,
         discovered_models: Vec<String>,
+    ) -> Result<u64, AppError> {
+        self.record_provider_test_for_credential(
+            provider_id,
+            success,
+            message,
+            discovered_models,
+            None,
+        )
+    }
+
+    pub fn record_provider_test_for_credential(
+        &self,
+        provider_id: String,
+        success: bool,
+        message: String,
+        discovered_models: Vec<String>,
+        tested_credential_id: Option<String>,
     ) -> Result<u64, AppError> {
         let tested_at_ms = now_millis();
         let mut inner = self.inner.lock().expect("control lock poisoned");
@@ -1619,11 +1735,22 @@ impl ControlStore {
                 tested_at_ms,
                 success,
                 message,
+                tested_credential_id,
                 discovered_models,
             },
         );
         self.save_or_restore_locked(&mut inner, previous)?;
         Ok(tested_at_ms)
+    }
+
+    pub fn clear_provider_tests(&self) -> Result<(), AppError> {
+        let mut inner = self.inner.lock().expect("control lock poisoned");
+        if inner.provider_tests.is_empty() {
+            return Ok(());
+        }
+        let previous = inner.clone();
+        inner.provider_tests.clear();
+        self.save_or_restore_locked(&mut inner, previous)
     }
 
     pub fn provider_test_rows(&self) -> BTreeMap<String, serde_json::Value> {
@@ -1638,6 +1765,7 @@ impl ControlStore {
                         "testedAt": record.tested_at_ms.to_string(),
                         "success": record.success,
                         "message": record.message,
+                        "testedCredentialId": record.tested_credential_id,
                         "models": record.discovered_models,
                         "modelCount": record.discovered_models.len(),
                     }),
@@ -1744,7 +1872,7 @@ impl ControlStore {
         let referencing_keys = inner
             .api_keys
             .values()
-            .filter(|key| key.team_id.as_deref() == Some(team_id))
+            .filter(|key| key.status != "deleted" && key.team_id.as_deref() == Some(team_id))
             .count();
         if referencing_keys > 0 {
             return Err(AppError::InvalidRequest(format!(
@@ -1852,7 +1980,7 @@ impl ControlStore {
             (record, has_pool, pool_mode)
         };
         let Some(record) = record else {
-            if has_pool && pool_mode != "manual" {
+            if has_pool {
                 return Err(AppError::NotReady(format!(
                     "provider {provider_id} has no usable credential in {pool_mode} pool mode"
                 )));
@@ -2006,40 +2134,18 @@ impl ControlStore {
             username: record_snapshot.username.clone(),
             principal_type: record_snapshot.principal_type.clone(),
             api_key_id: Some(record_snapshot.id.clone()),
+            quota_subject_id: Some(record_snapshot.effective_quota_subject_id().to_owned()),
+            quota_subject_aliases: record_snapshot.effective_quota_subject_aliases(),
             api_key_name: Some(record_snapshot.name.clone()),
             api_key_group: record_snapshot.group.clone(),
             team_id: record_snapshot.team_id.clone(),
             team_name: record_snapshot.team_name.clone(),
             enforce_quotas: true,
-            api_key_policy: ApiKeyPolicy {
-                team_id: record_snapshot.team_id.clone(),
-                ip_restricted: record_snapshot.ip_restricted,
-                allowed_ips: record_snapshot.allowed_ips.clone(),
-                allowed_models: record_snapshot.allowed_models.clone(),
-                allowed_providers: record_snapshot.allowed_providers.clone(),
-                team_allowed_models: team
-                    .as_ref()
-                    .map(|team| team.allowed_models.clone())
-                    .unwrap_or_default(),
-                team_allowed_providers: team
-                    .as_ref()
-                    .map(|team| team.allowed_providers.clone())
-                    .unwrap_or_default(),
-                team_daily_limit_usd: team
-                    .as_ref()
-                    .map(|team| team.daily_limit_usd)
-                    .unwrap_or(0.0),
-                team_monthly_limit_usd: team
-                    .as_ref()
-                    .map(|team| team.monthly_limit_usd)
-                    .unwrap_or(0.0),
-                spend_limit_usd: record_snapshot.spend_limit_usd,
-                rate_limited: record_snapshot.rate_limited,
-                five_hour_limit_usd: record_snapshot.five_hour_limit_usd,
-                daily_limit_usd: record_snapshot.daily_limit_usd,
-                weekly_limit_usd: record_snapshot.weekly_limit_usd,
-                monthly_limit_usd: record_snapshot.monthly_limit_usd,
-            },
+            api_key_policy: api_key_policy_with_subject(
+                &record_snapshot,
+                team.as_ref(),
+                inner.api_keys.values(),
+            ),
         };
         Ok(Some(identity))
     }
@@ -2050,6 +2156,8 @@ impl ControlStore {
             username: "local-admin".to_owned(),
             principal_type: "legacy".to_owned(),
             api_key_id: None,
+            quota_subject_id: None,
+            quota_subject_aliases: Vec::new(),
             api_key_name: Some("MODELPORT_AUTH_TOKEN".to_owned()),
             api_key_group: Some("legacy".to_owned()),
             team_id: None,
@@ -2061,7 +2169,12 @@ impl ControlStore {
 
     pub fn list_api_keys(&self) -> Vec<PublicApiKey> {
         let inner = self.inner.lock().expect("control lock poisoned");
-        inner.api_keys.values().map(public_api_key).collect()
+        inner
+            .api_keys
+            .values()
+            .filter(|record| !matches!(record.status.as_str(), "pending_rotation" | "deleted"))
+            .map(public_api_key)
+            .collect()
     }
 
     pub fn tenant_scope(&self, identity: &ClientIdentity) -> Result<TenantScope, AppError> {
@@ -2087,12 +2200,52 @@ impl ControlStore {
             .collect()
     }
 
-    pub fn active_api_key_count(&self, user_id: &str) -> u32 {
+    /// Return only grants that could authenticate now. Expired keys are not
+    /// mutated here (catalog reads must stay side-effect free), but they are
+    /// excluded exactly like revoked keys. A key bound to a missing or inactive
+    /// team is fail-closed, matching `authenticate_headers`.
+    pub(crate) fn user_catalog_grants(
+        &self,
+        user_id: &str,
+        api_key_id: Option<&str>,
+    ) -> Vec<UserCatalogGrant> {
         let inner = self.inner.lock().expect("control lock poisoned");
+        let now = now_millis();
         inner
             .api_keys
             .values()
-            .filter(|record| record.user_id == user_id && record.status == "active")
+            .filter(|record| {
+                record.user_id == user_id
+                    && api_key_id.is_none_or(|key_id| record.id == key_id)
+                    && api_key_is_usable_for_catalog(record, &inner.teams, now)
+            })
+            .map(|record| {
+                let team = record
+                    .team_id
+                    .as_deref()
+                    .and_then(|team_id| inner.teams.get(team_id));
+                UserCatalogGrant {
+                    policy: api_key_policy_with_subject(record, team, inner.api_keys.values()),
+                    tenant: TenantScope::from_strings(
+                        record.organization_id.clone(),
+                        record.project_id.clone(),
+                        record.environment_id.clone(),
+                    ),
+                }
+            })
+            .collect()
+    }
+
+    pub fn active_api_key_count(&self, user_id: &str) -> u32 {
+        let inner = self.inner.lock().expect("control lock poisoned");
+        let now = now_millis();
+        inner
+            .api_keys
+            .values()
+            .filter(|record| {
+                record.user_id == user_id
+                    && api_key_is_usable_for_catalog(record, &inner.teams, now)
+            })
             .count()
             .try_into()
             .unwrap_or(u32::MAX)
@@ -2100,12 +2253,19 @@ impl ControlStore {
 
     pub fn api_key_counts(&self) -> (u64, u64) {
         let inner = self.inner.lock().expect("control lock poisoned");
+        let now = now_millis();
         (
-            inner.api_keys.len().try_into().unwrap_or(u64::MAX),
             inner
                 .api_keys
                 .values()
-                .filter(|record| record.status == "active")
+                .filter(|record| !matches!(record.status.as_str(), "pending_rotation" | "deleted"))
+                .count()
+                .try_into()
+                .unwrap_or(u64::MAX),
+            inner
+                .api_keys
+                .values()
+                .filter(|record| api_key_is_usable_for_catalog(record, &inner.teams, now))
                 .count()
                 .try_into()
                 .unwrap_or(u64::MAX),
@@ -2121,7 +2281,32 @@ impl ControlStore {
             .ok_or_else(|| AppError::InvalidRequest("API key not found".to_owned()))
     }
 
+    pub fn api_key_principal_type(&self, key_id: &str) -> Result<String, AppError> {
+        let inner = self.inner.lock().expect("control lock poisoned");
+        inner
+            .api_keys
+            .get(key_id)
+            .map(|record| record.principal_type.clone())
+            .ok_or_else(|| AppError::InvalidRequest("API key not found".to_owned()))
+    }
+
     pub fn create_api_key(&self, input: CreateApiKeyInput) -> Result<CreatedApiKey, AppError> {
+        self.create_api_key_inner(input, None)
+    }
+
+    pub fn create_api_key_with_active_limit(
+        &self,
+        input: CreateApiKeyInput,
+        max_active: u32,
+    ) -> Result<CreatedApiKey, AppError> {
+        self.create_api_key_inner(input, Some(max_active))
+    }
+
+    fn create_api_key_inner(
+        &self,
+        input: CreateApiKeyInput,
+        max_active: Option<u32>,
+    ) -> Result<CreatedApiKey, AppError> {
         let name = input.name.trim();
         if name.is_empty() || name.len() > 80 {
             return Err(AppError::InvalidRequest(
@@ -2198,8 +2383,24 @@ impl ControlStore {
         let key = new_api_key();
         let mut inner = self.inner.lock().expect("control lock poisoned");
         let (team_id, team_name) = resolve_team_ref(&inner, input.team_id)?;
-        let record = ApiKeyRecord {
-            id: format!("key_{}", Uuid::new_v4().simple()),
+        if let Some(max_active) = max_active {
+            let active_count = inner
+                .api_keys
+                .values()
+                .filter(|record| {
+                    record.user_id == user_id
+                        && api_key_is_usable_for_catalog(record, &inner.teams, now)
+                })
+                .count();
+            if active_count >= usize::try_from(max_active).unwrap_or(usize::MAX) {
+                return Err(AppError::Forbidden(format!(
+                    "self-service is limited to {max_active} active API keys"
+                )));
+            }
+        }
+        let record_id = format!("key_{}", Uuid::new_v4().simple());
+        let mut record = ApiKeyRecord {
+            id: record_id.clone(),
             user_id: user_id.to_owned(),
             username,
             name: name.to_owned(),
@@ -2220,6 +2421,10 @@ impl ControlStore {
             last_used_at_ms: None,
             expires_at_ms,
             status: "active".to_owned(),
+            rotation_from_key_id: None,
+            superseded_by_key_id: None,
+            quota_subject_id: quota_subject_for_seed(&record_id),
+            quota_subject_aliases: vec![record_id],
             ip_restricted: false,
             allowed_ips: Vec::new(),
             spend_limit_usd: 0.0,
@@ -2229,8 +2434,55 @@ impl ControlStore {
             weekly_limit_usd: 0.0,
             monthly_limit_usd: 0.0,
         };
-
         let previous = inner.clone();
+
+        if max_active.is_some() {
+            let owner_id = record.user_id.clone();
+            let quota_subject_id = inner
+                .api_keys
+                .values()
+                .filter(|existing| {
+                    existing.user_id == owner_id && existing.principal_type == "user"
+                })
+                .min_by_key(|existing| (existing.created_at_ms, existing.id.as_str()))
+                .map(|existing| existing.effective_quota_subject_id().to_owned())
+                .unwrap_or_else(|| {
+                    quota_subject_for_seed(&format!("self-service-user:{owner_id}"))
+                });
+            let mut quota_subject_aliases = record.effective_quota_subject_aliases();
+            for existing in inner.api_keys.values().filter(|existing| {
+                existing.user_id == owner_id && existing.principal_type == "user"
+            }) {
+                inherit_stricter_spend_limits(&mut record, existing);
+                quota_subject_aliases.extend(existing.effective_quota_subject_aliases());
+            }
+            quota_subject_aliases.push(quota_subject_id.clone());
+            quota_subject_aliases.sort();
+            quota_subject_aliases.dedup();
+            record.quota_subject_id.clone_from(&quota_subject_id);
+            record
+                .quota_subject_aliases
+                .clone_from(&quota_subject_aliases);
+
+            // The first self-service credential upgrades every historical user
+            // credential owned by the same principal onto one stable quota
+            // subject. Prefer the oldest existing subject so an in-process RPM
+            // window is not reset during the handover; owners without history
+            // receive a deterministic user subject. Keep both the concrete and
+            // pseudonymous legacy subjects as aliases so pre-upgrade requests
+            // and open reservations remain chargeable after deletion/recreation.
+            // Service accounts stay on their independent machine subjects.
+            for existing in inner.api_keys.values_mut().filter(|existing| {
+                existing.user_id == owner_id && existing.principal_type == "user"
+            }) {
+                existing.quota_subject_id.clone_from(&quota_subject_id);
+                existing
+                    .quota_subject_aliases
+                    .clone_from(&quota_subject_aliases);
+                copy_subject_spend_limits(existing, &record);
+            }
+        }
+
         inner.api_keys.insert(record.id.clone(), record.clone());
         self.save_or_restore_locked(&mut inner, previous)?;
         Ok(CreatedApiKey {
@@ -2241,8 +2493,14 @@ impl ControlStore {
 
     pub fn revoke_api_key(&self, key_id: &str) -> Result<(), AppError> {
         let mut inner = self.inner.lock().expect("control lock poisoned");
-        if !inner.api_keys.contains_key(key_id) {
+        let Some(record) = inner.api_keys.get(key_id) else {
             return Err(AppError::InvalidRequest("API key not found".to_owned()));
+        };
+        if record.status == "pending_rotation" {
+            return Err(pending_rotation_mutation_error());
+        }
+        if record.status == "deleted" {
+            return Ok(());
         }
         let previous = inner.clone();
         inner
@@ -2250,6 +2508,209 @@ impl ControlStore {
             .get_mut(key_id)
             .expect("API key existence checked above")
             .status = "revoked".to_owned();
+        inner.api_keys.retain(|_, record| {
+            !(record.status == "pending_rotation"
+                && record.rotation_from_key_id.as_deref() == Some(key_id))
+        });
+        self.save_or_restore_locked(&mut inner, previous)
+    }
+
+    /// Prepare a replacement credential without invalidating the current one.
+    /// A separate confirmation performs the atomic handover. If this response
+    /// is lost, the client therefore keeps working and the user can prepare a
+    /// fresh replacement safely.
+    pub fn rotate_api_key(&self, key_id: &str) -> Result<CreatedApiKey, AppError> {
+        let now = now_millis();
+        let key = new_api_key();
+        let mut inner = self.inner.lock().expect("control lock poisoned");
+        let Some(current) = inner.api_keys.get(key_id).cloned() else {
+            return Err(AppError::InvalidRequest("API key not found".to_owned()));
+        };
+        if current.status != "active" {
+            return Err(AppError::InvalidRequest(
+                "only an active API key can be rotated".to_owned(),
+            ));
+        }
+        if current
+            .expires_at_ms
+            .is_some_and(|expires_at| expires_at <= now)
+        {
+            return Err(AppError::InvalidRequest(
+                "an expired API key cannot be rotated".to_owned(),
+            ));
+        }
+
+        let mut replacement = current.clone();
+        replacement.id = format!("key_{}", Uuid::new_v4().simple());
+        replacement.key_hash = hash_secret(&key);
+        replacement.key_prefix = key.chars().take(12).collect();
+        replacement.key_preview = preview_secret(&key);
+        replacement.created_at_ms = now;
+        replacement.last_used_at_ms = None;
+        replacement.status = "pending_rotation".to_owned();
+        replacement.rotation_from_key_id = Some(key_id.to_owned());
+        replacement.superseded_by_key_id = None;
+        replacement.quota_subject_id = current.effective_quota_subject_id().to_owned();
+        replacement.quota_subject_aliases = current.effective_quota_subject_aliases();
+        replacement
+            .quota_subject_aliases
+            .push(replacement.id.clone());
+        replacement
+            .quota_subject_aliases
+            .push(quota_subject_for_seed(&replacement.id));
+        replacement.quota_subject_aliases.sort();
+        replacement.quota_subject_aliases.dedup();
+
+        let previous = inner.clone();
+        // At most one unpublished replacement is retained for a source key.
+        // Retrying after a lost response replaces only the unusable pending
+        // secret; the original credential remains active throughout.
+        inner.api_keys.retain(|_, record| {
+            !(record.status == "pending_rotation"
+                && record.rotation_from_key_id.as_deref() == Some(key_id))
+        });
+        inner
+            .api_keys
+            .insert(replacement.id.clone(), replacement.clone());
+        self.save_or_restore_locked(&mut inner, previous)?;
+
+        Ok(CreatedApiKey {
+            public: public_api_key(&replacement),
+            key,
+        })
+    }
+
+    pub fn confirm_api_key_rotation(
+        &self,
+        key_id: &str,
+        replacement_id: &str,
+    ) -> Result<PublicApiKey, AppError> {
+        let now = now_millis();
+        let mut inner = self.inner.lock().expect("control lock poisoned");
+        let Some(current) = inner.api_keys.get(key_id).cloned() else {
+            return Err(AppError::InvalidRequest("API key not found".to_owned()));
+        };
+        let Some(mut replacement) = inner.api_keys.get(replacement_id).cloned() else {
+            return Err(AppError::InvalidRequest(
+                "prepared API key rotation not found".to_owned(),
+            ));
+        };
+        // Confirmation is idempotent. A retry after the persisted handover's
+        // HTTP response was lost returns the already-active replacement.
+        if replacement.status == "active"
+            && replacement.rotation_from_key_id.as_deref() == Some(key_id)
+        {
+            let previous = inner.clone();
+            replacement.quota_subject_id = current.effective_quota_subject_id().to_owned();
+            replacement.quota_subject_aliases = current.effective_quota_subject_aliases();
+            replacement
+                .quota_subject_aliases
+                .push(replacement.id.clone());
+            replacement
+                .quota_subject_aliases
+                .push(quota_subject_for_seed(&replacement.id));
+            replacement.quota_subject_aliases.sort();
+            replacement.quota_subject_aliases.dedup();
+            let source = inner
+                .api_keys
+                .get_mut(key_id)
+                .expect("source API key existence checked above");
+            source.status = "revoked".to_owned();
+            source.superseded_by_key_id = Some(replacement.id.clone());
+            source.key_hash.clear();
+            inner
+                .api_keys
+                .insert(replacement.id.clone(), replacement.clone());
+            self.save_or_restore_locked(&mut inner, previous)?;
+            return Ok(public_api_key(&replacement));
+        }
+        if current.status != "active"
+            || current
+                .expires_at_ms
+                .is_some_and(|expires_at| expires_at <= now)
+        {
+            return Err(AppError::InvalidRequest(
+                "source API key is no longer active".to_owned(),
+            ));
+        }
+        if replacement.status != "pending_rotation"
+            || replacement.rotation_from_key_id.as_deref() != Some(key_id)
+        {
+            return Err(AppError::InvalidRequest(
+                "replacement does not belong to this API key rotation".to_owned(),
+            ));
+        }
+
+        // The prepared record contains only the new secret material. Every
+        // mutable ownership, tenant and policy field is refreshed from the
+        // source while holding the same lock as the handover, so tightening a
+        // key between prepare and confirm can never be rolled back.
+        let replacement_id = replacement.id.clone();
+        let replacement_hash = replacement.key_hash.clone();
+        let replacement_prefix = replacement.key_prefix.clone();
+        let replacement_preview = replacement.key_preview.clone();
+        let replacement_created_at_ms = replacement.created_at_ms;
+        replacement = current.clone();
+        replacement.id = replacement_id;
+        replacement.key_hash = replacement_hash;
+        replacement.key_prefix = replacement_prefix;
+        replacement.key_preview = replacement_preview;
+        replacement.created_at_ms = replacement_created_at_ms;
+        replacement.last_used_at_ms = None;
+        replacement.status = "active".to_owned();
+        replacement.rotation_from_key_id = Some(key_id.to_owned());
+        replacement.superseded_by_key_id = None;
+        replacement.quota_subject_aliases = current.effective_quota_subject_aliases();
+        replacement
+            .quota_subject_aliases
+            .push(replacement.id.clone());
+        replacement
+            .quota_subject_aliases
+            .push(quota_subject_for_seed(&replacement.id));
+        replacement.quota_subject_aliases.sort();
+        replacement.quota_subject_aliases.dedup();
+
+        let previous = inner.clone();
+        let source = inner
+            .api_keys
+            .get_mut(key_id)
+            .expect("source API key existence checked above");
+        source.status = "revoked".to_owned();
+        source.superseded_by_key_id = Some(replacement.id.clone());
+        // Defense in depth: even a hand-edited status cannot resurrect the old
+        // credential after the rotation has been confirmed.
+        source.key_hash.clear();
+        inner
+            .api_keys
+            .insert(replacement.id.clone(), replacement.clone());
+        self.save_or_restore_locked(&mut inner, previous)?;
+        Ok(public_api_key(&replacement))
+    }
+
+    pub fn cancel_api_key_rotation(
+        &self,
+        key_id: &str,
+        replacement_id: &str,
+    ) -> Result<(), AppError> {
+        let mut inner = self.inner.lock().expect("control lock poisoned");
+        let source_is_active = inner
+            .api_keys
+            .get(key_id)
+            .is_some_and(|record| record.status == "active");
+        let pending_matches = inner.api_keys.get(replacement_id).is_some_and(|record| {
+            record.status == "pending_rotation"
+                && record.rotation_from_key_id.as_deref() == Some(key_id)
+        });
+        if source_is_active && !inner.api_keys.contains_key(replacement_id) {
+            return Ok(());
+        }
+        if !pending_matches {
+            return Err(AppError::InvalidRequest(
+                "prepared API key rotation not found".to_owned(),
+            ));
+        }
+        let previous = inner.clone();
+        inner.api_keys.remove(replacement_id);
         self.save_or_restore_locked(&mut inner, previous)
     }
 
@@ -2262,6 +2723,46 @@ impl ControlStore {
         let Some(record) = inner.api_keys.get(key_id).cloned() else {
             return Err(AppError::InvalidRequest("API key not found".to_owned()));
         };
+        if record.status == "pending_rotation" {
+            return Err(pending_rotation_mutation_error());
+        }
+        if record.status == "deleted" {
+            return Err(AppError::InvalidRequest(
+                "a deleted API key cannot be modified".to_owned(),
+            ));
+        }
+        if record.superseded_by_key_id.is_some() {
+            return Err(AppError::InvalidRequest(
+                "a superseded API key cannot be restored or modified".to_owned(),
+            ));
+        }
+
+        // Spend and process-rate policy belongs to the stable quota subject,
+        // not to one concrete secret in its rotation lineage. Validate every
+        // explicitly supplied value once, then atomically synchronize it to
+        // the full subject below. The route layer reserves these fields for
+        // administrators.
+        let spend_limit_usd = input
+            .spend_limit_usd
+            .map(|value| validate_usd_limit("spendLimitUsd", value))
+            .transpose()?;
+        let five_hour_limit_usd = input
+            .five_hour_limit_usd
+            .map(|value| validate_usd_limit("fiveHourLimitUsd", value))
+            .transpose()?;
+        let daily_limit_usd = input
+            .daily_limit_usd
+            .map(|value| validate_usd_limit("dailyLimitUsd", value))
+            .transpose()?;
+        let weekly_limit_usd = input
+            .weekly_limit_usd
+            .map(|value| validate_usd_limit("weeklyLimitUsd", value))
+            .transpose()?;
+        let monthly_limit_usd = input
+            .monthly_limit_usd
+            .map(|value| validate_usd_limit("monthlyLimitUsd", value))
+            .transpose()?;
+        let rate_limited = input.rate_limited;
 
         let mut updated = record;
         if let Some(name) = input.name {
@@ -2317,24 +2818,23 @@ impl ControlStore {
         if let Some(allowed_ips) = input.allowed_ips {
             updated.allowed_ips = normalize_ip_rules(allowed_ips)?;
         }
-        if let Some(spend_limit_usd) = input.spend_limit_usd {
-            updated.spend_limit_usd = validate_usd_limit("spendLimitUsd", spend_limit_usd)?;
+        if let Some(spend_limit_usd) = spend_limit_usd {
+            updated.spend_limit_usd = spend_limit_usd;
         }
-        if let Some(rate_limited) = input.rate_limited {
+        if let Some(rate_limited) = rate_limited {
             updated.rate_limited = rate_limited;
         }
-        if let Some(five_hour_limit_usd) = input.five_hour_limit_usd {
-            updated.five_hour_limit_usd =
-                validate_usd_limit("fiveHourLimitUsd", five_hour_limit_usd)?;
+        if let Some(five_hour_limit_usd) = five_hour_limit_usd {
+            updated.five_hour_limit_usd = five_hour_limit_usd;
         }
-        if let Some(daily_limit_usd) = input.daily_limit_usd {
-            updated.daily_limit_usd = validate_usd_limit("dailyLimitUsd", daily_limit_usd)?;
+        if let Some(daily_limit_usd) = daily_limit_usd {
+            updated.daily_limit_usd = daily_limit_usd;
         }
-        if let Some(weekly_limit_usd) = input.weekly_limit_usd {
-            updated.weekly_limit_usd = validate_usd_limit("weeklyLimitUsd", weekly_limit_usd)?;
+        if let Some(weekly_limit_usd) = weekly_limit_usd {
+            updated.weekly_limit_usd = weekly_limit_usd;
         }
-        if let Some(monthly_limit_usd) = input.monthly_limit_usd {
-            updated.monthly_limit_usd = validate_usd_limit("monthlyLimitUsd", monthly_limit_usd)?;
+        if let Some(monthly_limit_usd) = monthly_limit_usd {
+            updated.monthly_limit_usd = monthly_limit_usd;
         }
 
         if updated.status == "active"
@@ -2348,7 +2848,51 @@ impl ControlStore {
         }
 
         let previous = inner.clone();
+        let quota_subject_id = updated.effective_quota_subject_id().to_owned();
         inner.api_keys.insert(updated.id.clone(), updated.clone());
+        if spend_limit_usd.is_some()
+            || rate_limited.is_some()
+            || five_hour_limit_usd.is_some()
+            || daily_limit_usd.is_some()
+            || weekly_limit_usd.is_some()
+            || monthly_limit_usd.is_some()
+        {
+            for candidate in inner
+                .api_keys
+                .values_mut()
+                .filter(|candidate| candidate.effective_quota_subject_id() == quota_subject_id)
+            {
+                if let Some(value) = spend_limit_usd {
+                    candidate.spend_limit_usd = value;
+                }
+                if let Some(value) = rate_limited {
+                    candidate.rate_limited = value;
+                }
+                if let Some(value) = five_hour_limit_usd {
+                    candidate.five_hour_limit_usd = value;
+                }
+                if let Some(value) = daily_limit_usd {
+                    candidate.daily_limit_usd = value;
+                }
+                if let Some(value) = weekly_limit_usd {
+                    candidate.weekly_limit_usd = value;
+                }
+                if let Some(value) = monthly_limit_usd {
+                    candidate.monthly_limit_usd = value;
+                }
+            }
+            updated = inner
+                .api_keys
+                .get(key_id)
+                .expect("updated API key remains in its quota subject")
+                .clone();
+        }
+        if updated.status == "revoked" {
+            inner.api_keys.retain(|_, candidate| {
+                !(candidate.status == "pending_rotation"
+                    && candidate.rotation_from_key_id.as_deref() == Some(key_id))
+            });
+        }
         self.save_or_restore_locked(&mut inner, previous)?;
         Ok(public_api_key(&updated))
     }
@@ -2367,6 +2911,19 @@ impl ControlStore {
         let Some(mut updated) = inner.api_keys.get(key_id).cloned() else {
             return Err(AppError::InvalidRequest("API key not found".to_owned()));
         };
+        if updated.status == "pending_rotation" {
+            return Err(pending_rotation_mutation_error());
+        }
+        if updated.status == "deleted" {
+            return Err(AppError::InvalidRequest(
+                "a deleted API key cannot be rebound".to_owned(),
+            ));
+        }
+        if updated.superseded_by_key_id.is_some() {
+            return Err(AppError::InvalidRequest(
+                "a superseded API key cannot be rebound".to_owned(),
+            ));
+        }
         updated.organization_id = organization_id;
         updated.project_id = project_id;
         updated.environment_id = environment_id;
@@ -2378,19 +2935,37 @@ impl ControlStore {
 
     pub fn delete_api_key(&self, key_id: &str) -> Result<(), AppError> {
         let mut inner = self.inner.lock().expect("control lock poisoned");
-        if !inner.api_keys.contains_key(key_id) {
+        let Some(record) = inner.api_keys.get(key_id) else {
             return Err(AppError::InvalidRequest("API key not found".to_owned()));
+        };
+        if record.status == "pending_rotation" {
+            return Err(pending_rotation_mutation_error());
+        }
+        if record.status == "deleted" {
+            return Ok(());
         }
         let previous = inner.clone();
-        inner.api_keys.remove(key_id);
+        let deleted = inner
+            .api_keys
+            .get_mut(key_id)
+            .expect("API key existence checked above");
+        deleted.status = "deleted".to_owned();
+        deleted.key_hash.clear();
+        inner.api_keys.retain(|_, record| {
+            !(record.status == "pending_rotation"
+                && record.rotation_from_key_id.as_deref() == Some(key_id))
+        });
         self.save_or_restore_locked(&mut inner, previous)
     }
 
     pub fn delete_user_resources(&self, user_id: &str) -> Result<(), AppError> {
         let mut inner = self.inner.lock().expect("control lock poisoned");
         let previous = inner.clone();
+        inner.api_keys.retain(|_, record| {
+            !(record.user_id == user_id && record.status == "pending_rotation")
+        });
         for record in inner.api_keys.values_mut() {
-            if record.user_id == user_id {
+            if record.user_id == user_id && record.status != "deleted" {
                 record.status = "revoked".to_owned();
             }
         }
@@ -2498,6 +3073,8 @@ impl ControlStore {
             user_id: identity.user_id.clone(),
             username: identity.username.clone(),
             api_key_id: identity.api_key_id.clone(),
+            quota_subject_id: identity.quota_subject_id.clone(),
+            quota_subject_aliases: identity.quota_subject_aliases.clone(),
             team_id: identity
                 .team_id
                 .clone()
@@ -2597,6 +3174,117 @@ fn redact_historical_control_errors(file: &mut ControlFile) -> bool {
         }
     }
     changed
+}
+
+/// Upgrade pre-tombstone rotation records into the fail-closed state machine
+/// and reconstruct stable quota lineage from `rotation_from_key_id` chains.
+/// This runs before the hash index is built and is persisted with the same CAS
+/// used for other control-file repairs.
+fn repair_api_key_rotation_invariants(file: &mut ControlFile) -> bool {
+    let mut changed = false;
+    let parents = file
+        .api_keys
+        .iter()
+        .map(|record| (record.id.clone(), record.rotation_from_key_id.clone()))
+        .collect::<BTreeMap<_, _>>();
+
+    for record in &mut file.api_keys {
+        if record.quota_subject_id.is_empty() {
+            let mut cursor = record.id.as_str();
+            let mut chain = BTreeSet::new();
+            chain.insert(cursor.to_owned());
+            while let Some(Some(parent)) = parents.get(cursor) {
+                if !chain.insert(parent.clone()) || !parents.contains_key(parent) {
+                    break;
+                }
+                cursor = parent;
+            }
+            record.quota_subject_id = quota_subject_for_seed(cursor);
+            for key_id in chain {
+                record.quota_subject_aliases.push(key_id.clone());
+                record
+                    .quota_subject_aliases
+                    .push(quota_subject_for_seed(&key_id));
+            }
+            changed = true;
+        }
+        let previous_aliases = record.quota_subject_aliases.clone();
+        record.quota_subject_aliases.push(record.id.clone());
+        record
+            .quota_subject_aliases
+            .push(quota_subject_for_seed(&record.id));
+        record
+            .quota_subject_aliases
+            .push(record.quota_subject_id.clone());
+        record.quota_subject_aliases.sort();
+        record.quota_subject_aliases.dedup();
+        changed |= record.quota_subject_aliases != previous_aliases;
+    }
+
+    let mut confirmed_children = BTreeMap::<String, Vec<(u64, String)>>::new();
+    for record in &file.api_keys {
+        if record.status != "pending_rotation"
+            && let Some(source_id) = record.rotation_from_key_id.as_deref()
+        {
+            confirmed_children
+                .entry(source_id.to_owned())
+                .or_default()
+                .push((record.created_at_ms, record.id.clone()));
+        }
+    }
+    let winners = confirmed_children
+        .iter_mut()
+        .map(|(source_id, children)| {
+            children.sort();
+            (
+                source_id.clone(),
+                children
+                    .last()
+                    .expect("confirmed child collection is non-empty")
+                    .1
+                    .clone(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    for record in &mut file.api_keys {
+        let replacement_id = winners.get(&record.id).cloned().or_else(|| {
+            record
+                .rotation_from_key_id
+                .as_ref()
+                .and_then(|source_id| winners.get(source_id))
+                .filter(|winner| winner.as_str() != record.id)
+                .cloned()
+        });
+        let Some(replacement_id) = replacement_id else {
+            continue;
+        };
+        if record.status != "revoked" {
+            record.status = "revoked".to_owned();
+            changed = true;
+        }
+        if record.superseded_by_key_id.as_deref() != Some(replacement_id.as_str()) {
+            record.superseded_by_key_id = Some(replacement_id);
+            changed = true;
+        }
+        if !record.key_hash.is_empty() {
+            record.key_hash.clear();
+            changed = true;
+        }
+    }
+
+    // A confirmed replacement and a pending sibling cannot both have a valid
+    // continuation path. Remove the unpublished sibling rather than retaining
+    // a ghost credential that generic APIs cannot mutate.
+    let before = file.api_keys.len();
+    file.api_keys.retain(|record| {
+        !(record.status == "pending_rotation"
+            && record
+                .rotation_from_key_id
+                .as_ref()
+                .is_some_and(|source_id| winners.contains_key(source_id)))
+    });
+    changed | (file.api_keys.len() != before)
 }
 
 fn redact_optional_error(error: &mut Option<String>) -> bool {
@@ -2884,6 +3572,12 @@ fn validate_usd_limit(field: &str, value: f64) -> Result<f64, AppError> {
     Ok(value)
 }
 
+fn pending_rotation_mutation_error() -> AppError {
+    AppError::InvalidRequest(
+        "a pending API key rotation can only be confirmed or cancelled".to_owned(),
+    )
+}
+
 fn validate_team_name(value: &str) -> Result<String, AppError> {
     let value = value.trim();
     if value.is_empty() || value.len() > 80 {
@@ -3017,23 +3711,111 @@ fn enforce_api_key_policy(check: ApiKeyPolicyCheck<'_>) -> Result<(), AppError> 
         provider_id,
     } = check;
 
-    enforce_ip_policy(policy.ip_restricted, &policy.allowed_ips, client_ip)?;
-    enforce_model_policy(
-        "API key",
-        &policy.allowed_models,
-        requested_model,
-        resolved_model,
-    )?;
-    enforce_provider_policy("API key", &policy.allowed_providers, provider_id)?;
-    enforce_model_policy(
-        "team",
-        &policy.team_allowed_models,
-        requested_model,
-        resolved_model,
-    )?;
-    enforce_provider_policy("team", &policy.team_allowed_providers, provider_id)?;
+    policy.enforce_client_ip(client_ip)?;
+    policy.enforce_route(requested_model, resolved_model, provider_id)
+}
 
-    Ok(())
+fn api_key_policy(record: &ApiKeyRecord, team: Option<&TeamRecord>) -> ApiKeyPolicy {
+    ApiKeyPolicy {
+        team_id: record.team_id.clone(),
+        ip_restricted: record.ip_restricted,
+        allowed_ips: record.allowed_ips.clone(),
+        allowed_models: record.allowed_models.clone(),
+        allowed_providers: record.allowed_providers.clone(),
+        team_allowed_models: team
+            .map(|team| team.allowed_models.clone())
+            .unwrap_or_default(),
+        team_allowed_providers: team
+            .map(|team| team.allowed_providers.clone())
+            .unwrap_or_default(),
+        team_daily_limit_usd: team.map(|team| team.daily_limit_usd).unwrap_or(0.0),
+        team_monthly_limit_usd: team.map(|team| team.monthly_limit_usd).unwrap_or(0.0),
+        spend_limit_usd: record.spend_limit_usd,
+        rate_limited: record.rate_limited,
+        five_hour_limit_usd: record.five_hour_limit_usd,
+        daily_limit_usd: record.daily_limit_usd,
+        weekly_limit_usd: record.weekly_limit_usd,
+        monthly_limit_usd: record.monthly_limit_usd,
+    }
+}
+
+fn api_key_policy_with_subject<'a>(
+    record: &ApiKeyRecord,
+    team: Option<&TeamRecord>,
+    records: impl Iterator<Item = &'a ApiKeyRecord>,
+) -> ApiKeyPolicy {
+    let mut policy = api_key_policy(record, team);
+    let subject = record.effective_quota_subject_id();
+    for candidate in records.filter(|candidate| candidate.effective_quota_subject_id() == subject) {
+        policy.spend_limit_usd =
+            stricter_positive_limit(policy.spend_limit_usd, candidate.spend_limit_usd);
+        policy.five_hour_limit_usd =
+            stricter_positive_limit(policy.five_hour_limit_usd, candidate.five_hour_limit_usd);
+        policy.daily_limit_usd =
+            stricter_positive_limit(policy.daily_limit_usd, candidate.daily_limit_usd);
+        policy.weekly_limit_usd =
+            stricter_positive_limit(policy.weekly_limit_usd, candidate.weekly_limit_usd);
+        policy.monthly_limit_usd =
+            stricter_positive_limit(policy.monthly_limit_usd, candidate.monthly_limit_usd);
+        policy.rate_limited |= candidate.rate_limited;
+    }
+    policy
+}
+
+fn inherit_stricter_spend_limits(target: &mut ApiKeyRecord, source: &ApiKeyRecord) {
+    target.spend_limit_usd =
+        stricter_positive_limit(target.spend_limit_usd, source.spend_limit_usd);
+    target.five_hour_limit_usd =
+        stricter_positive_limit(target.five_hour_limit_usd, source.five_hour_limit_usd);
+    target.daily_limit_usd =
+        stricter_positive_limit(target.daily_limit_usd, source.daily_limit_usd);
+    target.weekly_limit_usd =
+        stricter_positive_limit(target.weekly_limit_usd, source.weekly_limit_usd);
+    target.monthly_limit_usd =
+        stricter_positive_limit(target.monthly_limit_usd, source.monthly_limit_usd);
+    target.rate_limited |= source.rate_limited;
+}
+
+fn copy_subject_spend_limits(target: &mut ApiKeyRecord, source: &ApiKeyRecord) {
+    target.spend_limit_usd = source.spend_limit_usd;
+    target.rate_limited = source.rate_limited;
+    target.five_hour_limit_usd = source.five_hour_limit_usd;
+    target.daily_limit_usd = source.daily_limit_usd;
+    target.weekly_limit_usd = source.weekly_limit_usd;
+    target.monthly_limit_usd = source.monthly_limit_usd;
+}
+
+fn stricter_positive_limit(current: f64, candidate: f64) -> f64 {
+    match (current > 0.0, candidate > 0.0) {
+        (false, true) => candidate,
+        (true, true) => current.min(candidate),
+        _ => current,
+    }
+}
+
+fn api_key_is_usable_for_catalog(
+    record: &ApiKeyRecord,
+    teams: &BTreeMap<String, TeamRecord>,
+    now: u64,
+) -> bool {
+    if record.status != "active"
+        || record
+            .expires_at_ms
+            .is_some_and(|expires_at| expires_at <= now)
+    {
+        return false;
+    }
+    if record.ip_restricted
+        && !normalize_ip_rules(record.allowed_ips.clone())
+            .is_ok_and(|allowed_ips| !allowed_ips.is_empty())
+    {
+        return false;
+    }
+    record.team_id.as_deref().is_none_or(|team_id| {
+        teams
+            .get(team_id)
+            .is_some_and(|team| team.status.as_str() == "active")
+    })
 }
 
 fn effective_aliases_locked(
@@ -3097,6 +3879,13 @@ fn hash_secret(value: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+pub(crate) fn quota_subject_for_seed(seed: &str) -> String {
+    format!(
+        "qsub_{}",
+        hash_secret(&format!("modelport-quota-subject-v1:{seed}"))
+    )
+}
+
 fn preview_secret(value: &str) -> String {
     let start = value.chars().take(8).collect::<String>();
     let end = value
@@ -3122,6 +3911,7 @@ fn rebuild_api_key_hash_index(inner: &mut ControlInner) {
     inner.api_key_hash_index = inner
         .api_keys
         .iter()
+        .filter(|(_, record)| !record.key_hash.is_empty())
         .map(|(id, record)| (record.key_hash.clone(), id.clone()))
         .collect();
 }
@@ -3135,6 +3925,8 @@ fn now_millis() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Barrier};
+
     use axum::http::HeaderValue;
 
     use super::*;
@@ -3175,6 +3967,26 @@ mod tests {
             allowed_models: None,
             allowed_providers: None,
             expires_at: None,
+        }
+    }
+
+    fn api_key_update_input() -> UpdateApiKeyInput {
+        UpdateApiKeyInput {
+            name: None,
+            group: None,
+            team_id: None,
+            allowed_models: None,
+            allowed_providers: None,
+            expires_at: None,
+            status: None,
+            ip_restricted: None,
+            allowed_ips: None,
+            spend_limit_usd: None,
+            rate_limited: None,
+            five_hour_limit_usd: None,
+            daily_limit_usd: None,
+            weekly_limit_usd: None,
+            monthly_limit_usd: None,
         }
     }
 
@@ -3231,6 +4043,7 @@ mod tests {
                 tested_at_ms: 1,
                 success: false,
                 message: "provider echoed Bearer private-token".to_owned(),
+                tested_credential_id: None,
                 discovered_models: Vec::new(),
             }],
             provider_health: vec![ProviderHealthRecord {
@@ -3307,6 +4120,80 @@ mod tests {
     }
 
     #[test]
+    fn provider_and_credential_mutations_invalidate_connection_test_evidence() {
+        let store = ControlStore::for_tests();
+        let record_success = || {
+            store
+                .record_provider_test(
+                    "test-provider".to_owned(),
+                    true,
+                    "ok".to_owned(),
+                    vec!["test-model".to_owned()],
+                )
+                .unwrap();
+            assert!(store.provider_test_rows().contains_key("test-provider"));
+        };
+
+        record_success();
+        store
+            .upsert_provider_override(provider_override("test-provider", "Test Provider"))
+            .unwrap();
+        assert!(store.provider_test_rows().is_empty());
+
+        record_success();
+        store
+            .upsert_provider_model_override(ProviderModelOverrideRecord {
+                provider_id: "test-provider".to_owned(),
+                model: "test-model".to_owned(),
+                status: "active".to_owned(),
+                display_name: None,
+                family: None,
+                context_window: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+        assert!(store.provider_test_rows().is_empty());
+
+        record_success();
+        store
+            .upsert_provider_model_override(ProviderModelOverrideRecord {
+                provider_id: "test-provider".to_owned(),
+                model: "test-model".to_owned(),
+                status: "disabled".to_owned(),
+                display_name: None,
+                family: None,
+                context_window: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+        assert!(store.provider_test_rows().is_empty());
+
+        record_success();
+        store
+            .delete_provider_model_override("test-provider", "test-model")
+            .unwrap();
+        assert!(store.provider_test_rows().is_empty());
+
+        record_success();
+        store
+            .upsert_provider_credential(provider_credential("test-provider", "primary"))
+            .unwrap();
+        assert!(store.provider_test_rows().is_empty());
+
+        record_success();
+        store
+            .set_active_provider_credential("test-provider", "primary")
+            .unwrap();
+        assert!(store.provider_test_rows().is_empty());
+
+        record_success();
+        store.set_provider_disabled("test-provider", true).unwrap();
+        assert!(store.provider_test_rows().is_empty());
+    }
+
+    #[test]
     fn creates_and_authenticates_api_key() {
         let store = ControlStore::for_tests();
         let created = store
@@ -3329,6 +4216,522 @@ mod tests {
         let identity = store.authenticate_headers(&headers).unwrap().unwrap();
         assert_eq!(identity.user_id, "usr_test");
         assert_eq!(store.active_api_key_count("usr_test"), 1);
+    }
+
+    #[test]
+    fn catalog_usable_key_count_excludes_invalid_team_ip_and_expiry() {
+        let store = ControlStore::for_tests();
+        store
+            .upsert_team(UpsertTeamInput {
+                status: Some("disabled".to_owned()),
+                ..team_input(Some("team_disabled".to_owned()), "Disabled")
+            })
+            .unwrap();
+        let created = store
+            .create_api_key(api_key_input(Some("team_disabled".to_owned())))
+            .unwrap();
+        assert_eq!(store.active_api_key_count("usr_test"), 0);
+        assert_eq!(store.api_key_counts().1, 0);
+
+        store
+            .upsert_team(UpsertTeamInput {
+                status: Some("active".to_owned()),
+                ..team_input(Some("team_disabled".to_owned()), "Enabled")
+            })
+            .unwrap();
+        assert_eq!(store.active_api_key_count("usr_test"), 1);
+
+        {
+            let mut inner = store.inner.lock().expect("control lock poisoned");
+            let record = inner.api_keys.get_mut(&created.public.id).unwrap();
+            record.ip_restricted = true;
+            record.allowed_ips = vec!["   ".to_owned()];
+        }
+        assert_eq!(store.active_api_key_count("usr_test"), 0);
+
+        {
+            let mut inner = store.inner.lock().expect("control lock poisoned");
+            let record = inner.api_keys.get_mut(&created.public.id).unwrap();
+            record.allowed_ips = vec!["127.0.0.1".to_owned()];
+        }
+        assert_eq!(store.active_api_key_count("usr_test"), 1);
+
+        {
+            let mut inner = store.inner.lock().expect("control lock poisoned");
+            inner
+                .api_keys
+                .get_mut(&created.public.id)
+                .unwrap()
+                .expires_at_ms = Some(now_millis());
+        }
+        assert_eq!(store.active_api_key_count("usr_test"), 0);
+        assert!(store.user_catalog_grants("usr_test", None).is_empty());
+    }
+
+    #[test]
+    fn expired_key_does_not_consume_atomic_self_service_limit() {
+        let store = ControlStore::for_tests();
+        let mut created_ids = Vec::new();
+        for _ in 0..5 {
+            created_ids.push(
+                store
+                    .create_api_key_with_active_limit(api_key_input(None), 5)
+                    .unwrap()
+                    .public
+                    .id,
+            );
+        }
+        assert!(
+            store
+                .create_api_key_with_active_limit(api_key_input(None), 5)
+                .is_err()
+        );
+        {
+            let mut inner = store.inner.lock().expect("control lock poisoned");
+            inner
+                .api_keys
+                .get_mut(&created_ids[0])
+                .unwrap()
+                .expires_at_ms = Some(now_millis());
+        }
+
+        store
+            .create_api_key_with_active_limit(api_key_input(None), 5)
+            .unwrap();
+        assert_eq!(store.active_api_key_count("usr_test"), 5);
+    }
+
+    #[test]
+    fn self_service_active_key_limit_is_atomic_under_concurrency() {
+        let store = Arc::new(ControlStore::for_tests());
+        let barrier = Arc::new(Barrier::new(16));
+        let handles = (0..16)
+            .map(|_| {
+                let store = store.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    store.create_api_key_with_active_limit(api_key_input(None), 5)
+                })
+            })
+            .collect::<Vec<_>>();
+        let success_count = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .filter(Result::is_ok)
+            .count();
+
+        assert_eq!(success_count, 5);
+        assert_eq!(store.active_api_key_count("usr_test"), 5);
+    }
+
+    #[test]
+    fn cancelling_api_key_rotation_is_idempotent_after_a_lost_response() {
+        let store = ControlStore::for_tests();
+        let current = store.create_api_key(api_key_input(None)).unwrap();
+        let replacement = store.rotate_api_key(&current.public.id).unwrap();
+
+        store
+            .cancel_api_key_rotation(&current.public.id, &replacement.public.id)
+            .unwrap();
+        store
+            .cancel_api_key_rotation(&current.public.id, &replacement.public.id)
+            .unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_str(&current.key).unwrap());
+        assert!(store.authenticate_headers(&headers).unwrap().is_some());
+    }
+
+    #[test]
+    fn pending_rotation_rejects_generic_mutations_and_terminal_revocation_removes_it() {
+        let store = ControlStore::for_tests();
+        let source = store.create_api_key(api_key_input(None)).unwrap();
+        let pending = store.rotate_api_key(&source.public.id).unwrap();
+
+        let mut activate = api_key_update_input();
+        activate.status = Some("active".to_owned());
+        assert!(matches!(
+            store.update_api_key(&pending.public.id, activate),
+            Err(AppError::InvalidRequest(message)) if message.contains("only be confirmed or cancelled")
+        ));
+        assert!(matches!(
+            store.bind_api_key_scope(
+                &pending.public.id,
+                BindApiKeyScopeInput {
+                    organization_id: "org_pending".to_owned(),
+                    project_id: "prj_pending".to_owned(),
+                    environment_id: "env_pending".to_owned(),
+                },
+            ),
+            Err(AppError::InvalidRequest(message)) if message.contains("only be confirmed or cancelled")
+        ));
+        assert!(matches!(
+            store.revoke_api_key(&pending.public.id),
+            Err(AppError::InvalidRequest(message)) if message.contains("only be confirmed or cancelled")
+        ));
+        assert!(matches!(
+            store.delete_api_key(&pending.public.id),
+            Err(AppError::InvalidRequest(message)) if message.contains("only be confirmed or cancelled")
+        ));
+
+        let mut source_headers = HeaderMap::new();
+        source_headers.insert("x-api-key", HeaderValue::from_str(&source.key).unwrap());
+        assert!(
+            store
+                .authenticate_headers(&source_headers)
+                .unwrap()
+                .is_some()
+        );
+
+        let mut revoke = api_key_update_input();
+        revoke.status = Some("revoked".to_owned());
+        store.update_api_key(&source.public.id, revoke).unwrap();
+        assert!(
+            !store
+                .inner
+                .lock()
+                .unwrap()
+                .api_keys
+                .contains_key(&pending.public.id)
+        );
+    }
+
+    #[test]
+    fn rotation_confirm_inherits_current_policy_and_scope_and_cannot_restore_source() {
+        let store = ControlStore::for_tests();
+        let source = store.create_api_key(api_key_input(None)).unwrap();
+        let pending = store.rotate_api_key(&source.public.id).unwrap();
+        let expires_at = now_millis().saturating_add(60_000).to_string();
+        let mut tightened = api_key_update_input();
+        tightened.name = Some("tightened after prepare".to_owned());
+        tightened.group = Some("restricted".to_owned());
+        tightened.allowed_models = Some(vec!["safe-model".to_owned()]);
+        tightened.allowed_providers = Some(vec!["safe-provider".to_owned()]);
+        tightened.expires_at = Some(expires_at);
+        tightened.ip_restricted = Some(true);
+        tightened.allowed_ips = Some(vec!["127.0.0.1".to_owned()]);
+        tightened.spend_limit_usd = Some(2.0);
+        tightened.daily_limit_usd = Some(1.0);
+        store.update_api_key(&source.public.id, tightened).unwrap();
+        store
+            .bind_api_key_scope(
+                &source.public.id,
+                BindApiKeyScopeInput {
+                    organization_id: "org_after_prepare".to_owned(),
+                    project_id: "prj_after_prepare".to_owned(),
+                    environment_id: "env_after_prepare".to_owned(),
+                },
+            )
+            .unwrap();
+
+        let confirmed = store
+            .confirm_api_key_rotation(&source.public.id, &pending.public.id)
+            .unwrap();
+        assert_eq!(confirmed.name, "tightened after prepare");
+        assert_eq!(confirmed.group.as_deref(), Some("restricted"));
+        assert_eq!(confirmed.allowed_models, vec!["safe-model"]);
+        assert_eq!(confirmed.allowed_providers, vec!["safe-provider"]);
+        assert!(confirmed.ip_restricted);
+        assert_eq!(confirmed.allowed_ips, vec!["127.0.0.1"]);
+        assert_eq!(confirmed.spend_limit_usd, 2.0);
+        assert_eq!(confirmed.daily_limit_usd, 1.0);
+        assert_eq!(confirmed.organization_id, "org_after_prepare");
+        assert_eq!(confirmed.project_id, "prj_after_prepare");
+        assert_eq!(confirmed.environment_id, "env_after_prepare");
+
+        let mut replacement_headers = HeaderMap::new();
+        replacement_headers.insert("x-api-key", HeaderValue::from_str(&pending.key).unwrap());
+        let identity = store
+            .authenticate_headers(&replacement_headers)
+            .unwrap()
+            .expect("confirmed replacement authenticates");
+        assert!(
+            identity
+                .api_key_policy
+                .enforce_route("unsafe-model", "unsafe-model", "safe-provider")
+                .is_err()
+        );
+        assert!(
+            identity
+                .api_key_policy
+                .enforce_route("safe-model", "safe-model", "safe-provider")
+                .is_ok()
+        );
+        let tenant = store.tenant_scope(&identity).unwrap();
+        assert_eq!(tenant.organization_id.as_str(), "org_after_prepare");
+        assert_eq!(tenant.project_id.as_str(), "prj_after_prepare");
+        assert_eq!(tenant.environment_id.as_str(), "env_after_prepare");
+
+        let source_record = store
+            .list_api_keys()
+            .into_iter()
+            .find(|record| record.id == source.public.id)
+            .unwrap();
+        assert_eq!(
+            source_record.superseded_by_key_id.as_deref(),
+            Some(pending.public.id.as_str())
+        );
+        let mut restore = api_key_update_input();
+        restore.status = Some("active".to_owned());
+        assert!(matches!(
+            store.update_api_key(&source.public.id, restore),
+            Err(AppError::InvalidRequest(message)) if message.contains("superseded")
+        ));
+        let mut source_headers = HeaderMap::new();
+        source_headers.insert("x-api-key", HeaderValue::from_str(&source.key).unwrap());
+        assert!(!matches!(
+            store.authenticate_headers(&source_headers),
+            Ok(Some(_))
+        ));
+    }
+
+    #[test]
+    fn deleting_user_resources_removes_pending_rotation_records() {
+        let store = ControlStore::for_tests();
+        let source = store.create_api_key(api_key_input(None)).unwrap();
+        let pending = store.rotate_api_key(&source.public.id).unwrap();
+
+        store.delete_user_resources(&source.public.user_id).unwrap();
+
+        let inner = store.inner.lock().unwrap();
+        assert_eq!(inner.api_keys[&source.public.id].status, "revoked");
+        assert!(!inner.api_keys.contains_key(&pending.public.id));
+    }
+
+    #[test]
+    fn legacy_multi_hop_rotation_repair_restores_tombstones_and_usage_aliases() {
+        let store = ControlStore::for_tests();
+        let key_a = store.create_api_key(api_key_input(None)).unwrap();
+        let key_b = store.rotate_api_key(&key_a.public.id).unwrap();
+        store
+            .confirm_api_key_rotation(&key_a.public.id, &key_b.public.id)
+            .unwrap();
+        let key_c = store.rotate_api_key(&key_b.public.id).unwrap();
+        store
+            .confirm_api_key_rotation(&key_b.public.id, &key_c.public.id)
+            .unwrap();
+
+        let mut file = ControlFile {
+            api_keys: store
+                .inner
+                .lock()
+                .unwrap()
+                .api_keys
+                .values()
+                .cloned()
+                .collect(),
+            ..ControlFile::default()
+        };
+        for record in &mut file.api_keys {
+            record.superseded_by_key_id = None;
+            record.quota_subject_id.clear();
+            record.quota_subject_aliases.clear();
+            if record.id == key_a.public.id {
+                record.key_hash = hash_secret(&key_a.key);
+            } else if record.id == key_b.public.id {
+                record.key_hash = hash_secret(&key_b.key);
+            }
+        }
+
+        assert!(repair_api_key_rotation_invariants(&mut file));
+        let by_id = file
+            .api_keys
+            .iter()
+            .map(|record| (record.id.as_str(), record))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            by_id[&key_a.public.id.as_str()]
+                .superseded_by_key_id
+                .as_deref(),
+            Some(key_b.public.id.as_str())
+        );
+        assert_eq!(
+            by_id[&key_b.public.id.as_str()]
+                .superseded_by_key_id
+                .as_deref(),
+            Some(key_c.public.id.as_str())
+        );
+        assert!(by_id[&key_a.public.id.as_str()].key_hash.is_empty());
+        assert!(by_id[&key_b.public.id.as_str()].key_hash.is_empty());
+        let repaired_c = by_id[&key_c.public.id.as_str()];
+        assert_eq!(
+            repaired_c.quota_subject_id,
+            quota_subject_for_seed(&key_a.public.id)
+        );
+        for historical_id in [&key_a.public.id, &key_b.public.id, &key_c.public.id] {
+            assert!(repaired_c.quota_subject_aliases.contains(historical_id));
+            assert!(
+                repaired_c
+                    .quota_subject_aliases
+                    .contains(&quota_subject_for_seed(historical_id))
+            );
+        }
+    }
+
+    #[test]
+    fn self_service_keys_share_subject_and_keep_strict_limits_after_delete() {
+        let store = ControlStore::for_tests();
+        let key_a = store
+            .create_api_key_with_active_limit(api_key_input(None), 5)
+            .unwrap();
+        let mut limits = api_key_update_input();
+        limits.spend_limit_usd = Some(0.25);
+        limits.rate_limited = Some(true);
+        limits.five_hour_limit_usd = Some(0.10);
+        store.update_api_key(&key_a.public.id, limits).unwrap();
+        let key_b = store
+            .create_api_key_with_active_limit(api_key_input(None), 5)
+            .unwrap();
+
+        let identity = |secret: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert("x-api-key", HeaderValue::from_str(secret).unwrap());
+            store
+                .authenticate_headers(&headers)
+                .unwrap()
+                .expect("active self-service key")
+        };
+        let identity_a = identity(&key_a.key);
+        let identity_b = identity(&key_b.key);
+        assert_eq!(identity_a.quota_subject_id, identity_b.quota_subject_id);
+        assert_eq!(identity_b.api_key_policy.spend_limit_usd, 0.25);
+        assert_eq!(identity_b.api_key_policy.five_hour_limit_usd, 0.10);
+        assert!(identity_b.api_key_policy.rate_limited);
+
+        store.delete_api_key(&key_a.public.id).unwrap();
+        store.delete_api_key(&key_b.public.id).unwrap();
+        let key_c = store
+            .create_api_key_with_active_limit(api_key_input(None), 5)
+            .unwrap();
+        let identity_c = identity(&key_c.key);
+        assert_eq!(identity_c.quota_subject_id, identity_b.quota_subject_id);
+        assert_eq!(identity_c.api_key_policy.spend_limit_usd, 0.25);
+        assert_eq!(identity_c.api_key_policy.five_hour_limit_usd, 0.10);
+        assert!(
+            store
+                .list_api_keys()
+                .iter()
+                .all(|record| record.id != key_a.public.id && record.id != key_b.public.id)
+        );
+    }
+
+    #[test]
+    fn explicit_subject_policy_update_can_raise_or_clear_rotated_limits() {
+        let store = ControlStore::for_tests();
+        let source = store.create_api_key(api_key_input(None)).unwrap();
+        let mut strict = api_key_update_input();
+        strict.spend_limit_usd = Some(1.0);
+        strict.rate_limited = Some(true);
+        strict.five_hour_limit_usd = Some(0.5);
+        strict.daily_limit_usd = Some(0.75);
+        store.update_api_key(&source.public.id, strict).unwrap();
+
+        let replacement = store.rotate_api_key(&source.public.id).unwrap();
+        store
+            .confirm_api_key_rotation(&source.public.id, &replacement.public.id)
+            .unwrap();
+
+        let mut raised = api_key_update_input();
+        raised.spend_limit_usd = Some(100.0);
+        raised.rate_limited = Some(false);
+        raised.five_hour_limit_usd = Some(50.0);
+        raised.daily_limit_usd = Some(75.0);
+        let raised = store
+            .update_api_key(&replacement.public.id, raised)
+            .unwrap();
+        assert_eq!(raised.spend_limit_usd, 100.0);
+        assert!(!raised.rate_limited);
+        assert_eq!(raised.five_hour_limit_usd, 50.0);
+        assert_eq!(raised.daily_limit_usd, 75.0);
+
+        let lineage = store
+            .list_api_keys()
+            .into_iter()
+            .filter(|record| record.id == source.public.id || record.id == replacement.public.id)
+            .collect::<Vec<_>>();
+        assert_eq!(lineage.len(), 2);
+        assert!(lineage.iter().all(|record| {
+            record.spend_limit_usd == 100.0
+                && !record.rate_limited
+                && record.five_hour_limit_usd == 50.0
+                && record.daily_limit_usd == 75.0
+        }));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-api-key",
+            HeaderValue::from_str(&replacement.key).unwrap(),
+        );
+        let identity = store.authenticate_headers(&headers).unwrap().unwrap();
+        assert_eq!(identity.api_key_policy.spend_limit_usd, 100.0);
+        assert!(!identity.api_key_policy.rate_limited);
+
+        let mut cleared = api_key_update_input();
+        cleared.spend_limit_usd = Some(0.0);
+        cleared.five_hour_limit_usd = Some(0.0);
+        cleared.daily_limit_usd = Some(0.0);
+        store
+            .update_api_key(&replacement.public.id, cleared)
+            .unwrap();
+        let identity = store.authenticate_headers(&headers).unwrap().unwrap();
+        assert_eq!(identity.api_key_policy.spend_limit_usd, 0.0);
+        assert_eq!(identity.api_key_policy.five_hour_limit_usd, 0.0);
+        assert_eq!(identity.api_key_policy.daily_limit_usd, 0.0);
+    }
+
+    #[test]
+    fn first_self_service_key_adopts_legacy_user_subjects_and_aliases() {
+        let store = ControlStore::for_tests();
+        let legacy = store.create_api_key(api_key_input(None)).unwrap();
+        let mut strict = api_key_update_input();
+        strict.spend_limit_usd = Some(0.25);
+        strict.rate_limited = Some(true);
+        store.update_api_key(&legacy.public.id, strict).unwrap();
+
+        let legacy_subject = quota_subject_for_seed(&legacy.public.id);
+        let self_service = store
+            .create_api_key_with_active_limit(api_key_input(None), 5)
+            .unwrap();
+        let stable_subject = legacy_subject.clone();
+
+        let identity = |secret: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert("x-api-key", HeaderValue::from_str(secret).unwrap());
+            store.authenticate_headers(&headers).unwrap().unwrap()
+        };
+        let legacy_identity = identity(&legacy.key);
+        let self_service_identity = identity(&self_service.key);
+        assert_eq!(
+            legacy_identity.quota_subject_id.as_deref(),
+            Some(stable_subject.as_str())
+        );
+        assert_eq!(
+            self_service_identity.quota_subject_id.as_deref(),
+            Some(stable_subject.as_str())
+        );
+        for alias in [&legacy.public.id, &legacy_subject, &stable_subject] {
+            assert!(self_service_identity.quota_subject_aliases.contains(alias));
+        }
+        assert_eq!(self_service_identity.api_key_policy.spend_limit_usd, 0.25);
+        assert!(self_service_identity.api_key_policy.rate_limited);
+
+        let rows = store.list_user_api_keys(&legacy.public.user_id);
+        assert!(rows.iter().all(|row| row.spend_limit_usd == 0.25));
+        assert!(rows.iter().all(|row| row.rate_limited));
+
+        store.delete_api_key(&legacy.public.id).unwrap();
+        store.delete_api_key(&self_service.public.id).unwrap();
+        let recreated = store
+            .create_api_key_with_active_limit(api_key_input(None), 5)
+            .unwrap();
+        let recreated_identity = identity(&recreated.key);
+        assert_eq!(
+            recreated_identity.quota_subject_id.as_deref(),
+            Some(stable_subject.as_str())
+        );
+        assert!(recreated_identity.api_key_policy.rate_limited);
+        assert_eq!(recreated_identity.api_key_policy.spend_limit_usd, 0.25);
     }
 
     #[test]
@@ -3503,6 +4906,8 @@ mod tests {
             username: "test-user".to_owned(),
             principal_type: "user".to_owned(),
             api_key_id: Some("key_test".to_owned()),
+            quota_subject_id: Some("key_test".to_owned()),
+            quota_subject_aliases: vec!["key_test".to_owned()],
             api_key_name: Some("local".to_owned()),
             api_key_group: Some("test".to_owned()),
             team_id: None,

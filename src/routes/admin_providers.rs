@@ -70,12 +70,24 @@ pub(super) struct ProviderCredentialPoolBody {
     mode: String,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ProviderCatalogQuery {
+    pub(super) api_key_id: Option<String>,
+}
+
 pub(super) async fn admin_providers(
     State(state): State<AppState>,
+    Query(query): Query<ProviderCatalogQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    require_console_user(&state, &headers)?;
-    Ok(Json(Value::Array(provider_rows(&state))))
+    let actor = require_console_user(&state, &headers)?;
+    let rows = if actor.role == "admin" {
+        provider_rows(&state)
+    } else {
+        catalog_provider_rows(&state, &actor.id, query.api_key_id.as_deref())
+    };
+    Ok(Json(Value::Array(rows)))
 }
 
 pub(super) async fn admin_create_provider(
@@ -101,7 +113,7 @@ pub(super) async fn admin_create_provider(
     ensure_organization_approved_provider(&state, &record)?;
     let record = state.control.upsert_provider_override(record)?;
     state.control.set_provider_disabled(&record.id, disabled)?;
-    state.governance.mark_change_applied(&approval_id)?;
+    mark_high_risk_change_applied(&state, approval_id.as_deref())?;
     record_admin_activity(
         &state,
         &actor,
@@ -141,7 +153,7 @@ pub(super) async fn admin_update_provider(
     if let Some(disabled) = disabled {
         state.control.set_provider_disabled(&record.id, disabled)?;
     }
-    state.governance.mark_change_applied(&approval_id)?;
+    mark_high_risk_change_applied(&state, approval_id.as_deref())?;
     record_admin_activity(
         &state,
         &actor,
@@ -179,7 +191,7 @@ pub(super) async fn admin_set_provider_disabled(
     state
         .control
         .set_provider_disabled(&provider_id, disabled)?;
-    state.governance.mark_change_applied(&approval_id)?;
+    mark_high_risk_change_applied(&state, approval_id.as_deref())?;
     record_admin_activity(
         &state,
         &actor,
@@ -242,7 +254,7 @@ pub(super) async fn admin_delete_provider(
 
     let tombstone = state.config.snapshot().providers.contains_key(&provider_id);
     state.control.delete_provider(&provider_id, tombstone)?;
-    state.governance.mark_change_applied(&approval_id)?;
+    mark_high_risk_change_applied(&state, approval_id.as_deref())?;
     record_admin_activity(
         &state,
         &actor,
@@ -266,24 +278,26 @@ pub(super) async fn admin_provider_models(
         return Err(AppError::ProviderNotFound(provider_id));
     };
 
-    let (success, message, models) =
-        match discover_provider_models(&state, &provider_id, &provider).await {
-            Ok(models) => {
-                let message = if provider_supports_model_discovery(&provider_id, &provider) {
-                    format!("discovered {} model(s)", models.len())
-                } else {
-                    "model discovery is not available for this protocol; returned configured models"
-                        .to_owned()
-                };
-                (true, message, models)
-            }
-            Err(err) => (false, err.audit_message(), Vec::new()),
-        };
-    let tested_at = state.control.record_provider_test(
+    let probe = run_provider_management_probe(&state, &provider_id, &provider).await?;
+    let tested_credential_id = probe.tested_credential_id;
+    let (success, message, models) = match probe.result {
+        Ok(models) => {
+            let message = if provider_supports_model_discovery(&provider_id, &provider) {
+                format!("discovered {} model(s)", models.len())
+            } else {
+                "model discovery is not available for this protocol; returned configured models"
+                    .to_owned()
+            };
+            (true, message, models)
+        }
+        Err(message) => (false, message, Vec::new()),
+    };
+    let tested_at = state.control.record_provider_test_for_credential(
         provider_id.clone(),
         success,
         message.clone(),
         models.clone(),
+        tested_credential_id.clone(),
     )?;
     record_admin_activity(
         &state,
@@ -301,6 +315,7 @@ pub(super) async fn admin_provider_models(
         "message": message,
         "models": models,
         "modelCount": models.len(),
+        "testedCredentialId": tested_credential_id,
         "discoveredAt": tested_at.to_string(),
     })))
 }
@@ -398,7 +413,7 @@ pub(super) async fn admin_upsert_provider_model(
             created_at_ms: 0,
             updated_at_ms: 0,
         })?;
-    state.governance.mark_change_applied(&approval_id)?;
+    mark_high_risk_change_applied(&state, approval_id.as_deref())?;
     record_admin_activity(
         &state,
         &actor,
@@ -458,7 +473,7 @@ pub(super) async fn admin_delete_provider_model(
     let record = state
         .control
         .delete_provider_model_override(&provider_id, &body.model)?;
-    state.governance.mark_change_applied(&approval_id)?;
+    mark_high_risk_change_applied(&state, approval_id.as_deref())?;
     record_admin_activity(
         &state,
         &actor,

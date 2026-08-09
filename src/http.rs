@@ -1,6 +1,9 @@
 use std::{
+    collections::HashMap,
     env,
+    net::SocketAddr,
     pin::Pin,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -24,16 +27,26 @@ const DEFAULT_MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 const DEFAULT_MAX_SSE_LINE_BYTES: usize = 1024 * 1024;
 const DEFAULT_MAX_SSE_EVENT_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_MAX_SSE_STREAM_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PINNED_CLIENTS: usize = 128;
 
 #[derive(Debug, Clone)]
 pub struct HttpTransport {
     client: Client,
+    connect_timeout: Duration,
+    user_agent: String,
+    pinned_clients: Arc<Mutex<HashMap<PinnedClientKey, Client>>>,
     request_timeout: Duration,
     stream_idle_timeout: Duration,
     max_response_bytes: usize,
     max_sse_line_bytes: usize,
     max_sse_event_bytes: usize,
     max_sse_stream_bytes: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PinnedClientKey {
+    dns_name: String,
+    addresses: Vec<SocketAddr>,
 }
 
 #[derive(Debug, Clone)]
@@ -72,16 +85,13 @@ impl HttpTransport {
         let user_agent = env::var("MODELPORT_HTTP_USER_AGENT")
             .unwrap_or_else(|_| format!("model-port/{}", env!("CARGO_PKG_VERSION")));
 
-        let client = Client::builder()
-            .connect_timeout(connect_timeout)
-            .pool_idle_timeout(Duration::from_secs(90))
-            .redirect(Policy::none())
-            .user_agent(user_agent)
-            .build()
-            .map_err(|err| AppError::Transport(format!("failed to build HTTP client: {err}")))?;
+        let client = build_client(connect_timeout, &user_agent, None)?;
 
         Ok(Self {
             client,
+            connect_timeout,
+            user_agent,
+            pinned_clients: Arc::new(Mutex::new(HashMap::new())),
             request_timeout,
             stream_idle_timeout,
             max_response_bytes,
@@ -93,13 +103,17 @@ impl HttpTransport {
 
     pub async fn post_json(
         &self,
+        provider_id: &str,
+        allow_private_provider_urls: bool,
         url: &str,
         headers: &[Header],
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, AppError> {
         let started = Instant::now();
-        let response = self
-            .client
+        let client = self
+            .client_for_provider(provider_id, url, allow_private_provider_urls)
+            .await?;
+        let response = client
             .post(url)
             .headers(header_map(headers)?)
             .json(body)
@@ -131,12 +145,16 @@ impl HttpTransport {
 
     pub async fn get_json(
         &self,
+        provider_id: &str,
+        allow_private_provider_urls: bool,
         url: &str,
         headers: &[Header],
     ) -> Result<serde_json::Value, AppError> {
         let started = Instant::now();
-        let response = self
-            .client
+        let client = self
+            .client_for_provider(provider_id, url, allow_private_provider_urls)
+            .await?;
+        let response = client
             .get(url)
             .headers(header_map(headers)?)
             .timeout(self.request_timeout)
@@ -167,16 +185,20 @@ impl HttpTransport {
 
     pub async fn post_json_sse(
         &self,
+        provider_id: &str,
+        allow_private_provider_urls: bool,
         url: String,
         headers: Vec<Header>,
         body: serde_json::Value,
     ) -> Result<SseFrameStream, AppError> {
         let transport = self.clone();
         let started = Instant::now();
+        let client = transport
+            .client_for_provider(provider_id, &url, allow_private_provider_urls)
+            .await?;
         let response = tokio::time::timeout(
             transport.request_timeout,
-            transport
-                .client
+            client
                 .post(&url)
                 .headers(header_map(&headers)?)
                 .header(reqwest::header::ACCEPT, "text/event-stream")
@@ -255,16 +277,31 @@ impl HttpTransport {
                 let mut stream_received_bytes = 0usize;
 
                 loop {
+                    let total_remaining = transport
+                        .request_timeout
+                        .checked_sub(started.elapsed())
+                        .ok_or_else(|| AppError::Transport(format!(
+                            "upstream stream total timeout after {} seconds",
+                            transport.request_timeout.as_secs()
+                        )))?;
+                    let read_timeout = transport.stream_idle_timeout.min(total_remaining);
                     let chunk = tokio::time::timeout(
-                        transport.stream_idle_timeout,
+                        read_timeout,
                         chunks.next(),
                     )
                     .await
                     .map_err(|_| {
-                        AppError::Transport(format!(
-                            "upstream stream idle timeout after {} seconds",
-                            transport.stream_idle_timeout.as_secs()
-                        ))
+                        if started.elapsed() >= transport.request_timeout {
+                            AppError::Transport(format!(
+                                "upstream stream total timeout after {} seconds",
+                                transport.request_timeout.as_secs()
+                            ))
+                        } else {
+                            AppError::Transport(format!(
+                                "upstream stream idle timeout after {} seconds",
+                                transport.stream_idle_timeout.as_secs()
+                            ))
+                        }
                     })?;
 
                     let Some(chunk) = chunk else {
@@ -364,6 +401,69 @@ impl HttpTransport {
             }
         }))
     }
+
+    async fn client_for_provider(
+        &self,
+        provider_id: &str,
+        url: &str,
+        allow_private_provider_urls: bool,
+    ) -> Result<Client, AppError> {
+        let pin = crate::config::resolve_provider_base_url_for_connection(
+            provider_id,
+            url,
+            allow_private_provider_urls,
+        )
+        .await?;
+        let Some(dns_name) = pin.dns_name else {
+            // Literal IP URLs do not perform a second DNS lookup. Their IP was
+            // checked by the same policy immediately above.
+            return Ok(self.client.clone());
+        };
+        let key = PinnedClientKey {
+            dns_name,
+            addresses: pin.addresses,
+        };
+        if let Some(client) = self
+            .pinned_clients
+            .lock()
+            .expect("pinned HTTP client cache lock poisoned")
+            .get(&key)
+            .cloned()
+        {
+            return Ok(client);
+        }
+
+        let client = build_client(self.connect_timeout, &self.user_agent, Some(&key))?;
+        let mut clients = self
+            .pinned_clients
+            .lock()
+            .expect("pinned HTTP client cache lock poisoned");
+        if clients.len() >= MAX_PINNED_CLIENTS {
+            clients.clear();
+        }
+        Ok(clients.entry(key).or_insert_with(|| client.clone()).clone())
+    }
+}
+
+fn build_client(
+    connect_timeout: Duration,
+    user_agent: &str,
+    pin: Option<&PinnedClientKey>,
+) -> Result<Client, AppError> {
+    let mut builder = Client::builder()
+        .connect_timeout(connect_timeout)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .redirect(Policy::none())
+        // Environment proxies can resolve the destination independently and
+        // would invalidate connection-level DNS pinning.
+        .no_proxy()
+        .user_agent(user_agent);
+    if let Some(pin) = pin {
+        builder = builder.resolve_to_addrs(&pin.dns_name, &pin.addresses);
+    }
+    builder
+        .build()
+        .map_err(|err| AppError::Transport(format!("failed to build HTTP client: {err}")))
 }
 
 fn ensure_sse_line_limit(line: &[u8], limit: usize) -> Result<(), AppError> {
@@ -892,6 +992,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pinned_client_connects_only_to_validated_addresses_and_preserves_host() {
+        let app = Router::new().route(
+            "/host",
+            get(|headers: axum::http::HeaderMap| async move {
+                headers
+                    .get(axum::http::header::HOST)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("missing")
+                    .to_owned()
+            }),
+        );
+        let base_url = spawn_upstream(app).await;
+        let parsed = reqwest::Url::parse(&base_url).unwrap();
+        let address = SocketAddr::new(
+            parsed.host_str().unwrap().parse().unwrap(),
+            parsed.port().unwrap(),
+        );
+        let pin = PinnedClientKey {
+            dns_name: "provider.invalid".to_owned(),
+            addresses: vec![address],
+        };
+        let client = build_client(
+            Duration::from_secs(1),
+            "model-port-pinning-test",
+            Some(&pin),
+        )
+        .unwrap();
+
+        let response = client
+            .get(format!("http://provider.invalid:{}/host", address.port()))
+            .send()
+            .await
+            .unwrap();
+        let host = response.text().await.unwrap();
+
+        assert_eq!(host, format!("provider.invalid:{}", address.port()));
+    }
+
+    #[tokio::test]
     async fn sse_handshake_applies_request_timeout() {
         let app = Router::new().route(
             "/stream",
@@ -904,6 +1043,8 @@ mod tests {
         let transport = test_transport(Duration::from_millis(25), 1024, 4096, 8192);
         let error = match transport
             .post_json_sse(
+                "local_test",
+                true,
                 format!("{base_url}/stream"),
                 Vec::new(),
                 serde_json::json!({}),
@@ -931,6 +1072,8 @@ mod tests {
 
         let error = match transport
             .post_json_sse(
+                "local_test",
+                true,
                 format!("{base_url}/stream"),
                 Vec::new(),
                 serde_json::json!({}),
@@ -973,6 +1116,8 @@ mod tests {
 
         let error = match transport
             .post_json_sse(
+                "local_test",
+                true,
                 format!("{base_url}/stream"),
                 Vec::new(),
                 serde_json::json!({}),
@@ -986,6 +1131,55 @@ mod tests {
         assert!(matches!(
             error,
             AppError::Transport(message) if message.contains("error body timed out")
+        ));
+    }
+
+    #[tokio::test]
+    async fn successful_sse_stream_has_a_total_timeout() {
+        let app = Router::new().route(
+            "/stream",
+            post(|| async {
+                let chunks = futures_util::stream::unfold(0u64, |index| async move {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    Some((
+                        Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(format!(
+                            "data: {index}\n\n"
+                        ))),
+                        index.saturating_add(1),
+                    ))
+                });
+                axum::response::Response::builder()
+                    .header(CONTENT_TYPE, "text/event-stream")
+                    .body(axum::body::Body::from_stream(chunks))
+                    .unwrap()
+            }),
+        );
+        let base_url = spawn_upstream(app).await;
+        let transport = test_transport(Duration::from_millis(120), 1024, 4096, 8192);
+        let mut stream = transport
+            .post_json_sse(
+                "local_test",
+                true,
+                format!("{base_url}/stream"),
+                Vec::new(),
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+
+        let error = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(Err(error)) = stream.next().await {
+                    break error;
+                }
+            }
+        })
+        .await
+        .expect("stream should stop at its total timeout");
+
+        assert!(matches!(
+            error,
+            AppError::Transport(message) if message.contains("stream total timeout")
         ));
     }
 
@@ -1005,6 +1199,8 @@ mod tests {
 
         let error = match transport
             .post_json_sse(
+                "local_test",
+                true,
                 format!("{base_url}/stream"),
                 Vec::new(),
                 serde_json::json!({}),
@@ -1035,6 +1231,8 @@ mod tests {
 
         let error = match transport
             .post_json_sse(
+                "local_test",
+                true,
                 format!("{base_url}/stream"),
                 Vec::new(),
                 serde_json::json!({}),
@@ -1056,7 +1254,7 @@ mod tests {
         let url = spawn_sse_upstream("").await;
         let transport = test_transport(Duration::from_secs(1), 1024, 4096, 8192);
         let mut stream = transport
-            .post_json_sse(url, Vec::new(), serde_json::json!({}))
+            .post_json_sse("local_test", true, url, Vec::new(), serde_json::json!({}))
             .await
             .unwrap();
 
@@ -1104,7 +1302,7 @@ mod tests {
         let url = spawn_sse_upstream("event: x\ndata: 1\n\nevent: y\ndata: 2\n\n").await;
         let transport = test_transport(Duration::from_secs(1), 8, 15, 1024);
         let mut stream = transport
-            .post_json_sse(url, Vec::new(), serde_json::json!({}))
+            .post_json_sse("local_test", true, url, Vec::new(), serde_json::json!({}))
             .await
             .unwrap();
 
@@ -1125,7 +1323,14 @@ mod tests {
         max_sse_stream_bytes: usize,
     ) -> HttpTransport {
         HttpTransport {
-            client: Client::builder().redirect(Policy::none()).build().unwrap(),
+            client: Client::builder()
+                .no_proxy()
+                .redirect(Policy::none())
+                .build()
+                .unwrap(),
+            connect_timeout: Duration::from_secs(1),
+            user_agent: "model-port-test".to_owned(),
+            pinned_clients: Arc::new(Mutex::new(HashMap::new())),
             request_timeout,
             stream_idle_timeout: Duration::from_secs(1),
             max_response_bytes: 1024,
@@ -1137,7 +1342,7 @@ mod tests {
 
     async fn assert_sse_limit(transport: HttpTransport, url: String, setting: &str) {
         let mut stream = transport
-            .post_json_sse(url, Vec::new(), serde_json::json!({}))
+            .post_json_sse("local_test", true, url, Vec::new(), serde_json::json!({}))
             .await
             .unwrap();
         let error = stream.next().await.unwrap().unwrap_err();

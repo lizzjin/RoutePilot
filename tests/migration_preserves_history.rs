@@ -118,6 +118,16 @@ async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
         ))
         .execute(&mut connection)
         .await?;
+        sqlx::query(
+            "UPDATE modelport_gateway_requests
+             SET api_key_id = 'key_legacy'
+             WHERE ledger_id = 'ldr_legacy'",
+        )
+        .execute(&mut connection)
+        .await?;
+        sqlx::raw_sql(include_str!("../migrations/0009_api_key_quota_subject.sql"))
+            .execute(&mut connection)
+            .await?;
 
         let request = sqlx::query_as::<_, (String, String, String, i32, Option<String>, i64)>(
             "SELECT
@@ -155,12 +165,20 @@ async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
         )
         .fetch_one(&mut connection)
         .await?;
+        let legacy_quota_subject = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT quota_subject_id
+             FROM modelport_gateway_requests
+             WHERE ledger_id = 'ldr_legacy'",
+        )
+        .fetch_one(&mut connection)
+        .await?;
         Ok::<_, sqlx::Error>((
             request,
             attempt_count,
             last_attempt,
             routing_table_exists,
             legacy_state,
+            legacy_quota_subject,
         ))
     }
     .await;
@@ -174,8 +192,14 @@ async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
         .await
         .expect("remove isolated migration schema");
 
-    let (request, attempt_count, last_attempt, routing_table_exists, legacy_state) =
-        migration_result.expect("apply migrations to populated legacy schema");
+    let (
+        request,
+        attempt_count,
+        last_attempt,
+        routing_table_exists,
+        legacy_state,
+        legacy_quota_subject,
+    ) = migration_result.expect("apply migrations to populated legacy schema");
     assert_eq!(request.0, "usr_legacy");
     assert_eq!(request.1, "/v1/messages");
     assert_eq!(request.2, "provider_b");
@@ -189,6 +213,7 @@ async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
     assert!(routing_table_exists);
     assert_eq!(legacy_state.0["users"][0]["id"], "usr_legacy");
     assert_eq!(legacy_state.1, 0);
+    assert_eq!(legacy_quota_subject.as_deref(), Some("key_legacy"));
 }
 
 #[tokio::test]
@@ -238,8 +263,26 @@ async fn embedded_migrations_preserve_restored_operational_row_counts() {
     .fetch_one(&pool)
     .await
     .expect("verify required operational backfill");
+    let content_derived_retained_fingerprints = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*)
+         FROM modelport_gateway_requests
+         WHERE request_id LIKE 'retained:%'
+           AND request_fingerprint <> encode(
+               sha256(
+                   convert_to(
+                       'modelport-retained-request-fingerprint-v1:' || ledger_id,
+                       'UTF8'
+                   )
+               ),
+               'hex'
+           )",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("verify retained request fingerprints are content-independent");
 
     assert_eq!(requests_after, requests_before);
     assert_eq!(attempts_after, attempts_before);
     assert_eq!(incomplete_backfill, 0);
+    assert_eq!(content_derived_retained_fingerprints, 0);
 }

@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  authCapabilityErrorMessage,
   buildOidcStartUrl,
+  loginErrorMessage,
   oidcErrorMessage,
   safeReturnPath,
   withoutOidcError,
 } from './login-auth'
+import { ApiError } from '@/lib/api-client'
 
 describe('login auth helpers', () => {
   it('adds a safely encoded return path without discarding existing OIDC query parameters', () => {
@@ -80,5 +83,23 @@ describe('login auth helpers', () => {
       '?view=compact&oidc_error=invalid_state&next=%2Flogs&oidc_error=provider_error',
     )).toBe('?view=compact&next=%2Flogs')
     expect(withoutOidcError('?oidc_error=invalid_state')).toBe('')
+  })
+
+  it('distinguishes credentials, authorization, backend readiness, and network failures', () => {
+    expect(loginErrorMessage(new ApiError('unauthorized', 401, null))).toContain('用户名或密码错误')
+    expect(loginErrorMessage(new ApiError('forbidden', 403, null))).toContain('无权访问')
+    expect(loginErrorMessage(new ApiError('unavailable', 503, null))).toContain('/readyz')
+    expect(loginErrorMessage(new ApiError('crashed', 500, null))).toContain('HTTP 500')
+    expect(loginErrorMessage(new TypeError('Failed to fetch'))).toContain('无法连接')
+  })
+
+  it('reports capability probe failures separately from credential failures', () => {
+    expect(authCapabilityErrorMessage(new ApiError('unavailable', 503, null))).toContain('尚未就绪')
+    expect(authCapabilityErrorMessage(new ApiError('forbidden', 403, null))).toContain('公开认证端点')
+    expect(authCapabilityErrorMessage(new TypeError('Failed to fetch'))).toContain('无法连接')
+    expect(authCapabilityErrorMessage(new Error('unknown'))).toContain('尚未确认')
+    const timeout = new Error('timed out')
+    timeout.name = 'TimeoutError'
+    expect(authCapabilityErrorMessage(timeout)).toContain('8 秒')
   })
 })

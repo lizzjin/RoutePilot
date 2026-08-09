@@ -2,11 +2,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsService } from '@/services/settings.service'
 import { queryKeys } from './use-dashboard'
 import type { SystemSettings } from '@/types'
+import type { RetentionRunInput } from '@/services/settings.service'
 
-export function useSettings() {
+export function useSettings(enabled = true) {
   return useQuery({
     queryKey: queryKeys.settings,
     queryFn: () => settingsService.getSettings(),
+    enabled,
   })
 }
 
@@ -57,5 +59,13 @@ export function useAuditEvents() {
 export function useExportBackup() {
   return useMutation({
     mutationFn: () => settingsService.exportBackup(),
+  })
+}
+
+export function useRunRetention() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: RetentionRunInput) => settingsService.runRetention(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['audit-events'] }),
   })
 }

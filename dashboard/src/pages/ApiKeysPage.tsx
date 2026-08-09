@@ -1,7 +1,8 @@
 import { useMemo, useState, type ElementType } from 'react'
-import { useApiKeys, useCreateApiKey, useDeleteApiKey, useRevokeApiKey, useTeams, useUpdateApiKey, useUpsertTeam, useUsers } from '@/hooks'
+import { useApiKeys, useCancelApiKeyRotation, useConfirmApiKeyRotation, useCreateApiKey, useDeleteApiKey, useNow, useRevokeApiKey, useRotateApiKey, useTeams, useUpdateApiKey, useUpsertTeam, useUsers } from '@/hooks'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { OneTimeSecretGuard } from '@/components/shared/OneTimeSecretGuard'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { Skeleton } from '@/components/shared/Skeleton'
 import { PaginationBar } from '@/components/shared/PaginationBar'
@@ -19,8 +20,11 @@ import { paginateItems } from '@/lib/pagination'
 import { useAuthStore } from '@/stores'
 import { apiKeyAccessForRole, apiKeySelfServiceUpdate } from '@/features/api-keys/api-key-access'
 import { apiKeyExpiryState, filterApiKeys, isApiKeyFilterActive, type ApiKeyStatusFilter } from '@/features/api-keys/api-key-view'
+import { serviceAccountExpiryError } from '@/features/api-keys/service-account-expiry'
+import { ApiError } from '@/lib/api-client'
 import { AlertTriangle, CalendarClock, Copy, DollarSign, FolderKanban, KeyRound, Pencil, Plus, RotateCw, Search, ShieldCheck, ShieldOff, Trash2, X, Zap } from 'lucide-react'
 import type { ApiKey, Team } from '@/types'
+import type { PreparedApiKeyRotation } from '@/services/users.service'
 import { toast } from 'sonner'
 
 const ALL = '__all__'
@@ -86,16 +90,19 @@ export function ApiKeysPage() {
   const access = apiKeyAccessForRole(currentUser?.role)
   const isAdmin = access.isAdmin
   const { data: apiKeys = [], isLoading, isError, error, refetch } = useApiKeys()
-  const { data: users = [], isLoading: usersLoading, isError: usersError, error: usersQueryError, refetch: refetchUsers } = useUsers()
-  const { data: teams = [], isError: teamsError, error: teamsQueryError, refetch: refetchTeams } = useTeams()
+  const { data: users = [], isLoading: usersLoading, isError: usersError, error: usersQueryError, refetch: refetchUsers } = useUsers(isAdmin)
+  const { data: teams = [], isError: teamsError, error: teamsQueryError, refetch: refetchTeams } = useTeams(isAdmin)
   const createApiKey = useCreateApiKey()
   const upsertTeam = useUpsertTeam()
   const revokeApiKey = useRevokeApiKey()
+  const rotateApiKey = useRotateApiKey()
+  const confirmApiKeyRotation = useConfirmApiKeyRotation()
+  const cancelApiKeyRotation = useCancelApiKeyRotation()
   const updateApiKey = useUpdateApiKey()
   const deleteApiKey = useDeleteApiKey()
 
   const [search, setSearch] = useState('')
-  const [referenceTime] = useState(() => Date.now())
+  const referenceTime = useNow()
   const [status, setStatus] = useState<ApiKeyStatusFilter>(ALL_STATUSES)
   const [group, setGroup] = useState(ALL)
   const [keysPage, setKeysPage] = useState(1)
@@ -104,6 +111,11 @@ export function ApiKeysPage() {
   const [editingKey, setEditingKey] = useState<ApiKey | null>(null)
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
   const [newKey, setNewKey] = useState<string | null>(null)
+  const [rotationResult, setRotationResult] = useState<{
+    sourceKeyId: string
+    replacement: PreparedApiKeyRotation
+  } | null>(null)
+  const [rotationTerminalMessage, setRotationTerminalMessage] = useState<string | null>(null)
   const [form, setForm] = useState({
     userId: '',
     name: '',
@@ -147,19 +159,28 @@ export function ApiKeysPage() {
   const eligibleUsers = users.filter((user) => user.status === 'active')
   const filtersActive = isApiKeyFilterActive({ search, status, group, allGroupValue: ALL })
   const editExpiresInPast = Boolean(editForm.expiresAt && new Date(editForm.expiresAt).getTime() <= referenceTime)
+  const serviceAccountExpiryIssue = form.principalType === 'service_account'
+    ? serviceAccountExpiryError(form.expiresAt, referenceTime)
+    : null
   const editHasInvalidUsdLimit = [editForm.spendLimitUsd, editForm.fiveHourLimitUsd, editForm.dailyLimitUsd, editForm.weeklyLimitUsd, editForm.monthlyLimitUsd]
     .some((value) => !isUsdInputValid(value))
   const teamHasInvalidBudget = [teamForm.dailyLimitUsd, teamForm.monthlyLimitUsd]
     .some((value) => !isUsdInputValid(value))
+  const secretAtRisk = createApiKey.isPending
+    || rotateApiKey.isPending
+    || Boolean(newKey)
+    || Boolean(rotationResult)
 
   const handleCreate = () => {
     if (!access.canCreate) return
-    const user = users.find((item) => item.id === form.userId)
+    const user = isAdmin
+      ? users.find((item) => item.id === form.userId)
+      : currentUser
     if (!user || user.status !== 'active' || !form.name.trim()) return
-    const serviceAccount = form.principalType === 'service_account'
+    const serviceAccount = isAdmin && form.principalType === 'service_account'
     if (serviceAccount && (
       form.purpose.trim().length < 8
-      || !form.expiresAt
+      || Boolean(serviceAccountExpiryIssue)
       || parsePolicyList(form.allowedModels).length === 0
       || parsePolicyList(form.allowedProviders).length === 0
     )) return
@@ -167,16 +188,18 @@ export function ApiKeysPage() {
       userId: user.id,
       username: user.username,
       name: form.name.trim(),
-      principalType: form.principalType,
-      purpose: form.purpose.trim() || undefined,
-      expiresAt: form.expiresAt ? localDateTimeToMillis(form.expiresAt) : undefined,
+      principalType: serviceAccount ? 'service_account' : 'user',
+      ...(isAdmin ? {
+        purpose: form.purpose.trim() || undefined,
+        expiresAt: form.expiresAt ? localDateTimeToMillis(form.expiresAt) : undefined,
+        teamId: form.teamId || undefined,
+        allowedModels: parsePolicyList(form.allowedModels),
+        allowedProviders: parsePolicyList(form.allowedProviders),
+      } : {}),
       group: form.group.trim() || undefined,
-      teamId: form.teamId || undefined,
-      allowedModels: parsePolicyList(form.allowedModels),
-      allowedProviders: parsePolicyList(form.allowedProviders),
     }, {
       onSuccess: (key) => {
-        setForm({ userId: '', name: '', principalType: 'user', purpose: '', expiresAt: '', group: '', teamId: '', allowedModels: '', allowedProviders: '' })
+        setForm({ userId: isAdmin ? '' : currentUser?.id || '', name: '', principalType: 'user', purpose: '', expiresAt: '', group: '', teamId: '', allowedModels: '', allowedProviders: '' })
         if (key.key) {
           setNewKey(key.key)
           toast.success('API 密钥已创建')
@@ -212,6 +235,16 @@ export function ApiKeysPage() {
     if (!access.canCreate) return
     createApiKey.reset()
     setNewKey(null)
+    setForm((current) => ({
+      ...current,
+      userId: isAdmin ? current.userId : currentUser?.id || '',
+      principalType: isAdmin ? current.principalType : 'user',
+      purpose: isAdmin ? current.purpose : '',
+      expiresAt: isAdmin ? current.expiresAt : '',
+      teamId: isAdmin ? current.teamId : '',
+      allowedModels: isAdmin ? current.allowedModels : '',
+      allowedProviders: isAdmin ? current.allowedProviders : '',
+    }))
     setShowCreateDialog(true)
   }
 
@@ -232,6 +265,10 @@ export function ApiKeysPage() {
   }
 
   const handleToggleStatus = (apiKey: ApiKey) => {
+    if (apiKey.supersededByKeyId) {
+      toast.error('这把密钥已被轮换替代，不能恢复；请使用替代密钥')
+      return
+    }
     if (apiKey.status === 'active') {
       if (!access.canRevoke) return
       setConfirmAction({
@@ -260,6 +297,126 @@ export function ApiKeysPage() {
       onSuccess: () => toast.success('API 密钥已恢复'),
       onError: (error) => toast.error(error instanceof Error ? error.message : '恢复密钥失败'),
     })
+  }
+
+  const canRotateKey = (apiKey: ApiKey) => (
+    access.canRotate
+    && apiKey.status === 'active'
+    && apiKeyExpiryState(apiKey, referenceTime) !== 'expired'
+    && (isAdmin || (apiKey.principalType ?? 'user') === 'user')
+  )
+
+  const requestRotateKey = (apiKey: ApiKey) => {
+    if (!canRotateKey(apiKey)) return
+    rotateApiKey.reset()
+    confirmApiKeyRotation.reset()
+    cancelApiKeyRotation.reset()
+    setRotationTerminalMessage(null)
+    setConfirmAction({
+      title: `轮换 API 密钥 ${apiKey.name}？`,
+      description: '先生成一把权限、有效期和归属完全相同的待启用密钥；旧密钥会继续可用，直到你保存新密钥并明确确认交接。',
+      confirmLabel: '生成待启用密钥',
+      onConfirm: () => rotateApiKey.mutate(apiKey.id, {
+        onSuccess: (rotated) => {
+          if (!rotated.key) {
+            toast.error('未收到完整新密钥；旧密钥仍然有效，可以安全重试')
+            return
+          }
+          setRotationTerminalMessage(null)
+          setRotationResult({ sourceKeyId: apiKey.id, replacement: rotated })
+          toast.success('待启用密钥已生成；旧密钥仍然有效')
+        },
+        onSettled: () => setConfirmAction(null),
+        onError: (error) => toast.error(error instanceof Error ? error.message : '准备轮换密钥失败；旧密钥未受影响'),
+      }),
+    })
+  }
+
+  const confirmRotationHandover = () => {
+    if (!rotationResult) return
+    confirmApiKeyRotation.mutate({
+      keyId: rotationResult.sourceKeyId,
+      replacementId: rotationResult.replacement.id,
+    }, {
+      onSuccess: () => {
+        setRotationTerminalMessage(null)
+        setRotationResult(null)
+        rotateApiKey.reset()
+        confirmApiKeyRotation.reset()
+        cancelApiKeyRotation.reset()
+        toast.success('新密钥已启用，旧密钥已禁用')
+      },
+      onError: (error) => {
+        if (markRotationTerminal(error)) return
+        toast.error(error instanceof Error ? error.message : '启用新密钥失败；旧密钥仍保持有效')
+      },
+    })
+  }
+
+  const cancelRotationHandover = () => {
+    if (!rotationResult) return
+    cancelApiKeyRotation.mutate({
+      keyId: rotationResult.sourceKeyId,
+      replacementId: rotationResult.replacement.id,
+    }, {
+      onSuccess: () => {
+        setRotationTerminalMessage(null)
+        setRotationResult(null)
+        rotateApiKey.reset()
+        confirmApiKeyRotation.reset()
+        cancelApiKeyRotation.reset()
+        toast.success('已放弃待启用密钥；旧密钥保持有效')
+      },
+      onError: (error) => {
+        if (markRotationTerminal(error)) return
+        toast.error(error instanceof Error ? error.message : '取消轮换失败')
+      },
+    })
+  }
+
+  const markRotationTerminal = (error: unknown): boolean => {
+    if (!isTerminalRotationError(error)) return false
+    setRotationTerminalMessage('此轮换已在其他标签页或由其他管理员更改，待启用密钥已不能再确认或放弃。')
+    void refetch()
+    return true
+  }
+
+  const closeTerminalRotation = () => {
+    setRotationTerminalMessage(null)
+    setRotationResult(null)
+    rotateApiKey.reset()
+    confirmApiKeyRotation.reset()
+    cancelApiKeyRotation.reset()
+    void refetch()
+    toast.info('轮换状态已刷新，请以当前密钥列表为准')
+  }
+
+  const confirmLeaveWithRotationCleanup = async (): Promise<boolean> => {
+    if (createApiKey.isPending || rotateApiKey.isPending) {
+      toast.warning('密钥请求正在处理，请等待服务端返回后再决定是否离开')
+      return false
+    }
+    if (!rotationResult) return true
+    try {
+      await cancelApiKeyRotation.mutateAsync({
+        keyId: rotationResult.sourceKeyId,
+        replacementId: rotationResult.replacement.id,
+      })
+      setRotationTerminalMessage(null)
+      setRotationResult(null)
+      rotateApiKey.reset()
+      confirmApiKeyRotation.reset()
+      cancelApiKeyRotation.reset()
+      toast.info('已放弃待启用密钥；旧密钥保持有效')
+      return true
+    } catch (error) {
+      if (markRotationTerminal(error)) {
+        setRotationResult(null)
+        return true
+      }
+      toast.error(error instanceof Error ? error.message : '无法安全放弃待启用密钥，已留在当前页面')
+      return false
+    }
   }
 
   const persistApiKeyUpdate = () => {
@@ -321,7 +478,7 @@ export function ApiKeysPage() {
     }
   }
 
-  const mutationError = errorMessage(deleteApiKey.error || revokeApiKey.error || updateApiKey.error)
+  const mutationError = errorMessage(deleteApiKey.error || revokeApiKey.error || rotateApiKey.error || updateApiKey.error)
 
   const handleKeysPageChange = (page: number) => {
     setKeysPage(Math.min(Math.max(page, 1), keyWindow.totalPages))
@@ -449,7 +606,7 @@ export function ApiKeysPage() {
       </div>
 
       {isError && <ErrorNotice message={`API 密钥加载失败：${errorMessage(error)}`} actionLabel="重新加载" onAction={() => void refetch()} />}
-      {usersError && access.canCreate && <ErrorNotice message={`用户列表加载失败：${errorMessage(usersQueryError)}`} actionLabel="重试" onAction={() => void refetchUsers()} />}
+      {usersError && isAdmin && access.canCreate && <ErrorNotice message={`用户列表加载失败：${errorMessage(usersQueryError)}`} actionLabel="重试" onAction={() => void refetchUsers()} />}
       {teamsError && access.canManagePolicy && <ErrorNotice message={`项目列表加载失败：${errorMessage(teamsQueryError)}`} actionLabel="重试" onAction={() => void refetchTeams()} />}
 
       <Card className="overflow-hidden">
@@ -557,32 +714,40 @@ export function ApiKeysPage() {
                     <RateLimitCell apiKey={key} />
                   </TableCell>
                   <TableCell>
-                    <ExpiresCell value={key.expiresAt} />
+                    <ExpiresCell value={key.expiresAt} now={referenceTime} />
                   </TableCell>
                   <TableCell>
-                    <EffectiveStatusBadge apiKey={key} />
-                  </TableCell>
-                  <TableCell className="hidden text-sm text-muted-foreground 2xl:table-cell">
-                    {key.lastUsedAt ? formatDate(key.lastUsedAt) : '从未使用'}
+                    <EffectiveStatusBadge apiKey={key} now={referenceTime} />
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
+                    {key.lastUsedAt ? formatDate(key.lastUsedAt) : '从未使用'}
+                  </TableCell>
+                  <TableCell className="hidden text-sm text-muted-foreground 2xl:table-cell">
                     {formatDate(key.createdAt)}
                   </TableCell>
                   <TableCell className="sticky right-0 z-10 border-l bg-card">
                     <div className="flex justify-center gap-1">
-                      {access.canEdit && (
+                      {access.canEdit && !key.supersededByKeyId && (
                         <ActionButton
                           icon={Pencil}
                           label="编辑"
                           onClick={() => openEditDialog(key)}
                         />
                       )}
-                      {((key.status === 'active' && access.canRevoke) || (key.status === 'revoked' && access.canRestore)) && (
+                      {canRotateKey(key) && (
                         <ActionButton
-                          icon={key.status === 'active' ? ShieldOff : apiKeyExpiryState(key) === 'expired' ? CalendarClock : ShieldCheck}
-                          label={key.status === 'active' ? '禁用' : apiKeyExpiryState(key) === 'expired' ? '已过期' : '恢复'}
+                          icon={RotateCw}
+                          label="轮换"
+                          disabled={rotateApiKey.isPending}
+                          onClick={() => requestRotateKey(key)}
+                        />
+                      )}
+                      {!key.supersededByKeyId && ((key.status === 'active' && access.canRevoke) || (key.status === 'revoked' && access.canRestore)) && (
+                        <ActionButton
+                          icon={key.status === 'active' ? ShieldOff : apiKeyExpiryState(key, referenceTime) === 'expired' ? CalendarClock : ShieldCheck}
+                          label={key.status === 'active' ? '禁用' : apiKeyExpiryState(key, referenceTime) === 'expired' ? '已过期' : '恢复'}
                           className={key.status === 'active' ? undefined : 'text-emerald-600 hover:text-emerald-700'}
-                          disabled={revokeApiKey.isPending || updateApiKey.isPending || (key.status === 'revoked' && apiKeyExpiryState(key) === 'expired')}
+                          disabled={revokeApiKey.isPending || updateApiKey.isPending || (key.status === 'revoked' && apiKeyExpiryState(key, referenceTime) === 'expired')}
                           onClick={() => handleToggleStatus(key)}
                         />
                       )}
@@ -625,12 +790,15 @@ export function ApiKeysPage() {
                   <ApiKeyMobileCard
                     key={key.id}
                     apiKey={key}
-                    canEdit={access.canEdit}
-                    canToggle={(key.status === 'active' && access.canRevoke) || (key.status === 'revoked' && access.canRestore && apiKeyExpiryState(key) !== 'expired')}
+                    now={referenceTime}
+                    canEdit={access.canEdit && !key.supersededByKeyId}
+                    canRotate={canRotateKey(key)}
+                    canToggle={!key.supersededByKeyId && ((key.status === 'active' && access.canRevoke) || (key.status === 'revoked' && access.canRestore && apiKeyExpiryState(key, referenceTime) !== 'expired'))}
                     canDelete={access.canDelete}
-                    pending={revokeApiKey.isPending || updateApiKey.isPending || deleteApiKey.isPending}
+                    pending={revokeApiKey.isPending || rotateApiKey.isPending || updateApiKey.isPending || deleteApiKey.isPending}
                     onCopy={() => void copyText(key.keyPreview || key.keyPrefix, '密钥标识')}
                     onEdit={() => openEditDialog(key)}
+                    onRotate={() => requestRotateKey(key)}
                     onToggle={() => handleToggleStatus(key)}
                     onDelete={() => requestDeleteKey(key)}
                   />
@@ -665,13 +833,22 @@ export function ApiKeysPage() {
               return
             }
             setShowCreateDialog(open)
-            if (!open) setNewKey(null)
+            if (!open) {
+              setNewKey(null)
+              createApiKey.reset()
+            }
           }}
         >
-          <DialogContent>
+          <DialogContent
+            hideCloseButton={createApiKey.isPending || Boolean(newKey)}
+            onEscapeKeyDown={(event) => { if (createApiKey.isPending || newKey) event.preventDefault() }}
+            onPointerDownOutside={(event) => { if (createApiKey.isPending || newKey) event.preventDefault() }}
+          >
           <DialogHeader>
             <DialogTitle>创建 API 密钥</DialogTitle>
-            <DialogDescription>为可用用户签发密钥；访问范围留空时继承系统和项目策略。</DialogDescription>
+            <DialogDescription>{isAdmin
+              ? '为可用用户签发密钥；访问范围留空时继承系统和项目策略。'
+              : '为当前账号创建个人密钥；权限、项目、Provider、模型与预算只能继承管理员设定的上限。'}</DialogDescription>
           </DialogHeader>
 
           {newKey ? (
@@ -707,7 +884,7 @@ export function ApiKeysPage() {
           ) : (
             <div className="space-y-4">
               {createApiKey.error && <ErrorNotice message={errorMessage(createApiKey.error)} />}
-              <div className="space-y-2">
+              {isAdmin ? <div className="space-y-2">
                 <Label htmlFor="create-key-user">用户 <span className="text-destructive" aria-hidden="true">*</span></Label>
                 <Select value={form.userId} onValueChange={(value) => setForm({ ...form, userId: value })}>
                   <SelectTrigger id="create-key-user" aria-required="true"><SelectValue placeholder={usersLoading ? '正在加载用户…' : '选择可用用户'} /></SelectTrigger>
@@ -718,13 +895,18 @@ export function ApiKeysPage() {
                   </SelectContent>
                 </Select>
                 {!usersLoading && eligibleUsers.length === 0 && <p className="text-xs text-muted-foreground">暂无可签发密钥的可用用户，请先创建或恢复用户。</p>}
-              </div>
+              </div> : (
+                <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
+                  <p className="font-medium">为自己创建</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{currentUser?.username} · 仅个人密钥；默认 30 天有效，最多保留 5 把活跃密钥。服务账号和权限扩展仍需管理员处理。</p>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="create-key-name">名称 <span className="text-destructive" aria-hidden="true">*</span></Label>
                 <Input id="create-key-name" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：Alice 的 Claude Code" />
                 <p className="text-xs text-muted-foreground">使用能识别人员、设备或用途的名称，便于泄露时快速定位。</p>
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
+              {isAdmin && <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="create-key-principal">主体类型</Label>
                   <Select value={form.principalType} onValueChange={(value) => setForm({ ...form, principalType: value as 'user' | 'service_account' })}>
@@ -737,10 +919,11 @@ export function ApiKeysPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="create-key-expires">过期时间{form.principalType === 'service_account' ? '（必填，最长 90 天）' : '（可选）'}</Label>
-                  <Input id="create-key-expires" type="datetime-local" value={form.expiresAt} onChange={(event) => setForm({ ...form, expiresAt: event.target.value })} />
+                  <Input id="create-key-expires" type="datetime-local" value={form.expiresAt} onChange={(event) => setForm({ ...form, expiresAt: event.target.value })} aria-invalid={Boolean(serviceAccountExpiryIssue)} aria-describedby={serviceAccountExpiryIssue ? 'create-key-expires-error' : undefined} />
+                  {serviceAccountExpiryIssue && <p id="create-key-expires-error" role="alert" className="text-xs text-destructive">{serviceAccountExpiryIssue}</p>}
                 </div>
-              </div>
-              {form.principalType === 'service_account' && (
+              </div>}
+              {isAdmin && form.principalType === 'service_account' && (
                 <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900 dark:bg-amber-950/30">
                   <Label htmlFor="create-key-purpose">自动化用途 <span className="text-destructive" aria-hidden="true">*</span></Label>
                   <Input id="create-key-purpose" value={form.purpose} onChange={(event) => setForm({ ...form, purpose: event.target.value })} placeholder="例如：CI 每晚运行回归评测（仅 production 项目）" />
@@ -751,7 +934,7 @@ export function ApiKeysPage() {
                 <Label htmlFor="create-key-group">标签（可选）</Label>
                 <Input id="create-key-group" value={form.group} onChange={(event) => setForm({ ...form, group: event.target.value })} placeholder="例如：研发 / CI" />
               </div>
-              <div className="space-y-2">
+              {isAdmin && <div className="space-y-2">
                 <Label htmlFor="create-key-team">项目（可选）</Label>
                 <Select value={form.teamId || NO_TEAM} onValueChange={(value) => setForm({ ...form, teamId: value === NO_TEAM ? '' : value })}>
                   <SelectTrigger id="create-key-team"><SelectValue placeholder="选择项目" /></SelectTrigger>
@@ -762,8 +945,8 @@ export function ApiKeysPage() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
+              </div>}
+              {isAdmin && <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="create-key-models">允许模型（可选）</Label>
                   <Input id="create-key-models" value={form.allowedModels} onChange={(event) => setForm({ ...form, allowedModels: event.target.value })} placeholder="mimo*, claude-sonnet*" />
@@ -772,18 +955,20 @@ export function ApiKeysPage() {
                   <Label htmlFor="create-key-providers">允许上游 Provider（可选）</Label>
                   <Input id="create-key-providers" value={form.allowedProviders} onChange={(event) => setForm({ ...form, allowedProviders: event.target.value })} placeholder="mimo, openai" />
                 </div>
-              </div>
-              <p className="text-xs leading-relaxed text-muted-foreground">多个值用逗号或空格分隔，支持后缀 <code>*</code>；留空表示不增加密钥级限制。</p>
+              </div>}
+              {isAdmin
+                ? <p className="text-xs leading-relaxed text-muted-foreground">多个值用逗号或空格分隔，支持后缀 <code>*</code>；留空表示不增加密钥级限制。</p>
+                : <p className="text-xs leading-relaxed text-muted-foreground">自助创建不会展示或允许修改管理员策略；项目、模型、Provider 和预算继续受管理员上限约束。密钥明文只显示一次，创建后请立即保存。</p>}
             </div>
           )}
 
           <DialogFooter>
             {newKey ? (
-              <Button onClick={() => { setNewKey(null); setShowCreateDialog(false) }}>已保存，关闭</Button>
+              <Button onClick={() => { setNewKey(null); setShowCreateDialog(false); createApiKey.reset() }}>已保存，关闭</Button>
             ) : (
               <>
-                <Button variant="outline" onClick={() => setShowCreateDialog(false)}>取消</Button>
-                <Button onClick={handleCreate} disabled={!form.userId || !form.name.trim() || usersLoading || createApiKey.isPending || (form.principalType === 'service_account' && (!form.expiresAt || form.purpose.trim().length < 8 || !form.allowedModels.trim() || !form.allowedProviders.trim()))}>
+                <Button variant="outline" onClick={() => setShowCreateDialog(false)} disabled={createApiKey.isPending}>取消</Button>
+                <Button onClick={handleCreate} disabled={!(isAdmin ? form.userId : currentUser?.id) || !form.name.trim() || (isAdmin && usersLoading) || createApiKey.isPending || (isAdmin && form.principalType === 'service_account' && (Boolean(serviceAccountExpiryIssue) || form.purpose.trim().length < 8 || !form.allowedModels.trim() || !form.allowedProviders.trim()))}>
                   <KeyRound className="mr-2 h-4 w-4" />
                   {createApiKey.isPending ? '创建中…' : '创建密钥'}
                 </Button>
@@ -992,13 +1177,80 @@ export function ApiKeysPage() {
         </Dialog>
       )}
 
+      <Dialog open={Boolean(rotationResult)} onOpenChange={(open) => {
+        if (!open && rotationResult) toast.warning('请确认启用或放弃此次轮换；旧密钥目前仍然有效')
+      }}>
+        <DialogContent
+          hideCloseButton
+          onEscapeKeyDown={(event) => event.preventDefault()}
+          onPointerDownOutside={(event) => event.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle>完成 API 密钥交接</DialogTitle>
+            <DialogDescription>新密钥尚未启用，旧密钥仍可调用。保存新密钥后再确认启用；响应丢失或放弃都不会锁死现有客户端。</DialogDescription>
+          </DialogHeader>
+          {rotationResult && (
+            <div className="space-y-4">
+              <div role="status" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+                <p className="font-semibold">完整新密钥只显示这一次</p>
+                <p className="mt-1">先复制并安全保存。点击“启用新密钥”后旧密钥才会失效；不要通过聊天、邮件或工单发送。</p>
+              </div>
+              <Label htmlFor="rotated-api-key">新 API 密钥</Label>
+              <div className="flex gap-2">
+                <Input id="rotated-api-key" value={rotationResult.replacement.key} readOnly className="font-mono text-xs" onFocus={(event) => event.currentTarget.select()} />
+                <Button variant="outline" size="icon" onClick={() => void copyText(rotationResult.replacement.key, '新 API 密钥')} aria-label="复制轮换后的 API 密钥">
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                待启用密钥 ID：<code className="font-mono text-foreground">{rotationResult.replacement.id}</code> · 有效期：{rotationResult.replacement.expiresAt ? formatDate(rotationResult.replacement.expiresAt) : '永久'}
+              </div>
+              {rotationTerminalMessage ? (
+                <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+                  <p className="font-semibold">轮换状态已变化</p>
+                  <p className="mt-1">{rotationTerminalMessage}</p>
+                </div>
+              ) : (
+                <>
+                  {confirmApiKeyRotation.error && <ErrorNotice message={errorMessage(confirmApiKeyRotation.error)} />}
+                  {cancelApiKeyRotation.error && <ErrorNotice message={errorMessage(cancelApiKeyRotation.error)} />}
+                </>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            {rotationTerminalMessage ? (
+              <Button onClick={closeTerminalRotation}>状态已变化，关闭并刷新</Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={cancelRotationHandover} disabled={confirmApiKeyRotation.isPending || cancelApiKeyRotation.isPending}>
+                  {cancelApiKeyRotation.isPending ? '放弃中…' : '放弃此次轮换'}
+                </Button>
+                <Button onClick={confirmRotationHandover} disabled={confirmApiKeyRotation.isPending || cancelApiKeyRotation.isPending}>
+                  {confirmApiKeyRotation.isPending ? '启用中…' : '已保存，启用新密钥'}
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <OneTimeSecretGuard
+        active={secretAtRisk}
+        title="API 密钥交接尚未完成，仍要离开？"
+        description={rotationResult
+          ? '待启用密钥尚未完成交接。留在此页是默认选项；确认离开时会先放弃待启用密钥，旧密钥继续有效。'
+          : '密钥创建或轮换请求仍在进行，或完整新密钥尚未确认保存。离开后可能永久无法再查看它；默认应留在此页。'}
+        onConfirmLeave={confirmLeaveWithRotationCleanup}
+      />
+
       <ConfirmDialog
         open={!!confirmAction}
         title={confirmAction?.title || ''}
         description={confirmAction?.description || ''}
         confirmLabel={confirmAction?.confirmLabel}
         destructive={confirmAction?.destructive}
-        pending={deleteApiKey.isPending || revokeApiKey.isPending || updateApiKey.isPending}
+        pending={deleteApiKey.isPending || revokeApiKey.isPending || rotateApiKey.isPending || updateApiKey.isPending}
         onCancel={() => setConfirmAction(null)}
         onConfirm={() => confirmAction?.onConfirm()}
       />
@@ -1171,22 +1423,28 @@ function GroupCell({ group, teamName }: { group?: string | null; teamName?: stri
 
 function ApiKeyMobileCard({
   apiKey,
+  now,
   canEdit,
+  canRotate,
   canToggle,
   canDelete,
   pending,
   onCopy,
   onEdit,
+  onRotate,
   onToggle,
   onDelete,
 }: {
   apiKey: ApiKey
+  now: number
   canEdit: boolean
+  canRotate: boolean
   canToggle: boolean
   canDelete: boolean
   pending: boolean
   onCopy: () => void
   onEdit: () => void
+  onRotate: () => void
   onToggle: () => void
   onDelete: () => void
 }) {
@@ -1197,7 +1455,7 @@ function ApiKeyMobileCard({
           <h3 className="truncate font-semibold">{apiKey.name}</h3>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">{apiKey.username || apiKey.userId}</p>
         </div>
-        <EffectiveStatusBadge apiKey={apiKey} />
+        <EffectiveStatusBadge apiKey={apiKey} now={now} />
       </div>
       <div className="flex items-center gap-2 rounded-md bg-muted/50 p-2">
         <code className="min-w-0 flex-1 truncate text-xs">{apiKey.keyPreview || apiKey.keyPrefix}</code>
@@ -1210,12 +1468,13 @@ function ApiKeyMobileCard({
         <div><p className="text-xs text-muted-foreground">今日请求</p><p className="mt-1 font-semibold tabular-nums">{formatNumber(apiKey.requestsToday ?? 0)}</p></div>
         <div><p className="text-xs text-muted-foreground">今日 Tokens</p><p className="mt-1 font-semibold tabular-nums">{formatNumber(apiKey.tokensToday ?? 0)}</p></div>
         <div><p className="text-xs text-muted-foreground">访问限制</p><p className="mt-1 truncate font-medium">{rateLimitSummary(apiKey)}</p></div>
-        <div><p className="text-xs text-muted-foreground">有效期</p><div className="mt-1"><ExpiresCell value={apiKey.expiresAt} /></div></div>
+        <div><p className="text-xs text-muted-foreground">有效期</p><div className="mt-1"><ExpiresCell value={apiKey.expiresAt} now={now} /></div></div>
       </div>
       <p className="text-xs text-muted-foreground">上次使用：{apiKey.lastUsedAt ? formatDate(apiKey.lastUsedAt) : '从未使用'}</p>
-      {(canEdit || canToggle || canDelete) && (
+      {(canEdit || canRotate || canToggle || canDelete) && (
         <div className="flex flex-wrap gap-2 border-t pt-3">
           {canEdit && <Button variant="outline" size="sm" onClick={onEdit}><Pencil className="mr-1.5 h-4 w-4" />编辑</Button>}
+          {canRotate && <Button variant="outline" size="sm" disabled={pending} onClick={onRotate}><RotateCw className="mr-1.5 h-4 w-4" />轮换</Button>}
           {canToggle && (
             <Button variant="outline" size="sm" disabled={pending} onClick={onToggle} className={apiKey.status === 'active' ? 'text-destructive' : 'text-emerald-600'}>
               {apiKey.status === 'active' ? <ShieldOff className="mr-1.5 h-4 w-4" /> : <ShieldCheck className="mr-1.5 h-4 w-4" />}
@@ -1265,12 +1524,12 @@ function RateLimitCell({ apiKey }: { apiKey: ApiKey }) {
   )
 }
 
-function ExpiresCell({ value }: { value: string | null }) {
+function ExpiresCell({ value, now }: { value: string | null; now: number }) {
   if (!value) {
     return <span className="text-sm text-muted-foreground">永久有效</span>
   }
 
-  const expiry = apiKeyExpiryState({ expiresAt: value })
+  const expiry = apiKeyExpiryState({ expiresAt: value }, now)
   return (
     <div className={cn('flex items-center gap-2 text-sm', expiry === 'expired' ? 'text-red-600 dark:text-red-400' : expiry === 'expiring' ? 'text-amber-600 dark:text-amber-400' : undefined)}>
       <CalendarClock className="h-4 w-4" />
@@ -1279,8 +1538,11 @@ function ExpiresCell({ value }: { value: string | null }) {
   )
 }
 
-function EffectiveStatusBadge({ apiKey }: { apiKey: ApiKey }) {
-  const expiry = apiKeyExpiryState(apiKey)
+function EffectiveStatusBadge({ apiKey, now }: { apiKey: ApiKey; now: number }) {
+  if (apiKey.supersededByKeyId) {
+    return <Badge variant="secondary" title={`替代密钥：${apiKey.supersededByKeyId}`}>已轮换</Badge>
+  }
+  const expiry = apiKeyExpiryState(apiKey, now)
   if (apiKey.status === 'active' && expiry === 'expired') {
     return <Badge variant="destructive">已过期</Badge>
   }
@@ -1345,6 +1607,20 @@ function ErrorNotice({ message, actionLabel, onAction }: { message: string; acti
 function errorMessage(error: unknown): string {
   if (!error) return ''
   return error instanceof Error ? error.message : String(error)
+}
+
+function isTerminalRotationError(error: unknown): boolean {
+  if (error instanceof ApiError && ![400, 404, 409].includes(error.status)) return false
+  const message = errorMessage(error).toLowerCase()
+  return [
+    'not found',
+    'no longer active',
+    'does not belong',
+    '不存在',
+    '不再有效',
+    '不再启用',
+    '不属于',
+  ].some((fragment) => message.includes(fragment))
 }
 
 function SettingSwitch({

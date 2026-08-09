@@ -50,6 +50,11 @@ export interface DashboardStats {
   rangeDataSource: 'relational-ledger' | 'empty'
   rangeDataEstimated: boolean
   rangeDataAtRetentionLimit: boolean
+  onboardingMilestones?: {
+    hasRequestEver: boolean
+    hasSuccessfulRequestEver: boolean
+    hasDefaultProjectPolicy: boolean
+  }
   providerHealth: Array<{
     providerId: string
     displayName: string

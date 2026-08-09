@@ -99,6 +99,7 @@ export interface Provider {
     testedAt: string
     success: boolean
     message: string
+    testedCredentialId?: string | null
     models?: string[]
     modelCount?: number
   } | null
@@ -164,6 +165,7 @@ export interface ProviderModelDiscovery {
   message: string
   models: string[]
   modelCount: number
+  testedCredentialId?: string | null
   discoveredAt: string
 }
 

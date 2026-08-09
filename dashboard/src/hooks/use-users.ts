@@ -3,10 +3,16 @@ import { usersService, type CreateApiKeyInput, type UpdateApiKeyInput } from '@/
 import { queryKeys } from './use-dashboard'
 import type { CreateUserInput, UpdateUserInput, UpsertTeamInput } from '@/types'
 
-export function useUsers() {
+function invalidateEffectiveCatalog(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: queryKeys.providers })
+  qc.invalidateQueries({ queryKey: queryKeys.aliases })
+}
+
+export function useUsers(enabled = true) {
   return useQuery({
     queryKey: queryKeys.users,
     queryFn: () => usersService.getUsers(),
+    enabled,
   })
 }
 
@@ -26,17 +32,19 @@ export function useUserApiKeys(userId: string) {
   })
 }
 
-export function useApiKeys() {
+export function useApiKeys(enabled = true) {
   return useQuery({
     queryKey: queryKeys.apiKeys,
     queryFn: () => usersService.getApiKeys(),
+    enabled,
   })
 }
 
-export function useTeams() {
+export function useTeams(enabled = true) {
   return useQuery({
     queryKey: queryKeys.teams,
     queryFn: () => usersService.getTeams(),
+    enabled,
   })
 }
 
@@ -47,6 +55,7 @@ export function useUpsertTeam() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.teams })
       qc.invalidateQueries({ queryKey: queryKeys.apiKeys })
+      invalidateEffectiveCatalog(qc)
     },
   })
 }
@@ -58,6 +67,7 @@ export function useDeleteTeam() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.teams })
       qc.invalidateQueries({ queryKey: queryKeys.apiKeys })
+      invalidateEffectiveCatalog(qc)
     },
   })
 }
@@ -95,6 +105,7 @@ export function useCreateApiKey() {
       qc.invalidateQueries({ queryKey: queryKeys.teams })
       qc.invalidateQueries({ queryKey: queryKeys.userApiKeys(vars.userId) })
       qc.invalidateQueries({ queryKey: queryKeys.users })
+      invalidateEffectiveCatalog(qc)
     },
   })
 }
@@ -107,7 +118,44 @@ export function useRevokeApiKey() {
       qc.invalidateQueries({ queryKey: queryKeys.apiKeys })
       qc.invalidateQueries({ queryKey: queryKeys.teams })
       qc.invalidateQueries({ queryKey: queryKeys.users })
+      invalidateEffectiveCatalog(qc)
     },
+  })
+}
+
+export function useRotateApiKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (keyId: string) => usersService.rotateApiKey(keyId),
+    onSuccess: (apiKey) => {
+      qc.invalidateQueries({ queryKey: queryKeys.apiKeys })
+      qc.invalidateQueries({ queryKey: queryKeys.teams })
+      qc.invalidateQueries({ queryKey: queryKeys.userApiKeys(apiKey.userId) })
+      qc.invalidateQueries({ queryKey: queryKeys.users })
+      invalidateEffectiveCatalog(qc)
+    },
+  })
+}
+
+export function useConfirmApiKeyRotation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ keyId, replacementId }: { keyId: string; replacementId: string }) =>
+      usersService.confirmApiKeyRotation(keyId, replacementId),
+    onSuccess: (apiKey) => {
+      qc.invalidateQueries({ queryKey: queryKeys.apiKeys })
+      qc.invalidateQueries({ queryKey: queryKeys.teams })
+      qc.invalidateQueries({ queryKey: queryKeys.userApiKeys(apiKey.userId) })
+      qc.invalidateQueries({ queryKey: queryKeys.users })
+      invalidateEffectiveCatalog(qc)
+    },
+  })
+}
+
+export function useCancelApiKeyRotation() {
+  return useMutation({
+    mutationFn: ({ keyId, replacementId }: { keyId: string; replacementId: string }) =>
+      usersService.cancelApiKeyRotation(keyId, replacementId),
   })
 }
 
@@ -120,6 +168,7 @@ export function useUpdateApiKey() {
       qc.invalidateQueries({ queryKey: queryKeys.teams })
       qc.invalidateQueries({ queryKey: queryKeys.userApiKeys(apiKey.userId) })
       qc.invalidateQueries({ queryKey: queryKeys.users })
+      invalidateEffectiveCatalog(qc)
     },
   })
 }
@@ -132,6 +181,7 @@ export function useDeleteApiKey() {
       qc.invalidateQueries({ queryKey: queryKeys.apiKeys })
       qc.invalidateQueries({ queryKey: queryKeys.teams })
       qc.invalidateQueries({ queryKey: queryKeys.users })
+      invalidateEffectiveCatalog(qc)
     },
   })
 }

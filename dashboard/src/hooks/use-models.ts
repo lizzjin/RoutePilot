@@ -4,10 +4,14 @@ import { withDefaultProvider } from '@/features/models/default-provider'
 import { queryKeys } from './use-dashboard'
 import type { Provider, ProviderCredentialPoolMode, ProviderCredentialWritePayload, ProviderWritePayload, SystemSettings } from '@/types'
 
-export function useProviders() {
+export function useProviders(apiKeyId?: string, enabled = true) {
   return useQuery({
-    queryKey: queryKeys.providers,
-    queryFn: () => modelsService.getProviders(),
+    queryKey: queryKeys.providersFor(apiKeyId),
+    queryFn: () => modelsService.getProviders(apiKeyId),
+    enabled,
+    staleTime: apiKeyId ? 0 : undefined,
+    refetchOnMount: apiKeyId ? 'always' : true,
+    refetchOnWindowFocus: apiKeyId ? 'always' : true,
   })
 }
 
@@ -19,10 +23,14 @@ export function useProvider(id: string) {
   })
 }
 
-export function useAliases() {
+export function useAliases(apiKeyId?: string, enabled = true) {
   return useQuery({
-    queryKey: queryKeys.aliases,
-    queryFn: () => modelsService.getAliases(),
+    queryKey: queryKeys.aliasesFor(apiKeyId),
+    queryFn: () => modelsService.getAliases(apiKeyId),
+    enabled,
+    staleTime: apiKeyId ? 0 : undefined,
+    refetchOnMount: apiKeyId ? 'always' : true,
+    refetchOnWindowFocus: apiKeyId ? 'always' : true,
   })
 }
 

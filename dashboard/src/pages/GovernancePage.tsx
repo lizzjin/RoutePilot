@@ -32,16 +32,16 @@ const DIRECT_APPLY_ACTIONS = new Set(['project_policy.upsert', 'budget.hard_limi
 
 const PAYLOAD_TEMPLATES: Record<string, unknown> = {
   'project_policy.upsert': {
-    organizationId: 'local',
-    projectId: 'default',
-    environmentId: 'production',
-    maximumMode: 'local_first',
-    defaultClassification: 'unknown',
-    allowedProviders: ['local_qwen'],
-    allowedModels: ['Qwen3-Coder-30B-A3B-Instruct'],
-    allowedRegions: ['local'],
-    allowedApiVersions: ['openai-v1'],
-    cloudEnabled: false,
+    organizationId: 'org_local',
+    projectId: 'prj_default',
+    environmentId: 'env_default',
+    maximumMode: 'cloud_first',
+    defaultClassification: 'internal',
+    allowedProviders: ['deepseek'],
+    allowedModels: ['deepseek-v4-flash'],
+    allowedRegions: ['global'],
+    allowedApiVersions: ['anthropic-v1'],
+    cloudEnabled: true,
   },
   'provider.allowlist_change': { providerId: '', operation: 'add', region: '', apiVersion: '', models: [] },
   'routing.cloud_first': { organizationId: 'local', projectId: 'default', environmentId: 'production', enabled: true },
@@ -59,7 +59,7 @@ export function GovernancePage() {
   const approveChange = useApproveGovernanceChange()
   const applyChange = useApplyGovernanceChange()
   const [action, setAction] = useState(ACTIONS[0][0])
-  const [target, setTarget] = useState('local/default/production')
+  const [target, setTarget] = useState('org_local/prj_default/env_default')
   const [reason, setReason] = useState('')
   const [payloadText, setPayloadText] = useState(() => formatTemplate(ACTIONS[0][0]))
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
@@ -90,7 +90,12 @@ export function GovernancePage() {
     createChange.mutate({ action, target, reason, payload }, {
       onSuccess: (change) => {
         setReason('')
-        setNotice({ kind: 'success', text: `已创建 ${change.id}，等待另一名管理员审批` })
+        setNotice({
+          kind: 'success',
+          text: data.dualApprovalRequired
+            ? `已创建 ${change.id}，等待另一名管理员审批`
+            : `已记录 ${change.id}；可直接应用支持的变更，也可等待另一名管理员复核`,
+        })
       },
       onError: (mutationError) => setNotice({
         kind: 'error',
@@ -115,17 +120,20 @@ export function GovernancePage() {
   }
 
   const scheduler = data.scheduler
+  const approvalMode = data.dualApprovalRequired ? '强制双人审批' : '可选双人复核'
   return (
     <div className="space-y-6">
       <PageHeader
-        title="治理与双人审批"
-        description="高风险变更先形成不可篡改载荷摘要，再由另一名管理员审批；Dashboard 只调用同一套稳定 API。"
+        title="治理与变更审批"
+        description={data.dualApprovalRequired
+          ? '高风险变更必须先形成载荷摘要，再由另一名管理员审批；Dashboard 与 API 共用同一门禁。'
+          : '免费小团队模式允许管理员直接执行并保留审计；需要复核时仍可使用完整的双人审批流程。'}
         action={{ label: '刷新状态', onClick: () => void refetch(), icon: RefreshCw }}
       />
 
       <div className="grid gap-4 md:grid-cols-4">
         <Metric title="治理存储" value={data.ready ? '就绪' : '降级'} detail="审批状态持久化" icon={data.ready ? CheckCircle2 : AlertTriangle} />
-        <Metric title="本地执行" value={`${scheduler.running} / 1`} detail="单 ModelPort 执行槽" icon={ShieldCheck} />
+        <Metric title="审批门禁" value={approvalMode} detail={data.dualApprovalRequired ? '高风险写入必须匹配审批单' : '直接写入仍受 CSRF 与审计保护'} icon={ShieldCheck} />
         <Metric title="交互队列" value={`${scheduler.interactiveQueued} / ${scheduler.limits.globalInteractiveQueue}`} detail="全局本地队列" icon={Clock3} />
         <Metric title="后台队列" value={`${scheduler.batchQueued} / ${scheduler.limits.globalBatchQueue}`} detail="独立低优先级" icon={Clock3} />
       </div>
@@ -149,7 +157,11 @@ export function GovernancePage() {
       <Card>
         <CardHeader>
           <CardTitle>提交高风险变更</CardTitle>
-          <CardDescription>提交人自动成为第一审批人；同一账号不能完成第二次审批。</CardDescription>
+          <CardDescription>
+            {data.dualApprovalRequired
+              ? '提交人自动成为第一审批人；同一账号不能完成第二次审批。'
+              : '当前为可选复核模式；可直接应用支持的变更，也可等待另一名管理员完成复核。'}
+          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
           <div className="grid gap-4 md:grid-cols-2">
@@ -170,7 +182,7 @@ export function GovernancePage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="governance-target">目标标识</Label>
-              <Input id="governance-target" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="local/default/production" />
+              <Input id="governance-target" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="org_local/prj_default/env_default" />
             </div>
           </div>
           <div className="space-y-2">
@@ -186,11 +198,16 @@ export function GovernancePage() {
               onChange={(event) => setPayloadText(event.target.value)}
               spellCheck={false}
             />
+            {action === 'project_policy.upsert' && (
+              <p className="text-xs leading-5 text-amber-700">
+                默认模板会为示例 DeepSeek 路由显式开启云外发，并可能产生 Provider 费用；使用本地模型时请改为 local_strict、cloudEnabled=false 及对应 Provider/模型。
+              </p>
+            )}
           </div>
           <div className="flex justify-end">
             <Button onClick={submit} disabled={createChange.isPending || reason.trim().length < 8 || !target.trim()}>
               {createChange.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-              提交并记录第一人审批
+              {data.dualApprovalRequired ? '提交并记录第一人审批' : '记录变更意图'}
             </Button>
           </div>
         </CardContent>
@@ -199,12 +216,16 @@ export function GovernancePage() {
       <Card>
         <CardHeader>
           <CardTitle>审批队列</CardTitle>
-          <CardDescription>Provider、身份、数据库与密钥类变更审批后仍由专用生产 Runbook 执行。</CardDescription>
+          <CardDescription>
+            {data.dualApprovalRequired
+              ? 'Provider、身份、数据库与密钥类变更审批后仍由专用生产 Runbook 执行。'
+              : '可选审批不会阻断普通管理员操作；选用审批单时仍会校验动作、目标与载荷摘要。'}
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           {data.changeRequests.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">暂无高风险变更</p>}
           {data.changeRequests.map((change) => (
-            <div key={change.id} className="rounded-xl border border-border/80 p-4">
+            <div key={change.id} data-testid={`governance-change-${change.id}`} className="rounded-xl border border-border/80 p-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -220,6 +241,9 @@ export function GovernancePage() {
                 <div className="flex shrink-0 gap-2">
                   {change.status === 'pending_second_approval' && (
                     <Button size="sm" variant="outline" disabled={approveChange.isPending} onClick={() => mutate('approve', change)}>第二人审批</Button>
+                  )}
+                  {!data.dualApprovalRequired && change.status === 'pending_second_approval' && DIRECT_APPLY_ACTIONS.has(change.action) && (
+                    <Button size="sm" disabled={applyChange.isPending} onClick={() => mutate('apply', change)}>直接应用</Button>
                   )}
                   {change.status === 'approved' && DIRECT_APPLY_ACTIONS.has(change.action) && (
                     <Button size="sm" disabled={applyChange.isPending} onClick={() => mutate('apply', change)}>应用变更</Button>

@@ -113,8 +113,8 @@ export function EnterprisePage() {
   if (requestsQuery.isError && !requestsQuery.data) {
     return (
       <ErrorState
-        title="企业账本加载失败"
-        message={requestsQuery.error instanceof Error ? requestsQuery.error.message : '无法查询企业请求账本。'}
+        title="运行账本加载失败"
+        message={requestsQuery.error instanceof Error ? requestsQuery.error.message : '无法查询受治理请求账本。'}
         onRetry={refresh}
       />
     )
@@ -125,11 +125,11 @@ export function EnterprisePage() {
       <header className="flex flex-col gap-4 border-b pb-5 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-muted-foreground">
-            <span className="uppercase tracking-[0.18em]">Enterprise control plane</span>
+            <span className="uppercase tracking-[0.18em]">Governed request ledger</span>
             <span className="text-border">/</span>
             <span>请求事实账本</span>
           </div>
-          <h1 className="text-3xl font-semibold tracking-[-0.03em]">企业运行</h1>
+          <h1 className="text-3xl font-semibold tracking-[-0.03em]">运行账本</h1>
           <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
             从租户隔离的不可变请求事实中检查幂等、Provider 尝试、租约和计费状态。原始请求体与幂等键不会进入控制台。
           </p>
@@ -161,7 +161,7 @@ export function EnterprisePage() {
         </div>
       )}
 
-      <section aria-label="企业账本筛选" className="border-y bg-muted/15 py-3">
+      <section aria-label="运行账本筛选" className="border-y bg-muted/15 py-3">
         <div className="flex flex-col gap-3 px-1 xl:flex-row xl:items-center">
           <form onSubmit={submitSearch} className="flex min-w-0 flex-1 gap-2">
             <div className="relative min-w-0 flex-1">
@@ -171,7 +171,7 @@ export function EnterprisePage() {
                 onChange={(event) => setSearchDraft(event.target.value)}
                 className="h-9 border-0 bg-background pl-9 shadow-none ring-1 ring-border"
                 placeholder="搜索 Ledger ID、Request ID、模型、主体或终止原因"
-                aria-label="搜索企业账本"
+                aria-label="搜索运行账本"
               />
             </div>
             <Button type="submit" size="sm" variant="secondary">查询</Button>
@@ -231,7 +231,7 @@ export function EnterprisePage() {
         </div>
       </section>
 
-      <section aria-label="企业请求记录" className="overflow-hidden border-y">
+      <section aria-label="受治理请求记录" className="overflow-hidden border-y">
         <div className="flex items-center justify-between border-b bg-muted/20 px-3 py-2.5">
           <div>
             <h2 className="text-sm font-semibold">Gateway Requests</h2>
@@ -246,13 +246,13 @@ export function EnterprisePage() {
         </div>
 
         {requestsQuery.isLoading ? (
-          <div className="space-y-px bg-border" aria-label="正在加载企业账本">
+          <div className="space-y-px bg-border" aria-label="正在加载运行账本">
             {Array.from({ length: 7 }).map((_, index) => <Skeleton key={index} className="h-16 w-full rounded-none" />)}
           </div>
         ) : requests.length === 0 ? (
           <EmptyState
             icon={Database}
-            title={hasFilters ? '没有匹配的账本记录' : '企业账本还没有请求'}
+            title={hasFilters ? '没有匹配的账本记录' : '运行账本还没有请求'}
             description={hasFilters ? '清除筛选条件或换一个关联 ID。' : '当请求进入 /v1/messages 或 /v1/chat/completions 后，这里会显示真实生命周期。'}
             action={hasFilters ? <Button variant="outline" onClick={clearFilters}>清除筛选</Button> : undefined}
           />
@@ -332,7 +332,7 @@ function OverviewRail({ overview, loading }: { overview?: EnterpriseLedgerOvervi
     { label: '账本成本', value: overview ? formatMoney(overview.totalCostMicrounits) : undefined, detail: 'USD · 微单位汇总', icon: Layers3 },
   ]
   return (
-    <section className="grid overflow-hidden border-y sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6" aria-label="企业账本概览">
+    <section className="grid overflow-hidden border-y sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6" aria-label="运行账本概览">
       {metrics.map((metric, index) => {
         const Icon = metric.icon
         return (
@@ -382,7 +382,7 @@ function BudgetRail({
   const percent = Math.min(100, Math.max(0, (account?.utilizationBasisPoints ?? 0) / 100))
   const finite = account?.limitMicrounits != null
   return (
-    <section aria-label="企业预算控制" className="border-y">
+    <section aria-label="预算控制" className="border-y">
       <div className="grid lg:grid-cols-[minmax(230px,1.3fr)_repeat(4,minmax(120px,0.7fr))_auto] lg:divide-x">
         <div className="flex min-w-0 items-center gap-3 px-4 py-4">
           <CircleDollarSign className="h-5 w-5 shrink-0 text-primary" />

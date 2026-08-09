@@ -15,9 +15,9 @@ export const ROUTES = {
 export const NAV_ITEMS = [
   { path: ROUTES.DASHBOARD, label: "仪表盘", icon: "LayoutDashboard", section: "运行", keywords: "概览 监控 健康", adminOnly: false },
   { path: ROUTES.LOGS, label: "请求日志", icon: "ScrollText", section: "运行", keywords: "请求 错误 trace 延迟 费用", adminOnly: false },
-  { path: ROUTES.ENTERPRISE, label: "企业运行", icon: "ShieldCheck", section: "运行", keywords: "企业 账本 ledger 幂等 租约 attempt tenant", adminOnly: true },
+  { path: ROUTES.ENTERPRISE, label: "运行账本", icon: "ShieldCheck", section: "运行", keywords: "运行 账本 ledger 幂等 租约 attempt tenant", adminOnly: true },
   { path: ROUTES.GOVERNANCE, label: "治理与审批", icon: "Scale", section: "治理", keywords: "审批 双人 高风险 路由 外发 Provider 预算", adminOnly: true },
-  { path: ROUTES.MODELS, label: "模型与渠道", icon: "Boxes", section: "接入", keywords: "模型 provider 供应商 渠道 路由 凭证", adminOnly: true },
+  { path: ROUTES.MODELS, label: "模型目录", icon: "Boxes", section: "接入", keywords: "模型 provider 供应商 渠道 路由 凭证", adminOnly: false },
   { path: ROUTES.API_KEYS, label: "API 密钥", icon: "KeyRound", section: "接入", keywords: "api key token 密钥 项目", adminOnly: false },
   { path: ROUTES.USERS, label: "用户管理", icon: "Users", section: "治理", keywords: "用户 角色 权限 账号", adminOnly: true },
   { path: ROUTES.QUOTAS, label: "配额管理", icon: "Gauge", section: "治理", keywords: "配额 token 请求 费用 限额", adminOnly: true },

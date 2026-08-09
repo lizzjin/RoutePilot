@@ -60,6 +60,7 @@ export interface LocalSchedulerSnapshot {
 export interface GovernanceOverview {
   view: 'administrator-control-plane'
   ready: boolean
+  dualApprovalRequired: boolean
   projectPolicies: ProjectPolicy[]
   changeRequests: GovernanceChangeRequest[]
   scheduler: LocalSchedulerSnapshot

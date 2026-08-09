@@ -1,3 +1,5 @@
+import { ApiError } from '@/lib/api-client'
+
 const OIDC_ERROR_MESSAGES: Record<string, string> = {
   access_denied: '企业单点登录已取消或未获授权，请重试。',
   account_disabled: '当前账户已停用，请联系管理员。',
@@ -56,4 +58,42 @@ export function withoutOidcError(search: string): string {
   params.delete('oidc_error')
   const remaining = params.toString()
   return remaining ? `?${remaining}` : ''
+}
+
+export function loginErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return '用户名或密码错误，请重新输入。'
+    if (error.status === 403) return '当前账户已停用或无权访问控制台，请联系管理员。'
+    if ([502, 503, 504].includes(error.status)) {
+      return '控制面暂不可用；后端、数据库或反向代理可能尚未就绪，请检查 /readyz 后重试。'
+    }
+    if (error.status >= 500) {
+      return `控制面返回内部错误（HTTP ${error.status}），凭证尚未完成校验；请检查后端日志后重试。`
+    }
+    if (error.status >= 400) return `登录请求被拒绝（HTTP ${error.status}）：${error.message}`
+  }
+
+  if (error instanceof TypeError || (error instanceof Error && /fetch|network|load failed/i.test(error.message))) {
+    return '无法连接 ModelPort 控制面；请检查网络、后端进程和反向代理配置。'
+  }
+
+  return '登录请求未完成，请稍后重试；若持续失败，请检查控制面日志。'
+}
+
+export function authCapabilityErrorMessage(error: unknown): string {
+  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+    return '认证方式探测超时：控制面在 8 秒内没有响应。你仍可尝试密码登录，或检查后端与反向代理后重试。'
+  }
+  if (error instanceof ApiError) {
+    if ([502, 503, 504].includes(error.status)) {
+      return '认证方式探测失败：控制面、数据库或反向代理尚未就绪。'
+    }
+    if (error.status >= 500) return `认证方式探测失败：控制面返回 HTTP ${error.status}。`
+    if (error.status === 401 || error.status === 403) return '认证方式探测被控制面拒绝，请检查公开认证端点配置。'
+    return `认证方式探测失败（HTTP ${error.status}）。`
+  }
+  if (error instanceof TypeError || (error instanceof Error && /fetch|network|load failed/i.test(error.message))) {
+    return '认证方式探测失败：浏览器无法连接 ModelPort 控制面。'
+  }
+  return '认证方式探测失败，当前实例支持的登录方式尚未确认。'
 }

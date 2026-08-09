@@ -4,6 +4,43 @@ import { isMockMode, mockDelay } from '@/lib/mock-mode'
 import { mockProviders, mockSettings } from '@/mock'
 
 let mockSettingsStore = mockSettings
+let mockRetentionPreview: RetentionResult | null = null
+
+export interface RetentionPolicy {
+  requestDetailDays: number
+  userUsageDays: number
+  auditDays: number
+  legalHold: boolean
+  contentPersistence: boolean
+}
+
+export interface RetentionCounts {
+  requestDetailsRedacted: number
+  providerAttemptsRedacted: number
+  routingDecisionsDeleted: number
+  userUsageRowsDeidentified: number
+  auditEventsDeleted: number
+}
+
+export interface RetentionResult {
+  dryRun: boolean
+  applied: boolean
+  skippedReason: string | null
+  evaluatedAtMs: number
+  requestDetailCutoffMs: number
+  userUsageCutoffMs: number
+  auditCutoffMs: number
+  policy: RetentionPolicy
+  counts: RetentionCounts
+  immutableBudgetEventsRetained: boolean
+  previewToken: string | null
+  previewExpiresAtMs: number | null
+}
+
+export interface RetentionRunInput {
+  dryRun: boolean
+  previewToken?: string
+}
 
 export const settingsService = {
   getSettings: (): Promise<SystemSettings> =>
@@ -69,7 +106,7 @@ export const settingsService = {
     await mockDelay(undefined)
   },
 
-  testProviderConnection: (providerId: string): Promise<{ success: boolean; message: string; testedAt?: string; models?: string[]; modelCount?: number }> => {
+  testProviderConnection: (providerId: string): Promise<{ success: boolean; message: string; testedAt?: string; testedCredentialId?: string | null; models?: string[]; modelCount?: number }> => {
     if (!isMockMode) return api.post('/admin/settings/test-provider', { providerId })
     const provider = mockProviders.find((item) => item.id === providerId)
     if (!provider) return mockDelay({ success: false, message: 'provider not found' }, 220)
@@ -78,6 +115,7 @@ export const settingsService = {
     return mockDelay({
       success,
       message: success ? 'mock connection ok' : 'mock missing API key or provider inactive',
+      testedCredentialId: provider.activeCredentialId ?? null,
       models,
       modelCount: models.length,
       testedAt: new Date().toISOString(),
@@ -155,5 +193,60 @@ export const settingsService = {
         providerTests: [],
       },
     }, 180)
+  },
+
+  runRetention: ({ dryRun, previewToken }: RetentionRunInput): Promise<RetentionResult> => {
+    if (!isMockMode) return api.post('/admin/retention/run', { dryRun, ...(previewToken ? { previewToken } : {}) })
+    const dayMs = 24 * 60 * 60 * 1_000
+    if (!dryRun) {
+      const preview = mockRetentionPreview
+      mockRetentionPreview = null
+      if (!previewToken || !preview?.previewToken || preview.previewToken !== previewToken || !preview.previewExpiresAtMs || preview.previewExpiresAtMs <= Date.now()) {
+        return Promise.reject(new Error('执行令牌缺失、过期或已使用，请重新预览'))
+      }
+      return mockDelay({
+        ...preview,
+        dryRun: false,
+        applied: true,
+        counts: {
+          requestDetailsRedacted: 10,
+          providerAttemptsRedacted: 15,
+          routingDecisionsDeleted: 8,
+          userUsageRowsDeidentified: 3,
+          auditEventsDeleted: 1,
+        },
+        previewToken: null,
+        previewExpiresAtMs: null,
+      }, 220)
+    }
+    const evaluatedAtMs = Date.now()
+    const result: RetentionResult = {
+      dryRun: true,
+      applied: false,
+      skippedReason: null,
+      evaluatedAtMs,
+      requestDetailCutoffMs: evaluatedAtMs - 30 * dayMs,
+      userUsageCutoffMs: evaluatedAtMs - 90 * dayMs,
+      auditCutoffMs: evaluatedAtMs - 395 * dayMs,
+      policy: {
+        requestDetailDays: 30,
+        userUsageDays: 90,
+        auditDays: 395,
+        legalHold: false,
+        contentPersistence: false,
+      },
+      counts: {
+        requestDetailsRedacted: 12,
+        providerAttemptsRedacted: 18,
+        routingDecisionsDeleted: 9,
+        userUsageRowsDeidentified: 4,
+        auditEventsDeleted: 2,
+      },
+      immutableBudgetEventsRetained: true,
+      previewToken: `retention-preview-${evaluatedAtMs}`,
+      previewExpiresAtMs: evaluatedAtMs + 5 * 60 * 1_000,
+    }
+    mockRetentionPreview = result
+    return mockDelay(result, 220)
   },
 }

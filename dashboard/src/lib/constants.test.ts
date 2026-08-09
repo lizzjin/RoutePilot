@@ -11,7 +11,7 @@ describe('navItemsForRole', () => {
     expect(paths).toContain(ROUTES.GUIDE)
     expect(paths).not.toContain(ROUTES.USERS)
     expect(paths).not.toContain(ROUTES.QUOTAS)
-    expect(paths).not.toContain(ROUTES.MODELS)
+    expect(paths).toContain(ROUTES.MODELS)
     expect(paths).not.toContain(ROUTES.ENTERPRISE)
     expect(paths).not.toContain(ROUTES.SETTINGS)
   })

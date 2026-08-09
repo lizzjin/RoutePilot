@@ -34,8 +34,15 @@ export interface UpdateApiKeyInput {
   monthlyLimitUsd?: number
 }
 
+export type RevealedApiKey = ApiKey & { key: string }
+export type PreparedApiKeyRotation = Omit<ApiKey, 'status'> & {
+  status: 'pending_rotation'
+  key: string
+}
+
 let mockUserStore = [...mockUsers]
 let mockApiKeyStore = [...mockApiKeys]
+const mockPendingApiKeyRotations = new Map<string, { sourceKeyId: string; replacement: PreparedApiKeyRotation }>()
 let mockTeamStore: Team[] = [
   {
     id: 'team_default',
@@ -168,10 +175,10 @@ export const usersService = {
     return mockDelay(undefined)
   },
 
-  createApiKey: (data: CreateApiKeyInput): Promise<ApiKey> => {
+  createApiKey: (data: CreateApiKeyInput): Promise<RevealedApiKey> => {
     if (!isMockMode) return api.post('/admin/api-keys', data)
     const key = `sk-mp-demo-${Math.random().toString(36).slice(2, 18)}`
-    const row: ApiKey = {
+    const row: RevealedApiKey = {
       id: nextMockId('key'),
       userId: data.userId,
       username: data.username,
@@ -200,6 +207,60 @@ export const usersService = {
   revokeApiKey: (keyId: string): Promise<void> => {
     if (!isMockMode) return api.post(`/admin/api-keys/${encodeURIComponent(keyId)}/disable`)
     mockApiKeyStore = mockApiKeyStore.map((key) => key.id === keyId ? { ...key, status: 'revoked' } : key)
+    return mockDelay(undefined)
+  },
+
+  rotateApiKey: (keyId: string): Promise<PreparedApiKeyRotation> => {
+    if (!isMockMode) return api.post(`/admin/api-keys/${encodeURIComponent(keyId)}/rotate`)
+    const current = mockApiKeyStore.find((item) => item.id === keyId)
+    if (!current || current.status !== 'active') {
+      return Promise.reject(new Error('只有启用的 API 密钥可以轮换'))
+    }
+    const key = `sk-mp-demo-${Math.random().toString(36).slice(2, 18)}`
+    const replacement: PreparedApiKeyRotation = {
+      ...current,
+      id: nextMockId('key'),
+      key,
+      keyPrefix: `${key.slice(0, 12)}...`,
+      keyPreview: `${key.slice(0, 12)}...${key.slice(-4)}`,
+      createdAt: new Date().toISOString(),
+      lastUsedAt: null,
+      status: 'pending_rotation',
+      requestsToday: 0,
+      tokensToday: 0,
+    }
+    mockPendingApiKeyRotations.set(replacement.id, { sourceKeyId: keyId, replacement })
+    return mockDelay(replacement)
+  },
+
+  confirmApiKeyRotation: (keyId: string, replacementId: string): Promise<ApiKey> => {
+    if (!isMockMode) {
+      return api.post(`/admin/api-keys/${encodeURIComponent(keyId)}/rotate/${encodeURIComponent(replacementId)}`)
+    }
+    const pending = mockPendingApiKeyRotations.get(replacementId)
+    if (!pending || pending.sourceKeyId !== keyId) {
+      return Promise.reject(new Error('待确认的密钥轮换不存在'))
+    }
+    const replacement: ApiKey = { ...pending.replacement, key: undefined, status: 'active' }
+    mockApiKeyStore = [
+      replacement,
+      ...mockApiKeyStore.map((item) => item.id === keyId
+        ? { ...item, status: 'revoked' as const, supersededByKeyId: replacement.id }
+        : item),
+    ]
+    mockPendingApiKeyRotations.delete(replacementId)
+    return mockDelay(replacement)
+  },
+
+  cancelApiKeyRotation: (keyId: string, replacementId: string): Promise<void> => {
+    if (!isMockMode) {
+      return api.delete(`/admin/api-keys/${encodeURIComponent(keyId)}/rotate/${encodeURIComponent(replacementId)}`)
+    }
+    const pending = mockPendingApiKeyRotations.get(replacementId)
+    if (!pending || pending.sourceKeyId !== keyId) {
+      return Promise.reject(new Error('待确认的密钥轮换不存在'))
+    }
+    mockPendingApiKeyRotations.delete(replacementId)
     return mockDelay(undefined)
   },
 

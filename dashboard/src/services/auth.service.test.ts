@@ -5,30 +5,40 @@ vi.mock('@/lib/mock-mode', () => ({
   mockDelay: <T>(value: T) => Promise.resolve(value),
 }))
 
-import { authService, type AuthMethods } from './auth.service'
+import { AUTH_METHODS_TIMEOUT_MS, authService, normalizeAuthMethods } from './auth.service'
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
-describe('auth service', () => {
-  it('discovers enabled login methods from the public auth endpoint', async () => {
-    const methods: AuthMethods = {
+describe('authentication capability probe', () => {
+  it('normalizes a missing optional OIDC object without crashing the login page', () => {
+    expect(normalizeAuthMethods({ passwordEnabled: true })).toEqual({
       passwordEnabled: true,
       oidc: {
-        enabled: true,
-        label: '公司单点登录',
-        startUrl: '/admin/auth/oidc/start?connection=corporate',
+        enabled: false,
+        label: '企业单点登录',
+        startUrl: '/admin/auth/oidc/start',
       },
-    }
-    const fetchMock = vi.fn().mockResolvedValue(Response.json(methods))
-    vi.stubGlobal('fetch', fetchMock)
+    })
+    expect(() => normalizeAuthMethods({ oidc: {} })).toThrow('passwordEnabled')
+  })
 
-    await expect(authService.getMethods()).resolves.toEqual(methods)
+  it('aborts a backend that accepts the request but never responds', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn((_input: RequestInfo | URL, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('aborted', 'AbortError'))
+        })
+      })
+    )))
 
-    const [path, options] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(path).toBe('/admin/auth/methods')
-    expect(options.credentials).toBe('include')
-    expect(new Headers(options.headers).has('Content-Type')).toBe(false)
+    const pending = authService.getMethods()
+    const rejection = expect(pending).rejects.toMatchObject({ name: 'TimeoutError' })
+    await vi.advanceTimersByTimeAsync(AUTH_METHODS_TIMEOUT_MS)
+
+    await rejection
   })
 })

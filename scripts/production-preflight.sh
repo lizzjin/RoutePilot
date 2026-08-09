@@ -90,6 +90,7 @@ for number, raw in enumerate(env_path.read_text(encoding="utf-8").splitlines(), 
 required = {
     "MODELPORT_DATABASE_URL",
     "MODELPORT_AUTH_TOKEN",
+    "MODELPORT_HEALTHCHECK_API_KEY",
     "MODELPORT_ADMIN_USERNAME",
     "MODELPORT_ADMIN_PASSWORD",
     "MODELPORT_BACKUP_ADMIN_USERNAME",

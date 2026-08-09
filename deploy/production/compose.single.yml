@@ -32,6 +32,11 @@ services:
       MODELPORT_BATCH_QUEUE_GLOBAL: "16"
       MODELPORT_LOCAL_OVERFLOW_AFTER_SECONDS: "5"
       MODELPORT_LOCAL_STRICT_WAIT_SECONDS: "60"
+      MODELPORT_FINALIZATION_DRAIN_TIMEOUT_SECONDS: "30"
+      MODELPORT_REQUEST_DETAIL_RETENTION_DAYS: "30"
+      MODELPORT_USER_USAGE_RETENTION_DAYS: "90"
+      MODELPORT_AUDIT_RETENTION_DAYS: "395"
+      MODELPORT_RETENTION_LEGAL_HOLD: ${MODELPORT_RETENTION_LEGAL_HOLD:-0}
     extra_hosts:
       - host.docker.internal:host-gateway
     ports:
@@ -46,7 +51,19 @@ services:
         source: ${MODELPORT_DATABASE_CA_FILE:?set the managed PostgreSQL CA file}
         target: /run/modelport/database-ca.pem
         read_only: true
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          probe_key="$${MODELPORT_HEALTHCHECK_API_KEY:-}";
+          test -n "$${probe_key}" &&
+          curl -fsS -H "x-api-key: $${probe_key}" http://127.0.0.1:38082/readyz >/dev/null
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 4
     restart: unless-stopped
+    stop_grace_period: ${MODELPORT_STOP_GRACE_PERIOD:-11m}
     logging:
       driver: json-file
       options:
@@ -63,12 +80,10 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=32m
-    depends_on:
-      modelport:
-        condition: service_healthy
     ports:
       - ${MODELPORT_DASHBOARD_PUBLISH:-127.0.0.1:33002}:8080
     restart: unless-stopped
+    stop_grace_period: ${MODELPORT_DASHBOARD_STOP_GRACE_PERIOD:-30s}
     logging:
       driver: json-file
       options:

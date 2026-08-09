@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib.sh"
+COMPOSE_FILE="${MODELPORT_COMPOSE_FILE:-$ROOT_DIR/docker-compose.yml}"
 
 mode="runtime"
 upstream=0
@@ -28,7 +29,9 @@ Usage:
 
 Modes:
   --setup        Check Linux, Docker Compose, local files, and required values
-                 before the first container build. Does not start services.
+                 before the first container pull/build or start. Set
+                 MODELPORT_COMPOSE_FILE to select the manifest. Does not start
+                 services.
   --development  Check the pinned Rust/Node toolchain and Linux C compiler.
                  Does not require local configuration or running services.
   (no option)    Check configuration plus the running local gateway.
@@ -100,10 +103,21 @@ check_linux_platform() {
   fi
 
   case "$architecture" in
-    x86_64|aarch64)
+    x86_64)
+      ;;
+    aarch64)
+      if [[ "$mode" == "setup" ]]; then
+        fail "Linux arm64 release images are experimental; the Tier 1 setup path requires x86_64"
+      else
+        warn "Linux arm64 source builds are experimental and outside the Tier 1 release matrix"
+      fi
       ;;
     *)
-      warn "architecture '$architecture' is not part of the maintained CI matrix"
+      if [[ "$mode" == "setup" ]]; then
+        fail "architecture '$architecture' is outside the Tier 1 Linux x86_64 setup matrix"
+      else
+        warn "architecture '$architecture' is not part of the maintained CI matrix"
+      fi
       ;;
   esac
 }
@@ -297,13 +311,17 @@ check_compose_setup() {
   fi
 
   local body_file
+  if [[ ! -f "$COMPOSE_FILE" ]]; then
+    fail "Compose manifest does not exist: $COMPOSE_FILE"
+    return
+  fi
   body_file="$(mktemp)"
   temp_files+=("$body_file")
   if (
     cd "$ROOT_DIR"
-    docker compose --env-file "$ENV_FILE" config --quiet
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --quiet
   ) >"$body_file" 2>&1; then
-    ok "Docker Compose manifest renders successfully"
+    ok "Docker Compose manifest renders successfully ($COMPOSE_FILE)"
   else
     fail "Docker Compose manifest validation failed"
     sed -n '1,40p' "$body_file" >&2 || true
@@ -390,11 +408,11 @@ check_static_config() {
   temp_files+=("$body_file")
 
   modelport_container="$(
-    docker compose -f "$ROOT_DIR/docker-compose.yml" ps -q modelport 2>/dev/null || true
+    docker compose -f "$COMPOSE_FILE" ps -q modelport 2>/dev/null || true
   )"
   if [[ -n "$modelport_container" ]]; then
     validate_command=(
-      docker compose -f "$ROOT_DIR/docker-compose.yml"
+      docker compose -f "$COMPOSE_FILE"
       exec -T modelport model-port config validate
     )
   else
@@ -480,14 +498,20 @@ check_database_alignment() {
     warn "docker is unavailable; local Compose database alignment check skipped"
     return
   fi
-  if [[ -z "$(docker compose -f "$ROOT_DIR/docker-compose.yml" ps -q postgres 2>/dev/null || true)" ]]; then
-    warn "local Compose PostgreSQL is not running; external database alignment is operator-owned"
+  if ! docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null \
+    | grep -Fxq postgres; then
+    warn "selected Compose profile uses an external database; local volume alignment check skipped"
+    return
+  fi
+  if [[ -z "$(docker compose -f "$COMPOSE_FILE" ps -q postgres 2>/dev/null || true)" ]]; then
+    warn "selected bundled Compose PostgreSQL is not running; alignment check skipped"
     return
   fi
 
   body_file="$(mktemp)"
   temp_files+=("$body_file")
-  if "$SCRIPT_DIR/database-preflight.sh" >"$body_file" 2>&1; then
+  if MODELPORT_COMPOSE_FILE="$COMPOSE_FILE" \
+    "$SCRIPT_DIR/database-preflight.sh" >"$body_file" 2>&1; then
     ok "running PostgreSQL image, volume, migrations, and durable state are aligned"
   else
     fail "running PostgreSQL does not match the declared Compose database"

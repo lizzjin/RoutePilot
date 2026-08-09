@@ -1,18 +1,18 @@
 schema_version = 1
 
 [platform]
-owner = "model-platform-owner@example.com"
-backups = ["model-platform-backup@example.com"]
+owner = "replace-with-named-platform-owner"
+backups = ["replace-with-named-platform-backup"]
 
 [coverage]
 timezone = "Asia/Shanghai"
 business_hours = "Monday-Friday 09:00-18:00"
-primary_channel = "team-model-platform-oncall"
-backup_channel = "team-infrastructure-oncall"
+primary_channel = "replace-with-primary-oncall-channel"
+backup_channel = "replace-with-backup-oncall-channel"
 acknowledgement_minutes = 15
 
 [escalation]
-database = "database-platform-oncall"
-identity = "identity-platform-oncall"
-security = "security-oncall"
-cloud_billing = "finops-oncall"
+database = "replace-with-database-escalation"
+identity = "replace-with-identity-escalation"
+security = "replace-with-security-escalation"
+cloud_billing = "replace-with-finops-escalation"

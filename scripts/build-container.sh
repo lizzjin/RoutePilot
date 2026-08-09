@@ -31,11 +31,23 @@ if [[ -n "$(git -C "$ROOT_DIR" status --porcelain=v1)" ]]; then
 fi
 
 log "building ModelPort images version=$modelport_version revision=$source_revision source_state=$source_state"
-MODELPORT_VERSION="$modelport_version" \
-MODELPORT_SOURCE_REVISION="$source_revision" \
-MODELPORT_SOURCE_STATE="$source_state" \
-MODELPORT_BUILD_DATE="$build_date" \
-  docker compose build modelport dashboard
+common_args=(
+  --build-arg "MODELPORT_VERSION=$modelport_version"
+  --build-arg "MODELPORT_SOURCE_REVISION=$source_revision"
+  --build-arg "MODELPORT_SOURCE_STATE=$source_state"
+  --build-arg "MODELPORT_BUILD_DATE=$build_date"
+)
+
+docker build \
+  "${common_args[@]}" \
+  --file "$ROOT_DIR/Dockerfile" \
+  --tag modelport:local \
+  "$ROOT_DIR"
+docker build \
+  "${common_args[@]}" \
+  --file "$ROOT_DIR/dashboard/Dockerfile" \
+  --tag modelport-dashboard:local \
+  "$ROOT_DIR"
 
 for image in modelport:local modelport-dashboard:local; do
   image_id="$(docker image inspect "$image" --format '{{.Id}}')"
@@ -48,3 +60,5 @@ for image in modelport:local modelport-dashboard:local; do
   fi
   log "built $image id=$image_id version=$image_version revision=$image_revision source_state=$image_state"
 done
+
+log "start these source-built images with: MODELPORT_LOCAL_BUILD=1 scripts/compose-up.sh"

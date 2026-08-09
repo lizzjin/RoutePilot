@@ -1,0 +1,12 @@
+modules:
+  modelport_ready:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      valid_status_codes:
+        - 200
+      preferred_ip_protocol: ip4
+      authorization:
+        type: Bearer
+        credentials_file: /run/secrets/modelport_probe_key

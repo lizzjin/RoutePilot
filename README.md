@@ -7,10 +7,12 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-ModelPort is a self-hosted LLM gateway for Anthropic-compatible and
-OpenAI-compatible clients. It gives Claude Code, SDKs, and internal
-applications one endpoint for authentication, model routing, quotas, usage,
-Provider health, request evidence, and operations.
+ModelPort v0.1.x is a free, MIT-licensed, self-hosted LLM gateway for 20–50
+person internal development teams that use local models and approved cloud
+Providers. It gives Claude Code, SDKs, and internal applications one governed
+endpoint for authentication, logical-model routing, quotas, usage, Provider
+health, and request evidence. The Small-Team Beta experience is Chinese-first;
+the API and maintained operator documentation remain available in English.
 
 ![ModelPort architecture overview](docs/assets/modelport-overview.svg)
 
@@ -31,18 +33,22 @@ Provider health, request evidence, and operations.
 - Docker Compose and systemd deployment paths, backup/restore tooling,
   Prometheus metrics, and acceptance scripts.
 
-ModelPort currently supports one trusted host or a small trusted network. It is
-not a public multi-tenant service, model runtime, chat UI, payment processor, or
-Provider invoice. See [Production](docs/PRODUCTION.md) and
+ModelPort currently supports one Linux x86_64 instance on a trusted host or
+small trusted network. It is not enterprise/HA software, a public multi-tenant
+service, model runtime, chat UI, payment processor, or Provider invoice. See
+[Compatibility](docs/COMPATIBILITY.md), [Production](docs/PRODUCTION.md), and
 [Roadmap](docs/ROADMAP.md) before making broader availability claims.
 
 ## Quick Start
 
-Requirements: Git, Docker, Docker Compose v2, and credentials for at least one
-Provider. The maintained example uses DeepSeek's Anthropic-compatible endpoint.
+Requirements: Linux x86_64, Git, Docker, Docker Compose v2, and credentials for
+at least one Provider. Once `v0.1.0` appears on the GitHub Releases page, the
+supported user path below pulls its prebuilt images and does not compile Rust
+or the Dashboard. The maintained example uses DeepSeek's Anthropic-compatible
+endpoint.
 
 ```bash
-git clone https://github.com/tiammomo/ModelPort.git
+git clone --branch v0.1.0 --depth 1 https://github.com/tiammomo/ModelPort.git
 cd ModelPort
 cp deploy/docker/modelport.env.example .env
 cp config.example.toml config.toml
@@ -54,20 +60,67 @@ unique router, administrator, PostgreSQL, and Provider credentials. Keep
 first local test.
 
 ```bash
+export MODELPORT_COMPOSE_FILE="$PWD/deploy/release/compose.yml"
 scripts/doctor.sh --setup
-scripts/build-container.sh
+docker compose -f "$MODELPORT_COMPOSE_FILE" pull
 scripts/compose-up.sh
-docker compose ps
+docker compose -f "$MODELPORT_COMPOSE_FILE" ps
 scripts/smoke-test.sh
+```
+
+The release command is intentionally invalid before the `v0.1.0` tag and GHCR
+images exist; this repository edit cannot publish external artifacts. To test
+current `main` or contribute before that release, use the source-build path:
+
+```bash
+git clone https://github.com/tiammomo/ModelPort.git
+cd ModelPort
+cp deploy/docker/modelport.env.example .env
+cp config.example.toml config.toml
+# replace required placeholders
+export MODELPORT_COMPOSE_FILE="$PWD/docker-compose.yml"
+scripts/build-container.sh
+MODELPORT_LOCAL_BUILD=1 scripts/compose-up.sh
 ```
 
 Open `http://127.0.0.1:33002` and sign in with
 `MODELPORT_ADMIN_USERNAME`/`MODELPORT_ADMIN_PASSWORD`.
 
-For local Qwen, another Provider, production hardening, or troubleshooting,
-follow the tested [Getting Started guide](docs/GETTING_STARTED.md).
+For local Qwen, another Provider, production hardening, digest pinning, or
+troubleshooting, follow the tested [Getting Started guide](docs/GETTING_STARTED.md).
+After the first Release exists, building images from source is a contributor
+workflow documented in [Development](docs/DEVELOPMENT.md), not a normal user
+installation step.
 
 ## Send Your First Request
+
+Cloud egress is fail-closed until the request's project has an explicit policy.
+In the Dashboard, open **Governance (治理与变更审批)**, choose
+`project_policy.upsert`, set the target to
+`org_local/prj_default/env_default`, and record this narrow example policy:
+
+```json
+{
+  "organizationId": "org_local",
+  "projectId": "prj_default",
+  "environmentId": "env_default",
+  "maximumMode": "cloud_first",
+  "defaultClassification": "unknown",
+  "allowedProviders": ["deepseek"],
+  "allowedModels": ["deepseek-v4-flash"],
+  "allowedRegions": ["global"],
+  "allowedApiVersions": ["anthropic-v1"],
+  "cloudEnabled": true
+}
+```
+
+Give the change a concrete reason, submit it, then apply it. The default
+Small-Team mode lets the same administrator apply this recorded change with
+CSRF and audit protection. Enterprise mode or
+`MODELPORT_REQUIRE_DUAL_APPROVAL=1` requires a different administrator to
+approve it before apply. This boundary permits only the documented DeepSeek
+model/API path; requests without an explicit safe classification still remain
+local-only.
 
 ```bash
 source .env
@@ -75,6 +128,8 @@ source .env
 curl -fsS \
   -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
   -H 'content-type: application/json' \
+  -H 'x-modelport-data-classification: public' \
+  -H 'x-modelport-hybrid-mode: cloud_first' \
   http://127.0.0.1:38082/v1/messages \
   -d '{
     "model":"deepseek-v4-flash",
@@ -126,6 +181,12 @@ set:
   topology.
 - [Operations](docs/OPERATIONS.md) — health, logs, metrics, backup, retention,
   incidents, and upgrades.
+- [Compatibility](docs/COMPATIBILITY.md) — Tier 1 platform and explicit
+  experimental/unsupported boundaries.
+- [Observability runbook](docs/OBSERVABILITY_RUNBOOK.md) — official alerts,
+  Grafana dashboard, and incident actions.
+- [Upgrading and rollback](docs/UPGRADING.md) — safe-stop, backup, migration,
+  acceptance, and paired application/database rollback.
 - [Production](docs/PRODUCTION.md) — go-live and release acceptance.
 - [Development](docs/DEVELOPMENT.md) — contributor workflow and test matrix.
 - [Documentation index](docs/README.md) — role-based navigation.
@@ -138,10 +199,14 @@ shared use. Never commit `.env`, Provider keys, backups, prompts, responses, or
 raw sensitive logs.
 
 Read [Security](SECURITY.md), [Privacy](PRIVACY.md), [Support](SUPPORT.md), and
-[Governance](GOVERNANCE.md). Community support has no SLA unless a separate
-written agreement provides one.
+[Governance](GOVERNANCE.md). ModelPort is free self-hosted software. The
+project provides no paid edition, hosted service, or community-support SLA.
 
 ## Development
+
+The source-development path requires a reachable PostgreSQL instance; the
+development scripts do not start one. See [Development](docs/DEVELOPMENT.md)
+for a loopback-only disposable database command and the complete prerequisites.
 
 ```bash
 cp .env.example .env

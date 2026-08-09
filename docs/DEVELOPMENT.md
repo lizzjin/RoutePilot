@@ -27,6 +27,23 @@ The check rejects Node/npm or other tools resolved from Windows-mounted
 
 ## Backend
 
+The local backend does not start PostgreSQL for you. Before `scripts/dev.sh`,
+make sure the `MODELPORT_DATABASE_URL` copied from `.env.example` is reachable.
+For a disposable loopback-only development database, one option is:
+
+```bash
+docker run -d --rm --name modelport-dev-postgres \
+  -p 127.0.0.1:5432:5432 \
+  -e POSTGRES_DB=modelport \
+  -e POSTGRES_USER=modelport \
+  -e POSTGRES_PASSWORD=change-this-db-password \
+  postgres:18.4-alpine
+```
+
+This password is deliberately development-only and matches `.env.example`.
+Use a unique secret for any persistent or shared environment. Stop the
+disposable database with `docker stop modelport-dev-postgres`.
+
 ```bash
 cp .env.example .env
 # replace every required placeholder

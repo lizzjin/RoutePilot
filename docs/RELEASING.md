@@ -2,7 +2,13 @@
 
 ModelPort uses semantic versions shared by the Rust backend and dashboard. A
 release tag is `v<version>`, matching `Cargo.toml` and
-`dashboard/package.json`.
+`dashboard/package.json`. SemVer prerelease suffixes such as `-rc.1` are
+supported. Build-metadata suffixes such as `+build.1` are intentionally rejected
+because `+` is not valid in the corresponding Docker image tag.
+
+Small-Team Beta targets one planned release every four weeks. Critical security
+fixes may publish between planned releases. Only the latest Beta is maintained,
+with a 30-day upgrade window for the previous Beta. There is no LTS or SLA.
 
 ## Release Preconditions
 
@@ -19,6 +25,8 @@ release tag is `v<version>`, matching `Cargo.toml` and
    the same versioned contract.
 6. Any real-Provider claim has a dated, secret-free, commit-bound evidence
    artifact. Routine release CI makes no paid Provider calls.
+7. The version in `deploy/release/compose.yml` matches the tag, and Linux x86_64
+   install, safe stop, backup/restore, upgrade, and rollback acceptance passes.
 
 ## Version And Tag
 
@@ -26,6 +34,7 @@ Update:
 
 - `Cargo.toml`;
 - `dashboard/package.json` and its lockfile;
+- both default image versions in `deploy/release/compose.yml`;
 - the changelog comparison links and release section.
 
 Then run:
@@ -54,7 +63,9 @@ The release workflow:
 - emits SHA-256 checksums and an SPDX JSON SBOM;
 - creates GitHub build-provenance and SBOM attestations;
 - publishes versioned backend and dashboard images to GHCR;
-- attests the published container digests;
+- publishes Linux x86_64 container SBOMs, signs immutable image digests with
+  keyless Cosign, and attaches GitHub provenance/SBOM attestations;
+- records both immutable image references as Release assets;
 - creates the GitHub Release from the existing tag.
 
 Release workflows use least-privilege job permissions and pin third-party
@@ -69,10 +80,19 @@ sha256sum --check SHA256SUMS
 gh attestation verify model-port-vX.Y.Z-linux-amd64.tar.gz \
   --repo tiammomo/ModelPort
 docker pull ghcr.io/tiammomo/modelport:X.Y.Z
+cosign verify \
+  --certificate-identity-regexp='https://github.com/tiammomo/ModelPort/.github/workflows/release.yml@refs/tags/vX[.]Y[.]Z' \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  ghcr.io/tiammomo/modelport@sha256:<digest>
 ```
 
 For container provenance, verify the immutable digest rather than relying only
 on a mutable tag.
+
+The workflow and repository changes only make a release candidate ready. They
+do not make a tag, GHCR image, signature, or GitHub Release exist until an
+authorized maintainer pushes the reviewed tag and the workflow succeeds. Never
+document a prebuilt path as available before those external artifacts exist.
 
 ## Rollback
 

@@ -1,96 +1,109 @@
 # Roadmap
 
-Status: product direction. Only capabilities described as implemented in the
-current README, API, architecture, configuration, and operations documents are
-shipped.
+Status: accepted Small-Team Beta direction.
 
-Last reviewed: 2026-07-27.
+Last reviewed: 2026-08-09.
 
-## Current Product
+## Product Contract
 
-ModelPort is a self-hosted gateway for one trusted host or small trusted
-network. The current baseline includes:
+ModelPort is free, MIT-licensed, self-hosted software for a 20–50 person
+Chinese internal development team that uses local models and approved cloud
+Providers. The platform administrator is the primary operator; developers get
+scoped keys, stable logical models, their own request evidence, and copyable
+client configuration.
 
-- Anthropic Messages and a scoped OpenAI Chat Completions edge through one
-  typed governance pipeline;
-- Anthropic and OpenAI-compatible Provider adapters, Tool Use conversion,
-  bounded streaming, deterministic routing, and explainable smart routing;
-- optional CPA Codex/Claude account channels behind the same Provider,
-  governance, retry, and evidence boundaries;
-- users, teams, scoped client API keys, quotas, spend checks, Provider
-  credential pools, cooldown, and bounded fallback;
-- mandatory PostgreSQL request/attempt, usage, budget, audit, idempotency,
-  lease, and routing-decision evidence;
-- a dashboard, metrics, acceptance tooling, Docker Compose, systemd, and
-  backup/restore workflows.
+The core user outcome is:
 
-This is useful commercial self-hosting software, but it is not yet a public
-multi-tenant or horizontally scalable enterprise platform.
+> Sensitive code stays local by default. A cloud route is used only when an
+> administrator-approved project policy permits it, and every egress decision
+> has an identity, reason, route, outcome, and cost provenance.
 
-## Near-Term Priorities
+Success is the first governed request within 30 minutes and sustained weekly
+team use without policy bypass—not Provider count, raw request volume, GitHub
+stars, or revenue. ModelPort has no paid edition, hosted service, or feature
+tier.
 
-The staged forty-user hybrid-routing target is governed by
-[ADR-0005](adr/0005-forty-user-hybrid-routing-baseline.md); the current release
-remains a single-instance product until each target capability is implemented
-and accepted.
+## v0.1.x Small-Team Beta Freeze
 
-1. Prove migration, secret-free backup, recovery, Provider, Tool Use, routing, and
-   accounting behavior with repeatable release evidence.
-2. Build on the completed auth/control revision-CAS guard by normalizing those
-   document domains into tenant-scoped relational repositories and
-   cross-domain transactions.
-3. Add Provider evidence ingestion and append-only settlement corrections
-   without rewriting historical attempts.
-4. Improve Chat Completions conformance and extend the typed exchange model
-   before adding another public protocol surface.
-5. Add OpenTelemetry trace propagation/export and measured performance,
-   failure, and recovery objectives.
+For the first 6–8 weeks after v0.1.0, new protocol, Provider, and platform
+breadth is frozen. A change may break the freeze only when it fixes a security
+issue, data-loss risk, release/upgrade blocker, or a reproducible blocker found
+by a design-partner team.
 
-## Enterprise Admission Work
+Work during the freeze is ordered as follows:
 
-ModelPort may be described as enterprise ready only after evidence exists for:
+1. **Activation:** prebuilt signed images, digest/SBOM evidence, state-driven
+   onboarding, credential resolution/test state, stable logical models, and a
+   first governed request in at most 30 minutes.
+2. **Developer self-service:** own scoped/expiring keys, readable model catalog,
+   copyable Claude Code/SDK configuration, own request logs, and explicit local
+   versus cloud route evidence.
+3. **Privacy and policy:** zero maintainer telemetry, no prompt/response/tool
+   content persistence, owner-scoped logs, 30/90/395-day retention preview and
+   apply, legal hold, `local_strict` default, and no silent Tool Use downgrade.
+4. **Operations:** independent static Dashboard, liveness/readiness separation,
+   graceful drain and ledger finalization, safe maintenance upgrade/rollback,
+   official Prometheus rules, Grafana dashboard, and alert runbook.
+5. **Validation:** two or three real teams, each with an administrator and at
+   least five active developers for two weeks, providing only previewed,
+   content-free diagnostic evidence.
 
-| Area | Required outcome |
-| --- | --- |
-| Protocols | Anthropic Messages and OpenAI Chat are conformant; Responses has a typed, documented contract before beta. |
-| Tenancy | Every resource and query is tenant-scoped with negative cross-tenant CI tests. |
-| Identity | OIDC, service accounts, group/role mapping, revocation, and recovery controls work across instances. |
-| Authorization | Resource-level RBAC and model/Provider/tool/data policies fail closed. |
-| Accounting | Every hard limit uses transactional reservation/settlement and reconcilable price evidence. |
-| Availability | Multiple data-plane replicas pass failover, drain, rolling-upgrade, and dependency-degradation tests. |
-| Security | TLS, DNS-aware egress, secret-manager integration, threat modeling, and security regression evidence are release gates. |
-| Observability | W3C trace context, OTLP export, bounded metrics, structured logs, and complete stream outcomes are available without prompt capture by default. |
-| Operations | Migrations, backup, point-in-time recovery, rollback, retention, and disaster recovery are tested. |
+Beta exit evidence:
 
-Compliance certifications are organizational audit outcomes, not repository
-features, and must never be claimed by the software alone.
+- at least 80% of clean Tier 1 installs complete a governed request in 30
+  minutes;
+- week two active-developer coverage is at least 60%, and week four at least
+  80%, using the locally calculated definition in the product plan;
+- zero unapproved cloud egress and zero cross-user request-log access;
+- every request exposes a stable request ID, logical model, actual route, and
+  egress policy basis;
+- clean install, upgrade, safe stop, backup, restore, and rollback acceptance
+  passes for Linux x86_64;
+- no open P0/P1 security, privacy, ledger, or activation blocker.
 
-## Later, When Workloads Require It
+## Explicitly Deferred During The Freeze
 
-- Typed OpenAI Responses and selected multimodal/item-oriented operations.
-- Distributed limits, sessions, Provider health, cache invalidation, and
-  deployable data-plane/control-plane/worker roles.
-- Service-account lifecycle, resource-level policy, SCIM, external secret
-  managers, SIEM exports, and content-policy hooks.
-- Embeddings, images, audio, batch, realtime, regional control planes, and
-  advanced learning-based routing only after concrete demand and safety
-  evidence.
+- OpenAI Responses, realtime, embeddings, image/audio/multimodal APIs, and new
+  public protocol surfaces.
+- Provider breadth that is not required to unblock a design partner's existing
+  approved route.
+- Kubernetes, multiple active replicas, active-active/high availability,
+  distributed limits/sessions/stream permits, or zero-downtime upgrade claims.
+- Public multi-tenancy, a hosted service, payment/licensing systems, paid
+  features, or an “enterprise ready” label.
+- Online learning that directly changes production routing weights, developer-
+  exposed router tuning, or silent capability downgrade.
+- Dashboard storage of plaintext Provider secrets, full English UI
+  internationalization, a chat workspace, and maintainer-operated telemetry.
 
-## Deliberate Non-Goals
+Experimental compatibility work may continue behind explicit flags, but it
+cannot enter the default route or support matrix without the evidence required
+by [Compatibility](COMPATIBILITY.md).
 
-- Model inference, training, fine-tuning orchestration, or GPU scheduling.
-- A general chat product or end-user prompt workspace.
-- A payment processor or authoritative Provider invoice.
-- Silent lowest-common-denominator emulation of Provider-specific behavior.
-- A LiteLLM runtime dependency or a second public gateway/control plane.
-- A custom identity provider, secret manager, metrics database, or policy
-  language when established integrations satisfy the need.
-- Premature microservice decomposition without an independent scaling or trust
-  boundary.
+## After Beta Evidence
+
+Only measured design-partner needs can reorder these candidates:
+
+- append-only Provider invoice reconciliation and bounded remaining-budget
+  metrics;
+- PostgreSQL pool, active-stream, and per-Provider latency telemetry;
+- resource-level policy and additional identity/secret-manager integrations;
+- a typed protocol extension whose fidelity and Tool Use contract fails closed;
+- arm64 promotion after equivalent install/upgrade/restore evidence.
+
+Multiple replicas, public tenants, or a new platform target require a separate
+ADR and cannot be inferred from Docker build success.
+
+## Stable Release Gate
+
+A stable (`v1.0.0`) claim requires all Beta exit evidence plus at least two
+named maintainers with repository release and private security-response access.
+Both must complete a release rehearsal and security handoff. Until that gate is
+met, the project remains Beta and makes no response-time or availability SLA.
 
 ## Decision Rule
 
-Correctness, migration safety, operational evidence, and the measured dominant
-workload take priority over adding protocol, Provider, or platform breadth.
-Proposals belong in issues, milestones, or an RFC; this roadmap remains a short
-statement of accepted direction rather than a dated task backlog.
+Privacy, fail-closed policy, migration safety, explainable evidence, and the
+measured dominant workload outrank feature breadth. A proposal that expands the
+support surface must name the design-partner blocker, operating cost, rollback,
+test evidence, and what existing frozen work it displaces.

@@ -34,6 +34,13 @@ security advisories. A release must satisfy [the release process](docs/RELEASING
 Security reports follow [SECURITY.md](SECURITY.md) and are handled privately
 until coordinated disclosure is appropriate.
 
+Small-Team Beta targets a four-week release cadence, with urgent security fixes
+outside that schedule. Only the latest Beta is maintained; see
+[SUPPORT.md](SUPPORT.md). A stable release is blocked until at least two named
+maintainers have repository release and private security-response access and
+have completed a release/security handoff. This is an explicit continuity gate,
+not a claim that a second maintainer already exists.
+
 ## Contribution Terms
 
 Unless explicitly stated otherwise, contributions are submitted under the
@@ -42,10 +49,11 @@ license agreement. Contributors must have the right to submit their work and
 must identify generated, copied, or third-party material whose license affects
 the project.
 
-## Commercial Activity
+## Free Open-Source Boundary
 
-The MIT License permits commercial use by anyone. Commercial services,
-distribution, hosting, or support do not receive governance control merely by
-using or selling the software. Sponsorship and paid work may fund priorities,
-but security and technical claims must continue to meet the same public
-evidence standards.
+The project ships one complete MIT-licensed, self-hosted codebase. It has no
+paid edition, hosted tier, license gate, or feature segmentation; security,
+privacy, governance, and reliability work belongs in the open-source core. The
+MIT License still permits third parties to use, distribute, host, or sell
+services around the software, but doing so grants no project governance control
+and creates no maintainer support obligation.

@@ -1,8 +1,10 @@
 # Docker Compose Deployment
 
-The root Docker Compose file is the recommended local development and
-single-host learning deployment. It starts the backend, a same-origin dashboard
-proxy, and PostgreSQL. The phase-one production profile uses one ModelPort
+The versioned `deploy/release/compose.yml` is the normal Small-Team Beta
+installation after a GitHub Release exists; it pulls prebuilt Linux x86_64
+images. The root Compose file remains the current-main contributor/source-build
+path. Both start the backend, a same-origin Dashboard proxy, and PostgreSQL. The
+phase-one production profile uses one ModelPort
 instance but an external managed PostgreSQL database and secret-manager-rendered
 runtime environment; see [Single-instance production](#single-instance-production).
 
@@ -17,9 +19,9 @@ runtime environment; see [Single-instance production](#single-instance-productio
 Redis, queues, Prometheus, Caddy, and an inference runtime are not part of the
 default stack.
 
-## Image Build And Runtime Hardening
+## Release Images And Runtime Hardening
 
-The backend image builds with Rust 1.96.0 and
+The release workflow builds the backend with Rust 1.96.0 and
 `cargo build --release --locked`, so `Cargo.lock` is authoritative. The
 dashboard builder uses Node.js 24 and `npm ci --no-audit --no-fund`; disabling
 the install-time audit and funding messages does not replace dependency review
@@ -47,13 +49,26 @@ updates, and secret protection.
 
 ## Start
 
+After `v0.1.0` and both GHCR images actually exist, use a tagged checkout and
+the release profile:
+
 ```bash
 cp deploy/docker/modelport.env.example .env
 cp config.example.toml config.toml
 # replace every required placeholder
-scripts/build-container.sh
+export MODELPORT_COMPOSE_FILE="$PWD/deploy/release/compose.yml"
+docker compose -f "$MODELPORT_COMPOSE_FILE" pull
 scripts/compose-up.sh
-docker compose ps
+docker compose -f "$MODELPORT_COMPOSE_FILE" ps
+```
+
+Before the first external Release, or when contributing changes on `main`, build
+locally instead:
+
+```bash
+export MODELPORT_COMPOSE_FILE="$PWD/docker-compose.yml"
+scripts/build-container.sh
+MODELPORT_LOCAL_BUILD=1 scripts/compose-up.sh
 ```
 
 `compose-up.sh` runs a read-only database alignment check before updating an
@@ -61,7 +76,7 @@ existing deployment. A major-version or data-volume mismatch is a hard stop;
 follow [the PostgreSQL migration runbook](POSTGRESQL_MIGRATION.md) instead of
 using raw `docker compose up` to bypass it.
 
-The build helper refuses a dirty worktree and embeds the Git revision plus
+The contributor build helper refuses a dirty worktree and embeds the Git revision plus
 `io.modelport.source-state=clean` in the backend image. For local-only testing
 of uncommitted changes, `scripts/build-container.sh --allow-dirty` produces an
 explicitly dirty-labeled image that must not be promoted as a release.
@@ -71,7 +86,8 @@ an intentionally different deployment file, point both uses at the same path:
 
 ```bash
 MODELPORT_COMPOSE_ENV_FILE=deploy/docker/modelport.env.example \
-  docker compose --env-file deploy/docker/modelport.env.example config --quiet
+  docker compose --env-file deploy/docker/modelport.env.example \
+    -f "$MODELPORT_COMPOSE_FILE" config --quiet
 ```
 
 The example contains placeholders and is for validation only; do not start a
@@ -97,16 +113,17 @@ Run [Production](PRODUCTION.md) checks after startup.
 ## Daily Commands
 
 ```bash
-docker compose ps
-docker compose logs -f modelport
-docker compose logs -f dashboard
-docker compose restart modelport
-scripts/build-container.sh && scripts/compose-up.sh
-docker compose down
+docker compose -f "$MODELPORT_COMPOSE_FILE" ps
+docker compose -f "$MODELPORT_COMPOSE_FILE" logs -f modelport
+docker compose -f "$MODELPORT_COMPOSE_FILE" logs -f dashboard
+docker compose -f "$MODELPORT_COMPOSE_FILE" restart modelport
+scripts/build-container.sh && MODELPORT_LOCAL_BUILD=1 scripts/compose-up.sh
+docker compose -f "$MODELPORT_COMPOSE_FILE" down
 ```
 
-`docker compose down` preserves named volumes; `docker compose down -v` deletes
-PostgreSQL and backend data and is irreversible without a backup.
+`docker compose -f "$MODELPORT_COMPOSE_FILE" down` preserves named volumes;
+adding `-v` deletes PostgreSQL and backend data and is irreversible without a
+backup.
 
 ## Storage
 
@@ -186,9 +203,9 @@ changing a PostgreSQL major version or database endpoint.
 The CLI can export a logical auth/control backup from PostgreSQL:
 
 ```bash
-docker compose exec modelport \
+docker compose -f "$MODELPORT_COMPOSE_FILE" exec modelport \
   model-port backup export /data/modelport-backup.json
-docker compose exec modelport \
+docker compose -f "$MODELPORT_COMPOSE_FILE" exec modelport \
   model-port backup validate /data/modelport-backup.json
 ```
 
@@ -203,8 +220,8 @@ Copy it to encrypted storage and restrict access.
 Restore with writers stopped:
 
 ```bash
-docker compose stop modelport dashboard
-docker compose run --rm modelport \
+docker compose -f "$MODELPORT_COMPOSE_FILE" stop modelport dashboard
+docker compose -f "$MODELPORT_COMPOSE_FILE" run --rm modelport \
   model-port backup restore /data/modelport-backup.json --yes
 scripts/compose-up.sh
 ```
@@ -217,8 +234,10 @@ service has passed smoke and login checks.
 Keep a database-native backup too:
 
 ```bash
-docker compose exec postgres pg_dump -U modelport modelport > modelport.sql
-docker compose exec -T postgres psql -U modelport modelport < modelport.sql
+docker compose -f "$MODELPORT_COMPOSE_FILE" exec postgres \
+  pg_dump -U modelport modelport > modelport.sql
+docker compose -f "$MODELPORT_COMPOSE_FILE" exec -T postgres \
+  psql -U modelport modelport < modelport.sql
 ```
 
 The Compose project has `name: modelport`; a physical volume backup therefore
@@ -239,8 +258,11 @@ instance and no PostgreSQL service. It requires:
 - a reviewed non-secret `config.toml` whose Provider credentials use
   `token_env`/`api_key_env` references;
 - a CA file for managed PostgreSQL;
+- a reviewed operations-ownership TOML with different named Owner and Backup
+  contacts plus escalation channels;
 - a permission-`0600`, short-lived runtime env file rendered outside the
-  repository by the production secret manager.
+  repository by the production secret manager, including a dedicated scoped
+  `MODELPORT_HEALTHCHECK_API_KEY` for authenticated readiness.
 
 Do not run `docker compose config` with the real runtime env file in a log
 collection or CI job: Compose renders environment values. Validate with a
@@ -252,12 +274,17 @@ Before rendering or starting the production profile, run the secret-safe,
 read-only preflight:
 
 ```bash
-MODELPORT_IMAGE='registry/modelport@sha256:<digest>' \
-MODELPORT_DASHBOARD_IMAGE='registry/modelport-dashboard@sha256:<digest>' \
-MODELPORT_RUNTIME_ENV_FILE=/run/modelport/runtime.env \
-MODELPORT_CONFIG_FILE=/etc/modelport/config.toml \
-MODELPORT_DATABASE_CA_FILE=/etc/modelport/database-ca.pem \
-  ./scripts/production-preflight.sh
+export MODELPORT_COMPOSE_FILE="$PWD/deploy/production/compose.single.yml"
+export MODELPORT_IMAGE='registry/modelport@sha256:<digest>'
+export MODELPORT_DASHBOARD_IMAGE='registry/modelport-dashboard@sha256:<digest>'
+export MODELPORT_RUNTIME_ENV_FILE=/run/modelport/runtime.env
+export MODELPORT_CONFIG_FILE=/etc/modelport/config.toml
+export MODELPORT_DATABASE_CA_FILE=/etc/modelport/database-ca.pem
+export MODELPORT_OWNERSHIP_FILE=/etc/modelport/ownership.toml
+
+./scripts/production-preflight.sh
+./scripts/compose-up.sh
+docker compose -f "$MODELPORT_COMPOSE_FILE" ps
 ```
 
 It verifies digest-pinned images, file ownership/permissions, repository-external
@@ -292,10 +319,10 @@ Restart or recreate `modelport` for:
 Docker's `env_file` populates process variables when the container is created.
 Editing an existing `.env` key and pressing reload therefore does not override
 the old process value. Dashboard credential profiles also read process variables
-directly. Recreate after `.env` changes:
+directly. Recreate after `.env` changes through the checked helper:
 
 ```bash
-docker compose up -d --force-recreate modelport
+scripts/compose-up.sh modelport
 ```
 
 See the exact [reload matrix](CONFIGURATION.md#reload-versus-restart).
@@ -391,7 +418,9 @@ not embed a credential in the URL.
 - `/readyz` checks auth/control storage and the normalized ledger but is not an
   all-Provider gate.
 - Fallback cannot occur after live-stream response headers have been sent.
-- Provider hostname DNS answers are not revalidated by the SSRF guard.
+- Provider hostname answers are resolved, policy-checked, and connection-pinned
+  for each outbound request. Explicit private-Provider approval and the host's
+  outbound firewall remain operator-owned controls.
 - Low-frequency auth/control definitions still use two complete PostgreSQL
   documents; operational usage, audit, request, and Provider-attempt data is
   normalized.

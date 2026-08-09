@@ -3,6 +3,11 @@
 本页是普通运维人员的执行入口。架构约束以
 [ADR-0005](adr/0005-forty-user-hybrid-routing-baseline.md) 为准。
 
+本页生产基线假定启用 `MODELPORT_ENTERPRISE_MODE=1`，因此高风险写入强制双人
+审批。默认 Small-Team 模式未启用 Enterprise 或
+`MODELPORT_REQUIRE_DUAL_APPROVAL=1` 时，管理员可在 CSRF 防护和审计记录下直接
+执行，治理变更单仍可自愿使用。
+
 ## 现在是什么状态
 
 第一阶段仍然只有：
@@ -24,7 +29,8 @@
 - `batch` 使用独立的低优先级队列；
 - 未分类和敏感数据强制 `local_strict`；客户端只能收紧项目最大模式；
 - Provider、区域、API 版本和模型采用组织目录与项目子集双重白名单，禁止任意 URL；
-- 高风险变更的载荷先做 SHA-256 摘要，必须由两名不同管理员批准。
+- 本页 Enterprise 基线下，高风险变更的载荷先做 SHA-256 摘要，必须由两名不同
+  管理员批准。
 
 全新企业库首次启动必须同时提供 `MODELPORT_ADMIN_*` 与
 `MODELPORT_BACKUP_ADMIN_*` 两组不同账号，系统在一次持久化写入中创建 Owner 和 Backup，
@@ -103,9 +109,10 @@ archive="$(./scripts/backup-compose.sh create)"
 - 不在仓库脚本中实现 Secret Manager；
 - 不让 ModelPort 执行 Shell、数据库查询或业务工具；
 - 不允许用户配置任意 OpenAI-compatible URL；
-- 不绕过双人审批执行数据库、密钥、外发、身份或生产模型变更。
+- 不绕过本页 Enterprise 基线强制的双人审批执行数据库、密钥、外发、身份或生产
+  模型变更。
 
-Dashboard 的“治理与审批”页用于提交、第二人审批和应用项目策略/预算；Provider、身份、
+在本页 Enterprise 基线中，Dashboard 的“治理与审批”页用于提交、第二人审批和应用项目策略/预算；Provider、身份、
 数据库、密钥和模型晋级在审批后仍由专用 Runbook 执行。对 Provider、身份与模型等已有
 Dashboard 操作，第二人批准后点击“用于下一次专用操作”，随后 Dashboard 自动携带审批 ID；
 API 会再次核对动作、目标和完整载荷摘要，不匹配时拒绝执行。

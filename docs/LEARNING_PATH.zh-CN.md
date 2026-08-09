@@ -47,7 +47,7 @@ cp config.example.toml config.toml
 scripts/doctor.sh --setup
 ```
 
-看到 `doctor (setup) passed` 后再构建和启动：
+看到 `doctor (setup) passed` 后，当前首次发布前的 `main` 使用贡献者源码构建路径：
 
 ```bash
 scripts/build-container.sh

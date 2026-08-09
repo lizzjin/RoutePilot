@@ -206,12 +206,11 @@ the body completes, fails, times out, or is dropped. Client cancellation is
 recorded with status code `499`; see
 [Architecture](ARCHITECTURE.md#streaming-boundary).
 
-`MODELPORT_HTTP_REQUEST_TIMEOUT_SECS` covers a complete non-stream request, but
-for SSE it covers only `send()` through the upstream response-header handshake.
-After a live stream is established there is no fixed total-duration timeout.
-Each received chunk resets `MODELPORT_HTTP_STREAM_IDLE_TIMEOUT_SECS`; line,
-event, and total raw-stream byte limits remain in force. A continuously active,
-bounded stream may legitimately outlive the request-timeout value.
+`MODELPORT_HTTP_REQUEST_TIMEOUT_SECS` covers a complete non-stream request and
+the total upstream SSE lifecycle from connection through event-body reads.
+Each SSE read is bounded by both the remaining total time and the resettable
+`MODELPORT_HTTP_STREAM_IDLE_TIMEOUT_SECS`; line, event, and total raw-stream
+byte limits remain in force independently.
 
 Streaming requests also require a process-local permit. The cap is
 `MODELPORT_MAX_CONCURRENT_STREAMS`, or the effective general request cap when
@@ -352,6 +351,28 @@ Route groups include:
   shadow disagreement, selection, and process-local candidate outcomes.
 - `GET /admin/audit`, `POST /admin/backup`: audit events and a redacted,
   non-restorable diagnostic snapshot.
+- `POST /admin/retention/run`: administrator-only metadata-retention preview or
+  apply. It requires the console session, `X-ModelPort-CSRF: 1`, and normal
+  same-origin checks; omission of `dryRun` defaults to preview.
+
+Send `{"dryRun":true}` first. A successful preview returns a random,
+single-use `previewToken` and `previewExpiresAtMs`; apply must send
+`{"dryRun":false,"previewToken":"..."}` before that five-minute expiry. The
+token is bound to the administrator session actor and the preview's effective
+policy, evaluation time, and cutoffs. Missing, expired, cross-actor, superseded,
+or replayed tokens fail closed. A valid token is consumed before apply starts,
+so a legal hold or uncertain storage failure also requires a new preview.
+
+The response contains `dryRun`, `applied`, `skippedReason`, `evaluatedAtMs`,
+`requestDetailCutoffMs`, `userUsageCutoffMs`, `auditCutoffMs`, effective
+`policy`, action `counts`, `immutableBudgetEventsRetained`, `previewToken`, and
+`previewExpiresAtMs`. Apply returns the same evaluated time and cutoffs as the
+authorized preview, with both preview fields null. An active legal hold leaves
+`applied=false` with `skippedReason="legal_hold"`. Preview and successful
+apply attempts both append a `data_retention` audit event; user/viewer roles
+receive 403.
+The administrator dashboard exposes this as a preview-first action under
+**运行设置与运维 → 运维审计 → 数据保留**.
 
 `PUT /admin/api-keys/{key_id}/scope` is the administrator-only tenant-binding
 operation. Its JSON body must contain a complete `organizationId`, `projectId`,
@@ -395,8 +416,9 @@ recent evidence events. Supply `organizationId`, `projectId`, and
 `org_local/prj_default/env_default`. Partial scope is rejected.
 
 `PUT /admin/enterprise/budget` sets the hard limit. It requires an administrator
-session, `X-ModelPort-CSRF`, and an approved matching
-`X-ModelPort-Change-Request-Id`:
+session and `X-ModelPort-CSRF`. Enterprise mode or
+`MODELPORT_REQUIRE_DUAL_APPROVAL=1` additionally requires an approved matching
+`X-ModelPort-Change-Request-Id`; otherwise a reviewed change request is optional:
 
 ```json
 {
@@ -441,15 +463,20 @@ Control-plane permissions are role-aware:
 | Role | API-key visibility and writes |
 | --- | --- |
 | `admin` | Read all keys; create, edit policy/status/team/expiry/spend settings, revoke, restore, and delete. |
-| `user` | Read only owned keys; edit only `name` and `group`, revoke or delete an owned key; cannot create, restore, or change policy. |
+| `user` | Read owned keys; create up to five active 30-day personal keys, rotate them, edit only `name` and `group`, and revoke or delete them; cannot restore or change administrator policy. |
 | `viewer` | Read-only; no API-key, team, quota, user, or Provider writes. |
 
-Creating an API key is admin-only and `userId` must identify an existing
-`active` user. The server ignores a caller-supplied username and stores the
-canonical username from the auth store. Data-plane authentication rechecks
-that the owner still exists and remains active. Disabling or suspending a user
-revokes that user's keys and removes the user's quotas; an orphaned or inactive
-owner cannot continue using an old key.
+Administrators may create a key for an existing `active` user or a reviewed
+service account. A normal user may create at most five active personal keys;
+the server derives ownership from the authenticated session, forbids team and
+service-account assignment, defaults expiry to 30 days, rejects a longer
+lifetime, and permits model/Provider scopes only as a narrowing restriction.
+The active-key limit is checked atomically. The server always ignores an
+untrusted caller-supplied username and stores the canonical username from the
+auth store. Data-plane authentication rechecks that the owner still exists and
+remains active. Disabling or suspending a user revokes that user's keys and
+removes the user's quotas; an orphaned or inactive owner cannot continue using
+an old key.
 
 When supplied, API-key `expiresAt` is a decimal Unix epoch millisecond string.
 Malformed values and timestamps at or before the current time return HTTP 400;
@@ -469,13 +496,16 @@ the requester as the first approver. A different administrator calls
 `POST /admin/governance/change-requests/{id}/approve`. The same actor cannot
 approve twice.
 
-Project policy and budget changes can then use the generic
-`POST /admin/governance/change-requests/{id}/apply`. Provider allowlists,
-`cloud_first`, identity permissions, production model promotion, data egress,
-database migration, and secret rotation use their dedicated API or Runbook and
-must pass the approved ID as `X-ModelPort-Change-Request-Id`. The server rejects
-an ID unless its action, target, and payload digest exactly match the attempted
-operation; an applied ID cannot be reused.
+In default Small-Team mode this governance workflow is optional: a normal
+administrator session, CSRF checks, and the audit trail authorize high-risk
+writes so a one-admin first install remains operable. Enterprise mode or
+`MODELPORT_REQUIRE_DUAL_APPROVAL=1` makes two distinct approvals mandatory.
+Project policy and budget changes can use the generic
+`POST /admin/governance/change-requests/{id}/apply`; dedicated Provider,
+identity, model, egress, migration, and secret operations carry an approved ID
+as `X-ModelPort-Change-Request-Id` when dual approval is required or voluntarily
+used. The server rejects a supplied ID unless its action, target, and payload
+digest exactly match the attempted operation; an applied ID cannot be reused.
 
 User quotas (`daily`, `weekly`, `monthly`) reset on UTC calendar boundaries:
 00:00 UTC each day, Monday 00:00 UTC each week, and 00:00 UTC on the first day
@@ -487,7 +517,10 @@ API-key and team spend limits are a different contract. The fields
 mean rolling 5-hour, 24-hour, 7-day, and 30-day windows. They are enforced for
 an API key only when `rateLimited` is true;
 the dashboard labels this switch “periodic spend limits”, not request-rate
-limiting. Consumption is summed from terminal relational request rows.
+limiting. Admission sums settled relational usage plus open usage reservations.
+One logical request reserves its request unit once; retries add only their
+token/cost estimate. The terminal path settles actual usage or releases a
+non-chargeable reservation.
 
 Only a request that actually starts an upstream attempt increments a user quota
 or the API-key/team spend totals. Attempt-level credential, policy, quota,

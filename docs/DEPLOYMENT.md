@@ -16,7 +16,7 @@ Provider and client-key boundary.
 
 ## Supported Topology
 
-The current supported commercial self-hosting boundary is:
+The current supported free Small-Team Beta self-hosting boundary is:
 
 ```text
 clients

@@ -37,6 +37,7 @@ pub(super) async fn admin_governance_overview(
     Ok(Json(json!({
         "view": "administrator-control-plane",
         "ready": state.governance.is_ready(),
+        "dualApprovalRequired": state.security.require_dual_approval,
         "projectPolicies": state.governance.list_policies(),
         "changeRequests": state.governance.list_change_requests(),
         "scheduler": state.local_scheduler.snapshot(),
@@ -76,7 +77,14 @@ pub(super) async fn admin_create_change_request(
         &actor,
         "high_risk_change_requested",
         format!("change:{}", change.id),
-        format!("提交高风险变更 {}，等待第二名管理员审批", change.action),
+        if state.security.require_dual_approval {
+            format!("提交高风险变更 {}，等待第二名管理员审批", change.action)
+        } else {
+            format!(
+                "记录高风险变更 {}，允许当前管理员直接应用或发起双人复核",
+                change.action
+            )
+        },
         "warning",
     )
     .await;
@@ -110,19 +118,24 @@ pub(super) async fn admin_apply_change_request(
     Path(change_id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     let actor = require_admin_write_user(&state, &headers)?;
-    let change = state.governance.approved_change(&change_id)?;
+    let require_dual_approval = state.security.require_dual_approval;
+    let change = state
+        .governance
+        .change_for_application(&change_id, require_dual_approval)?;
     let result = match change.action.as_str() {
         "project_policy.upsert" => {
-            json!(
-                state
-                    .governance
-                    .apply_project_policy(&change_id, &actor.id)?
-            )
+            json!(state.governance.apply_project_policy(
+                &change_id,
+                &actor.id,
+                require_dual_approval
+            )?)
         }
         "budget.hard_limit" => {
             let update: EnterpriseBudgetUpdate = serde_json::from_value(change.payload.clone())?;
             let view = state.ledger.update_budget(&update).await?;
-            state.governance.mark_change_applied(&change_id)?;
+            state
+                .governance
+                .mark_change_applied_for_mode(&change_id, require_dual_approval)?;
             json!(view)
         }
         _ => {

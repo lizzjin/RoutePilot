@@ -28,6 +28,7 @@ pub(crate) trait ApiKeyViewRecord {
     fn last_used_at_ms(&self) -> Option<u64>;
     fn expires_at_ms(&self) -> Option<u64>;
     fn status(&self) -> &str;
+    fn superseded_by_key_id(&self) -> Option<&str>;
     fn ip_restricted(&self) -> bool;
     fn allowed_ips(&self) -> &[String];
     fn spend_limit_usd(&self) -> f64;
@@ -115,6 +116,7 @@ pub(crate) fn public_api_key<K: ApiKeyViewRecord>(record: &K) -> PublicApiKey {
         last_used_at: record.last_used_at_ms().map(|value| value.to_string()),
         expires_at: record.expires_at_ms().map(|value| value.to_string()),
         status: record.status().to_owned(),
+        superseded_by_key_id: record.superseded_by_key_id().map(str::to_owned),
         requests_today: 0,
         tokens_today: 0,
         ip_restricted: record.ip_restricted(),

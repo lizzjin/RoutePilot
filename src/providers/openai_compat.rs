@@ -57,7 +57,16 @@ pub async fn chat_completions(
             )?;
             apply_tool_use_capabilities(&mut body, &resolved.provider.tool_use)?;
             apply_buffered_generation_defaults(&mut body);
-            let upstream = state.transport.post_json(&url, &headers, &body).await?;
+            let upstream = state
+                .transport
+                .post_json(
+                    &resolved.provider_id,
+                    state.security.allow_private_provider_urls(),
+                    &url,
+                    &headers,
+                    &body,
+                )
+                .await?;
             let usage = pricing::openai_usage_if_present(&upstream);
             stream_lifecycle.observe_openai_response(&upstream);
             if stream_lifecycle.response_observation().tool_call_count > 0
@@ -94,7 +103,16 @@ pub async fn chat_completions(
             &mut body,
         )?;
         apply_tool_use_capabilities(&mut body, &resolved.provider.tool_use)?;
-        let frames = state.transport.post_json_sse(url, headers, body).await?;
+        let frames = state
+            .transport
+            .post_json_sse(
+                &resolved.provider_id,
+                state.security.allow_private_provider_urls(),
+                url,
+                headers,
+                body,
+            )
+            .await?;
         let events =
             openai_stream_passthrough(frames, request.requested_model.clone(), stream_lifecycle);
         Ok(Sse::new(events)
@@ -112,7 +130,16 @@ pub async fn chat_completions(
             &mut body,
         )?;
         apply_tool_use_capabilities(&mut body, &resolved.provider.tool_use)?;
-        let mut upstream = state.transport.post_json(&url, &headers, &body).await?;
+        let mut upstream = state
+            .transport
+            .post_json(
+                &resolved.provider_id,
+                state.security.allow_private_provider_urls(),
+                &url,
+                &headers,
+                &body,
+            )
+            .await?;
         let usage = pricing::openai_usage_if_present(&upstream);
         stream_lifecycle.observe_openai_response(&upstream);
         if let Some(object) = upstream.as_object_mut()
@@ -160,7 +187,16 @@ pub async fn messages(
         if resolved.provider.buffer_stream_text {
             let mut body = anthropic_request_body(&request, &resolved, false)?;
             apply_buffered_generation_defaults(&mut body);
-            let upstream = state.transport.post_json(&url, &headers, &body).await?;
+            let upstream = state
+                .transport
+                .post_json(
+                    &resolved.provider_id,
+                    state.security.allow_private_provider_urls(),
+                    &url,
+                    &headers,
+                    &body,
+                )
+                .await?;
             let usage = pricing::openai_usage_if_present(&upstream);
             let message = openai_response_to_anthropic(&upstream, &request.model, &tool_policy)?;
             stream_lifecycle.observe_anthropic_response(&message);
@@ -189,7 +225,16 @@ pub async fn messages(
             ToolArgumentMode::Cumulative | ToolArgumentMode::BestEffort
         );
         let body = anthropic_request_body(&request, &resolved, true)?;
-        let frames = state.transport.post_json_sse(url, headers, body).await?;
+        let frames = state
+            .transport
+            .post_json_sse(
+                &resolved.provider_id,
+                state.security.allow_private_provider_urls(),
+                url,
+                headers,
+                body,
+            )
+            .await?;
         let events = openai_stream_to_anthropic(
             frames,
             request.model.clone(),
@@ -206,7 +251,16 @@ pub async fn messages(
         if let Some(repair) = &repair {
             apply_tool_argument_repair(&mut body, repair)?;
         }
-        let response = state.transport.post_json(&url, &headers, &body).await?;
+        let response = state
+            .transport
+            .post_json(
+                &resolved.provider_id,
+                state.security.allow_private_provider_urls(),
+                &url,
+                &headers,
+                &body,
+            )
+            .await?;
         let usage = pricing::openai_usage_if_present(&response);
         let message = openai_response_to_anthropic(&response, &request.model, &tool_policy)
             .map_err(|error| error.with_tool_argument_usage(usage))?;

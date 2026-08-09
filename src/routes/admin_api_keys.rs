@@ -17,10 +17,10 @@ pub(super) async fn admin_api_keys(
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
     let actor = require_console_user(&state, &headers)?;
-    let keys = if actor.role == "user" {
-        state.control.list_user_api_keys(&actor.id)
-    } else {
+    let keys = if actor.role == "admin" {
         state.control.list_api_keys()
+    } else {
+        state.control.list_user_api_keys(&actor.id)
     };
     Ok(Json(json!(enrich_api_key_usage(&state, keys).await?)))
 }
@@ -31,7 +31,7 @@ pub(super) async fn admin_user_api_keys(
     Path(user_id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     let actor = require_console_user(&state, &headers)?;
-    if actor.role == "user" && actor.id != user_id {
+    if actor.role != "admin" && actor.id != user_id {
         return Err(AppError::Forbidden(
             "cannot read another user's API keys".to_owned(),
         ));
@@ -59,9 +59,19 @@ pub(super) async fn admin_create_api_key(
     headers: HeaderMap,
     Json(mut body): Json<CreateApiKeyInput>,
 ) -> Result<Json<Value>, AppError> {
-    let actor = require_admin_write_user(&state, &headers)?;
+    let actor = require_api_key_write_user(&state, &headers)?;
+    let self_service = actor.role != "admin";
+    if self_service {
+        prepare_self_service_api_key(&actor, &mut body)?;
+    }
     populate_api_key_owner(state.auth.as_ref(), &mut body)?;
-    let created = state.control.create_api_key(body)?;
+    let created = if self_service {
+        state
+            .control
+            .create_api_key_with_active_limit(body, MAX_SELF_SERVICE_ACTIVE_KEYS)?
+    } else {
+        state.control.create_api_key(body)?
+    };
     record_admin_activity(
         &state,
         &actor,
@@ -75,6 +85,58 @@ pub(super) async fn admin_create_api_key(
     )
     .await;
     Ok(Json(json!(created)))
+}
+
+const MAX_SELF_SERVICE_ACTIVE_KEYS: u32 = 5;
+const DEFAULT_SELF_SERVICE_KEY_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
+
+fn prepare_self_service_api_key(
+    actor: &crate::auth::PublicUser,
+    body: &mut CreateApiKeyInput,
+) -> Result<(), AppError> {
+    if body
+        .principal_type
+        .as_deref()
+        .is_some_and(|value| !value.eq_ignore_ascii_case("user"))
+    {
+        return Err(AppError::Forbidden(
+            "self-service cannot create service accounts".to_owned(),
+        ));
+    }
+    if body.team_id.is_some() {
+        return Err(AppError::Forbidden(
+            "only an admin can assign an API key to a team".to_owned(),
+        ));
+    }
+    let now = now_millis();
+    let maximum_expiry = now.saturating_add(DEFAULT_SELF_SERVICE_KEY_TTL_MS);
+    let expires_at = body
+        .expires_at
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            value.parse::<u64>().map_err(|_| {
+                AppError::InvalidRequest("expiresAt must be a millisecond timestamp".to_owned())
+            })
+        })
+        .transpose()?
+        .unwrap_or(maximum_expiry);
+    if expires_at > maximum_expiry {
+        return Err(AppError::Forbidden(
+            "self-service API key lifetime cannot exceed 30 days".to_owned(),
+        ));
+    }
+
+    // Ownership and the non-service principal type are assigned from the
+    // authenticated session. Model/provider lists can only narrow the key;
+    // effective project governance remains the upper routing boundary.
+    body.user_id.clone_from(&actor.id);
+    body.username = Some(actor.username.clone());
+    body.principal_type = Some("user".to_owned());
+    body.team_id = None;
+    body.expires_at = Some(expires_at.to_string());
+    Ok(())
 }
 
 fn populate_api_key_owner(auth: &AuthStore, body: &mut CreateApiKeyInput) -> Result<(), AppError> {
@@ -106,6 +168,75 @@ pub(super) async fn admin_revoke_api_key(
         format!("api_key:{key_id}"),
         format!("吊销 API Key {key_id}"),
         "warning",
+    )
+    .await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+pub(super) async fn admin_rotate_api_key(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(key_id): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    let actor = require_api_key_write_user(&state, &headers)?;
+    ensure_api_key_access(&state, &actor, &key_id)?;
+    if actor.role != "admin" && state.control.api_key_principal_type(&key_id)? != "user" {
+        return Err(AppError::Forbidden(
+            "self-service cannot rotate service-account credentials".to_owned(),
+        ));
+    }
+    let rotated = state.control.rotate_api_key(&key_id)?;
+    record_admin_activity(
+        &state,
+        &actor,
+        "security_change",
+        format!("api_key:{}", rotated.public.id),
+        format!("为 API Key {key_id} 准备轮换凭证 {}", rotated.public.id),
+        "info",
+    )
+    .await;
+    Ok(Json(json!(rotated)))
+}
+
+pub(super) async fn admin_confirm_api_key_rotation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((key_id, replacement_id)): Path<(String, String)>,
+) -> Result<Json<Value>, AppError> {
+    let actor = require_api_key_write_user(&state, &headers)?;
+    ensure_api_key_access(&state, &actor, &key_id)?;
+    let rotated = state
+        .control
+        .confirm_api_key_rotation(&key_id, &replacement_id)?;
+    record_admin_activity(
+        &state,
+        &actor,
+        "security_change",
+        format!("api_key:{}", rotated.id),
+        format!("确认轮换 API Key {key_id} 为 {}", rotated.id),
+        "warning",
+    )
+    .await;
+    Ok(Json(json!(rotated)))
+}
+
+pub(super) async fn admin_cancel_api_key_rotation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((key_id, replacement_id)): Path<(String, String)>,
+) -> Result<Json<Value>, AppError> {
+    let actor = require_api_key_write_user(&state, &headers)?;
+    ensure_api_key_access(&state, &actor, &key_id)?;
+    state
+        .control
+        .cancel_api_key_rotation(&key_id, &replacement_id)?;
+    record_admin_activity(
+        &state,
+        &actor,
+        "security_change",
+        format!("api_key:{replacement_id}"),
+        format!("取消 API Key {key_id} 的待确认轮换"),
+        "info",
     )
     .await;
     Ok(Json(json!({ "ok": true })))

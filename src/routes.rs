@@ -2,12 +2,16 @@ use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     env,
     net::{IpAddr, SocketAddr},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
     Json, Router,
+    body::{Body, to_bytes},
     extract::{DefaultBodyLimit, Path, Query, State},
     http::{
         HeaderMap, HeaderValue, StatusCode,
@@ -25,12 +29,13 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing::{info_span, warn};
+use uuid::Uuid;
 
 use crate::{
     auth::{AuthStore, FederatedLoginInput, LoginInput, PublicUser},
     config::{
         AppConfig, FidelityMode, MaxTokensField, ProviderConfig, ProviderProtocol, RuntimeConfig,
-        ToolResponseValidation, ToolUseConfig,
+        TokenCountingMode, ToolResponseValidation, ToolUseConfig,
     },
     control::{
         ClientIdentity, ControlStore, ProviderCredentialRecord, ProviderModelOverrideRecord,
@@ -39,7 +44,7 @@ use crate::{
     control_view::provider_credential_row,
     enterprise_ledger::{
         AuditEventInput, EnterpriseBudgetAdjustmentInput, EnterpriseBudgetScopeQuery,
-        EnterpriseBudgetUpdate, EnterpriseLedger, EnterpriseLedgerQuery,
+        EnterpriseBudgetUpdate, EnterpriseLedger, EnterpriseLedgerQuery, RetentionPolicy,
     },
     error::AppError,
     finalization::FinalizationTracker,
@@ -63,8 +68,11 @@ mod provider_view;
 mod settings_view;
 
 use dashboard_view::{DashboardQuery, dashboard_body};
-use logs_view::{LogsQuery, latency_body, log_body, logs_body};
-use provider_view::{provider_model_row, provider_row_by_id, provider_rows};
+use logs_view::{LogsQuery, latency_body, log_belongs_to_user, log_body, logs_body};
+use provider_view::{
+    catalog_alias_rows, catalog_provider_rows, provider_model_row, provider_row_by_id,
+    provider_rows,
+};
 use settings_view::{alias_row, alias_rows, config_issues_json, settings_row};
 
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
@@ -74,6 +82,11 @@ const ROUTING_PROFILE: HeaderName = HeaderName::from_static("x-modelport-routing
 const ROUTING_SESSION_ID: HeaderName = HeaderName::from_static("x-modelport-session-id");
 const ROUTING_DECISION_ID: HeaderName = HeaderName::from_static("x-modelport-routing-decision-id");
 const ROUTING_MODE: HeaderName = HeaderName::from_static("x-modelport-routing-mode");
+const LOGICAL_MODEL: HeaderName = HeaderName::from_static("x-modelport-logical-model");
+const RESOLVED_PROVIDER: HeaderName = HeaderName::from_static("x-modelport-resolved-provider");
+const RESOLVED_MODEL: HeaderName = HeaderName::from_static("x-modelport-resolved-model");
+const ROUTING_POLICY: HeaderName = HeaderName::from_static("x-modelport-routing-policy");
+const CLOUD_EGRESS: HeaderName = HeaderName::from_static("x-modelport-cloud-egress");
 const HYBRID_MODE: HeaderName = HeaderName::from_static("x-modelport-hybrid-mode");
 const DATA_CLASSIFICATION: HeaderName = HeaderName::from_static("x-modelport-data-classification");
 const EXECUTION_MODE: HeaderName = HeaderName::from_static("x-modelport-execution-mode");
@@ -86,7 +99,103 @@ const X_CONTENT_TYPE_OPTIONS: HeaderName = HeaderName::from_static("x-content-ty
 const X_FRAME_OPTIONS: HeaderName = HeaderName::from_static("x-frame-options");
 const REFERRER_POLICY: HeaderName = HeaderName::from_static("referrer-policy");
 const PERMISSIONS_POLICY: HeaderName = HeaderName::from_static("permissions-policy");
+const ERROR_CONTRACT: HeaderName = HeaderName::from_static("x-modelport-error-contract");
 static ADMIN_LOGIN_WORKERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+const RETENTION_PREVIEW_TTL_MS: u64 = 5 * 60 * 1_000;
+
+#[derive(Debug, Clone)]
+struct RetentionPreview {
+    actor_id: String,
+    policy: RetentionPolicy,
+    evaluated_at_ms: u64,
+    expires_at_ms: u64,
+}
+
+#[derive(Debug)]
+pub(crate) struct RetentionPreviewStore {
+    ttl_ms: u64,
+    inner: Mutex<BTreeMap<String, RetentionPreview>>,
+}
+
+impl Default for RetentionPreviewStore {
+    fn default() -> Self {
+        Self {
+            ttl_ms: RETENTION_PREVIEW_TTL_MS,
+            inner: Mutex::new(BTreeMap::new()),
+        }
+    }
+}
+
+impl RetentionPreviewStore {
+    fn issue(
+        &self,
+        actor_id: &str,
+        policy: RetentionPolicy,
+        evaluated_at_ms: u64,
+        now_ms: u64,
+    ) -> (String, u64) {
+        let expires_at_ms = now_ms.saturating_add(self.ttl_ms);
+        let token = format!("rtp_{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        let preview = RetentionPreview {
+            actor_id: actor_id.to_owned(),
+            policy,
+            evaluated_at_ms,
+            expires_at_ms,
+        };
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("retention preview store lock poisoned");
+        // A new preview supersedes the actor's older preview and opportunistically
+        // removes expired entries, bounding normal single-instance Beta usage.
+        inner
+            .retain(|_, existing| existing.expires_at_ms > now_ms && existing.actor_id != actor_id);
+        inner.insert(token.clone(), preview);
+        (token, expires_at_ms)
+    }
+
+    fn consume(
+        &self,
+        actor_id: &str,
+        token: &str,
+        now_ms: u64,
+    ) -> Result<RetentionPreview, AppError> {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("retention preview store lock poisoned");
+        let Some(preview) = inner.get(token).cloned() else {
+            return Err(retention_preview_unavailable());
+        };
+        if preview.expires_at_ms <= now_ms {
+            inner.remove(token);
+            return Err(retention_preview_unavailable());
+        }
+        if preview.actor_id != actor_id {
+            return Err(retention_preview_unavailable());
+        }
+        // Consume before the destructive operation. An uncertain storage error,
+        // legal hold, or successful apply must all require a fresh preview.
+        inner.remove(token);
+        Ok(preview)
+    }
+
+    #[cfg(test)]
+    fn with_ttl_ms(ttl_ms: u64) -> Self {
+        Self {
+            ttl_ms,
+            inner: Mutex::new(BTreeMap::new()),
+        }
+    }
+}
+
+fn retention_preview_unavailable() -> AppError {
+    AppError::StateConflict(
+        "retention preview is missing, expired, already used, or belongs to another administrator; run a new preview"
+            .to_owned(),
+    )
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<RuntimeConfig>,
@@ -104,6 +213,14 @@ pub struct AppState {
     pub(crate) local_scheduler: Arc<LocalScheduler>,
     pub(crate) ledger: Arc<EnterpriseLedger>,
     pub(crate) finalizers: Arc<FinalizationTracker>,
+    pub(crate) draining: Arc<AtomicBool>,
+    pub(crate) retention_previews: Arc<RetentionPreviewStore>,
+}
+
+impl AppState {
+    pub(crate) fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::Acquire)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +228,7 @@ pub struct GatewaySecurityPolicy {
     allow_legacy_client_auth: bool,
     expose_detailed_public_health: bool,
     allow_private_provider_urls: bool,
+    require_dual_approval: bool,
 }
 
 #[derive(Debug)]
@@ -234,7 +352,13 @@ impl GatewaySecurityPolicy {
             allow_legacy_client_auth: !env_flag("MODELPORT_REQUIRE_CONTROL_API_KEYS"),
             expose_detailed_public_health: env_flag("MODELPORT_EXPOSE_DETAILED_HEALTH"),
             allow_private_provider_urls: env_flag("MODELPORT_ALLOW_PRIVATE_PROVIDER_URLS"),
+            require_dual_approval: env_flag("MODELPORT_ENTERPRISE_MODE")
+                || env_flag("MODELPORT_REQUIRE_DUAL_APPROVAL"),
         }
+    }
+
+    pub(crate) fn allow_private_provider_urls(&self) -> bool {
+        self.allow_private_provider_urls
     }
 
     #[cfg(test)]
@@ -243,6 +367,7 @@ impl GatewaySecurityPolicy {
             allow_legacy_client_auth: true,
             expose_detailed_public_health: false,
             allow_private_provider_urls: true,
+            require_dual_approval: false,
         }
     }
 
@@ -252,6 +377,7 @@ impl GatewaySecurityPolicy {
             allow_legacy_client_auth: false,
             expose_detailed_public_health: false,
             allow_private_provider_urls: true,
+            require_dual_approval: false,
         }
     }
 }
@@ -325,7 +451,7 @@ impl RateLimiter {
                     "api-key:{}",
                     scope
                         .identity
-                        .api_key_id
+                        .quota_subject_id
                         .as_deref()
                         .unwrap_or("legacy-router-token")
                 ),
@@ -554,6 +680,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/settings/test-provider", post(admin_test_provider))
         .route("/admin/audit", get(admin_audit))
         .route("/admin/backup", post(admin_backup))
+        .route("/admin/retention/run", post(admin_run_retention))
         .route("/admin/logs", get(admin_logs))
         .route("/admin/logs/{log_id}", get(admin_log_by_id))
         .route("/admin/latency", get(admin_latency))
@@ -592,6 +719,15 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/admin/api-keys/{key_id}/disable",
             post(admin_api_keys::admin_revoke_api_key),
+        )
+        .route(
+            "/admin/api-keys/{key_id}/rotate",
+            post(admin_api_keys::admin_rotate_api_key),
+        )
+        .route(
+            "/admin/api-keys/{key_id}/rotate/{replacement_id}",
+            post(admin_api_keys::admin_confirm_api_key_rotation)
+                .delete(admin_api_keys::admin_cancel_api_key_rotation),
         )
         .route(
             "/admin/users/{user_id}/api-keys",
@@ -652,7 +788,39 @@ async fn add_security_headers(request: axum::extract::Request, next: middleware:
         PERMISSIONS_POLICY.clone(),
         HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
     );
-    response
+    attach_error_request_id(response).await
+}
+
+async fn attach_error_request_id(mut response: Response) -> Response {
+    if response.headers().get(&ERROR_CONTRACT).is_none() {
+        return response;
+    }
+    response.headers_mut().remove(&ERROR_CONTRACT);
+    let request_id = response
+        .headers()
+        .get(&X_REQUEST_ID)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let (mut parts, body) = response.into_parts();
+    let bytes = match to_bytes(body, usize::MAX).await {
+        Ok(bytes) => bytes,
+        Err(_) => return Response::from_parts(parts, Body::empty()),
+    };
+    let Some(request_id) = request_id else {
+        return Response::from_parts(parts, Body::from(bytes));
+    };
+    let Ok(mut value) = serde_json::from_slice::<Value>(&bytes) else {
+        return Response::from_parts(parts, Body::from(bytes));
+    };
+    let Some(error) = value.get_mut("error").and_then(Value::as_object_mut) else {
+        return Response::from_parts(parts, Body::from(bytes));
+    };
+    error.insert("request_id".to_owned(), Value::String(request_id));
+    let Ok(bytes) = serde_json::to_vec(&value) else {
+        return Response::from_parts(parts, Body::from(bytes));
+    };
+    parts.headers.remove(axum::http::header::CONTENT_LENGTH);
+    Response::from_parts(parts, Body::from(bytes))
 }
 
 async fn add_no_store_header(request: axum::extract::Request, next: middleware::Next) -> Response {
@@ -895,22 +1063,35 @@ fn require_high_risk_change(
     action: &str,
     target: &str,
     payload: &Value,
-) -> Result<String, AppError> {
+) -> Result<Option<String>, AppError> {
     let request_id = headers
         .get(&CHANGE_REQUEST_ID)
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            AppError::Forbidden(
-                "high-risk change requires x-modelport-change-request-id with two distinct approvals"
-                    .to_owned(),
-            )
-        })?;
+        .filter(|value| !value.is_empty());
+    let Some(request_id) = request_id else {
+        if !state.security.require_dual_approval {
+            return Ok(None);
+        }
+        return Err(AppError::Forbidden(
+            "high-risk change requires x-modelport-change-request-id with two distinct approvals"
+                .to_owned(),
+        ));
+    };
     state
         .governance
         .verify_approved_change(request_id, action, target, payload)?;
-    Ok(request_id.to_owned())
+    Ok(Some(request_id.to_owned()))
+}
+
+fn mark_high_risk_change_applied(
+    state: &AppState,
+    approval_id: Option<&str>,
+) -> Result<(), AppError> {
+    if let Some(approval_id) = approval_id {
+        state.governance.mark_change_applied(approval_id)?;
+    }
+    Ok(())
 }
 
 fn require_console_user(state: &AppState, headers: &HeaderMap) -> Result<PublicUser, AppError> {
@@ -1162,7 +1343,7 @@ async fn admin_dashboard(
     Query(query): Query<DashboardQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    require_console_user(&state, &headers)?;
+    require_admin_user(&state, &headers)?;
     Ok(Json(dashboard_body(&state, &query).await?))
 }
 
@@ -1170,17 +1351,23 @@ async fn admin_router_status(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    require_console_user(&state, &headers)?;
+    require_admin_user(&state, &headers)?;
     let config = effective_config(&state);
     Ok(Json(state.smart_router.status(&config)))
 }
 
 async fn admin_aliases(
     State(state): State<AppState>,
+    Query(query): Query<admin_providers::ProviderCatalogQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    require_console_user(&state, &headers)?;
-    Ok(Json(Value::Array(alias_rows(&state))))
+    let actor = require_console_user(&state, &headers)?;
+    let rows = if actor.role == "admin" {
+        alias_rows(&state)
+    } else {
+        catalog_alias_rows(&state, &actor.id, query.api_key_id.as_deref())
+    };
+    Ok(Json(Value::Array(rows)))
 }
 
 async fn admin_create_alias(
@@ -1232,7 +1419,7 @@ async fn admin_settings(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    require_console_user(&state, &headers)?;
+    require_admin_user(&state, &headers)?;
     Ok(Json(settings_row(&state)))
 }
 
@@ -1242,6 +1429,10 @@ async fn admin_reload_config(
 ) -> Result<Json<Value>, AppError> {
     let actor = require_admin_write_user(&state, &headers)?;
     let config = state.config.reload()?;
+    // A successful probe belongs to the exact endpoint/protocol/credential
+    // configuration that was tested. Reloading may change any of those, so
+    // stale evidence must not continue to advertise the Provider as verified.
+    state.control.clear_provider_tests()?;
     let issues = config_issues_json(&config);
     let warning_count = issues
         .iter()
@@ -1361,23 +1552,25 @@ async fn admin_test_provider(
         })));
     };
 
-    let (success, message, models) =
-        match discover_provider_models(&state, provider_id, &provider).await {
-            Ok(models) => {
-                let message = if provider_supports_model_discovery(provider_id, &provider) {
-                    format!("connected; discovered {} model(s)", models.len())
-                } else {
-                    "configured".to_owned()
-                };
-                (true, message, models)
-            }
-            Err(err) => (false, err.audit_message(), Vec::new()),
-        };
-    let tested_at = state.control.record_provider_test(
+    let probe = run_provider_management_probe(&state, provider_id, &provider).await?;
+    let tested_credential_id = probe.tested_credential_id;
+    let (success, message, models) = match probe.result {
+        Ok(models) => {
+            let message = if provider_supports_model_discovery(provider_id, &provider) {
+                format!("connected; discovered {} model(s)", models.len())
+            } else {
+                "configured".to_owned()
+            };
+            (true, message, models)
+        }
+        Err(message) => (false, message, Vec::new()),
+    };
+    let tested_at = state.control.record_provider_test_for_credential(
         provider_id.to_owned(),
         success,
         message.to_owned(),
         models.clone(),
+        tested_credential_id.clone(),
     )?;
     record_admin_activity(
         &state,
@@ -1394,6 +1587,7 @@ async fn admin_test_provider(
         "message": message,
         "models": models,
         "modelCount": models.len(),
+        "testedCredentialId": tested_credential_id,
         "testedAt": tested_at.to_string(),
     })))
 }
@@ -1402,7 +1596,7 @@ async fn admin_audit(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    require_console_user(&state, &headers)?;
+    require_admin_user(&state, &headers)?;
     let (events, total) = state.ledger.audit_events(100).await?;
     Ok(Json(json!({
         "events": events,
@@ -1443,13 +1637,174 @@ async fn admin_backup(
     })))
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RetentionRunInput {
+    #[serde(default = "default_retention_dry_run")]
+    dry_run: bool,
+    preview_token: Option<String>,
+}
+
+fn default_retention_dry_run() -> bool {
+    true
+}
+
+async fn admin_run_retention(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<RetentionRunInput>,
+) -> Result<Json<Value>, AppError> {
+    let actor = require_admin_write_user(&state, &headers)?;
+    let (result, preview_token, preview_expires_at_ms) = if input.dry_run {
+        let result = state
+            .ledger
+            .run_retention(RetentionPolicy::from_env()?, true)
+            .await?;
+        let issued_at_ms = now_millis();
+        let (token, expires_at_ms) = state.retention_previews.issue(
+            &actor.id,
+            result.policy,
+            result.evaluated_at_ms,
+            issued_at_ms,
+        );
+        (result, Some(token), Some(expires_at_ms))
+    } else {
+        let token = input
+            .preview_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .ok_or_else(|| {
+                AppError::InvalidRequest(
+                    "previewToken is required when dryRun is false; run a new preview".to_owned(),
+                )
+            })?;
+        let preview = state
+            .retention_previews
+            .consume(&actor.id, token, now_millis())?;
+        let result = state
+            .ledger
+            .run_retention_at(preview.policy, false, preview.evaluated_at_ms)
+            .await?;
+        (result, None, None)
+    };
+    record_admin_activity(
+        &state,
+        &actor,
+        "data_retention",
+        "operational_ledger",
+        format!(
+            "数据保留{}：请求明细 {}，Provider attempts {}，用户用量 {}，审计事件 {}{}",
+            if result.dry_run { "预览" } else { "执行" },
+            result.counts.request_details_redacted,
+            result.counts.provider_attempts_redacted,
+            result.counts.user_usage_rows_deidentified,
+            result.counts.audit_events_deleted,
+            if result.skipped_reason == Some("legal_hold") {
+                "（legal hold，未修改）"
+            } else {
+                ""
+            }
+        ),
+        if result.applied { "warning" } else { "info" },
+    )
+    .await;
+    let mut body = serde_json::to_value(result)?;
+    if let Some(body) = body.as_object_mut() {
+        body.insert(
+            "previewToken".to_owned(),
+            preview_token.map_or(Value::Null, Value::String),
+        );
+        body.insert(
+            "previewExpiresAtMs".to_owned(),
+            preview_expires_at_ms.map_or(Value::Null, Value::from),
+        );
+    }
+    Ok(Json(body))
+}
+
+struct ProviderManagementProbe {
+    tested_credential_id: Option<String>,
+    result: Result<Vec<String>, String>,
+}
+
+/// Run the management connectivity probe through the exact credential
+/// selection path used by inference requests. An explicit pool is an
+/// authorization boundary: when it has no selectable member, the provider's
+/// static credential must never be used as an implicit fallback.
+async fn run_provider_management_probe(
+    state: &AppState,
+    provider_id: &str,
+    provider: &ProviderConfig,
+) -> Result<ProviderManagementProbe, AppError> {
+    let mut selected_provider = provider.clone();
+    let tested_credential_id = match state
+        .control
+        .apply_selected_provider_credential_for_request(provider_id, &mut selected_provider)
+    {
+        Ok(credential_id) => credential_id,
+        Err(err) => {
+            let message = err.audit_message();
+            state.control.record_provider_outcome_for_credential(
+                provider_id,
+                None,
+                false,
+                err.http_status().as_u16(),
+                Some(&message),
+                true,
+            )?;
+            return Ok(ProviderManagementProbe {
+                tested_credential_id: None,
+                result: Err(message),
+            });
+        }
+    };
+
+    let result = match discover_provider_models(state, provider_id, &selected_provider).await {
+        Ok(models) => {
+            state.control.record_provider_outcome_for_credential(
+                provider_id,
+                tested_credential_id.as_deref(),
+                true,
+                StatusCode::OK.as_u16(),
+                None,
+                true,
+            )?;
+            Ok(models)
+        }
+        Err(err) => {
+            let message = err.audit_message();
+            state.control.record_provider_outcome_for_credential(
+                provider_id,
+                tested_credential_id.as_deref(),
+                false,
+                err.http_status().as_u16(),
+                Some(&message),
+                true,
+            )?;
+            Err(message)
+        }
+    };
+
+    Ok(ProviderManagementProbe {
+        tested_credential_id,
+        result,
+    })
+}
+
 async fn discover_provider_models(
     state: &AppState,
     provider_id: &str,
     provider: &ProviderConfig,
 ) -> Result<Vec<String>, AppError> {
+    crate::config::validate_provider_base_url_dns_for_request(
+        provider_id,
+        &provider.base_url,
+        state.security.allow_private_provider_urls,
+    )
+    .await?;
     if !provider_supports_model_discovery(provider_id, provider) {
-        provider.api_key()?;
+        probe_anthropic_provider(state, provider_id, provider).await?;
         return Ok(configured_provider_models(provider));
     }
 
@@ -1460,15 +1815,122 @@ async fn discover_provider_models(
     };
     let body = state
         .transport
-        .get_json(&url, &openai_compatible_headers(provider)?)
+        .get_json(
+            provider_id,
+            state.security.allow_private_provider_urls(),
+            &url,
+            &openai_compatible_headers(provider)?,
+        )
         .await?;
-    let models = parse_model_ids(&body);
-
-    if models.is_empty() {
-        Ok(configured_provider_models(provider))
+    let models = if parse_model_ids(&body).is_empty() {
+        configured_provider_models(provider)
     } else {
-        Ok(models)
+        parse_model_ids(&body)
+    };
+    if provider.protocol == ProviderProtocol::OpenaiCompat {
+        probe_openai_provider(state, provider_id, provider).await?;
+    } else {
+        probe_anthropic_provider(state, provider_id, provider).await?;
     }
+    Ok(models)
+}
+
+async fn probe_openai_provider(
+    state: &AppState,
+    provider_id: &str,
+    provider: &ProviderConfig,
+) -> Result<(), AppError> {
+    let mut body = json!({
+        "model": provider.default_model,
+        "messages": [{ "role": "user", "content": "Reply OK." }],
+        "stream": false,
+    });
+    match provider.max_tokens_field {
+        MaxTokensField::MaxCompletionTokens => body["max_completion_tokens"] = json!(1),
+        MaxTokensField::MaxTokens => body["max_tokens"] = json!(1),
+        MaxTokensField::Both => {
+            body["max_completion_tokens"] = json!(1);
+            body["max_tokens"] = json!(1);
+        }
+    }
+    let response = state
+        .transport
+        .post_json(
+            provider_id,
+            state.security.allow_private_provider_urls(),
+            &provider.endpoint("/chat/completions"),
+            &openai_compatible_headers(provider)?,
+            &body,
+        )
+        .await?;
+    if response
+        .get("choices")
+        .and_then(Value::as_array)
+        .is_none_or(Vec::is_empty)
+    {
+        return Err(AppError::UpstreamProtocol(
+            "OpenAI connectivity probe response is missing choices".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+async fn probe_anthropic_provider(
+    state: &AppState,
+    provider_id: &str,
+    provider: &ProviderConfig,
+) -> Result<(), AppError> {
+    let headers = crate::providers::anthropic::headers(provider, &HeaderMap::new())?;
+    let (url, body, expects_token_count) =
+        if provider.token_counting.mode == TokenCountingMode::Anthropic {
+            (
+                provider.endpoint("/v1/messages/count_tokens"),
+                json!({
+                    "model": provider.default_model,
+                    "messages": [{ "role": "user", "content": "ModelPort connectivity probe" }],
+                }),
+                true,
+            )
+        } else {
+            // Some Anthropic-compatible Providers do not implement count_tokens.
+            // A fixed one-token request is the smallest protocol/auth/model probe
+            // that produces real connection evidence without sending user data.
+            (
+                provider.endpoint("/v1/messages"),
+                json!({
+                    "model": provider.default_model,
+                    "max_tokens": 1,
+                    "messages": [{ "role": "user", "content": "Reply OK." }],
+                }),
+                false,
+            )
+        };
+    let response = state
+        .transport
+        .post_json(
+            provider_id,
+            state.security.allow_private_provider_urls(),
+            &url,
+            &headers,
+            &body,
+        )
+        .await?;
+    if expects_token_count
+        && response
+            .get("input_tokens")
+            .and_then(Value::as_u64)
+            .is_none()
+    {
+        return Err(AppError::UpstreamProtocol(
+            "Anthropic connectivity probe response is missing integer input_tokens".to_owned(),
+        ));
+    }
+    if !expects_token_count && !response.is_object() {
+        return Err(AppError::UpstreamProtocol(
+            "Anthropic connectivity probe returned a non-object response".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn provider_supports_model_discovery(provider_id: &str, provider: &ProviderConfig) -> bool {
@@ -1551,8 +2013,16 @@ async fn admin_logs(
     headers: HeaderMap,
     Query(query): Query<LogsQuery>,
 ) -> Result<Json<Value>, AppError> {
-    require_console_user(&state, &headers)?;
+    let actor = require_console_user(&state, &headers)?;
     query.validate()?;
+    // Request metadata is personal operational data. Read-only viewers do not
+    // implicitly gain organization-wide visibility; only administrators can
+    // remove this ownership boundary.
+    let query = if actor.role == "admin" {
+        query
+    } else {
+        query.scoped_to_user(&actor.id)
+    };
     Ok(Json(logs_body(&state, &query).await?))
 }
 
@@ -1561,9 +2031,11 @@ async fn admin_log_by_id(
     headers: HeaderMap,
     Path(log_id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
-    require_console_user(&state, &headers)?;
-    log_body(&state, &log_id)
-        .await?
+    let actor = require_console_user(&state, &headers)?;
+    let row = log_body(&state, &log_id).await?;
+    // Return the same not-found response for missing and unauthorized rows so
+    // a user/viewer cannot enumerate another principal's request IDs.
+    row.filter(|row| actor.role == "admin" || log_belongs_to_user(row, &actor.id))
         .map(Json)
         .ok_or_else(|| AppError::NotFound(format!("request log {log_id}")))
 }
@@ -1572,7 +2044,7 @@ async fn admin_latency(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    require_console_user(&state, &headers)?;
+    require_admin_user(&state, &headers)?;
     Ok(Json(latency_body(&state).await?))
 }
 
@@ -1608,7 +2080,7 @@ async fn admin_update_enterprise_budget(
         &approval_payload,
     )?;
     let view = state.ledger.update_budget(&body).await?;
-    state.governance.mark_change_applied(&approval_id)?;
+    mark_high_risk_change_applied(&state, approval_id.as_deref())?;
     record_admin_activity(
         &state,
         &actor,
@@ -1667,7 +2139,7 @@ async fn admin_teams(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    require_console_user(&state, &headers)?;
+    require_admin_user(&state, &headers)?;
     let mut teams = state.control.list_teams();
     let usage = state.ledger.management_usage().await?;
     for team in &mut teams {
@@ -1755,7 +2227,7 @@ async fn admin_quotas(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    require_console_user(&state, &headers)?;
+    require_admin_user(&state, &headers)?;
     let mut quotas = state.control.list_quotas()?;
     let limits = state.control.usage_quota_limits();
     let values = state.ledger.quota_usage_values(&limits).await?;
@@ -2312,13 +2784,13 @@ mod tests {
 
     use super::*;
     use crate::{
-        auth::{AuthStore, CreateUserInput},
+        auth::{AuthStore, CreateUserInput, UpdateUserInput},
         config::{
             FidelityMode, MaxTokensField, ProviderConfig, ReasoningConfig, ReasoningMode,
             RouteCandidateConfig, RouteGroupConfig, RoutingProfile, SmartRoutingConfig,
             SmartRoutingMode, TokenCountingConfig, TokenCountingMode,
         },
-        control::{BindApiKeyScopeInput, CreateApiKeyInput},
+        control::{BindApiKeyScopeInput, CreateApiKeyInput, UpdateApiKeyInput},
         metrics::Metrics,
     };
 
@@ -2887,8 +3359,9 @@ mod tests {
         let (status, body) = post_message(app, message_body(false)).await;
 
         assert_eq!(status, StatusCode::UNAUTHORIZED);
-        assert!(body.contains("upstream returned HTTP 401"));
-        assert!(body.contains("INVALID_API_KEY"));
+        assert!(body.contains("provider_authentication_failed"));
+        assert!(!body.contains("INVALID_API_KEY"));
+        assert!(!body.contains("Invalid API key"));
     }
 
     #[tokio::test]
@@ -2906,8 +3379,9 @@ mod tests {
         let (status, body) = post_message(app, message_body(true)).await;
 
         assert_eq!(status, StatusCode::UNAUTHORIZED);
-        assert!(body.contains("upstream returned HTTP 401"));
-        assert!(body.contains("INVALID_API_KEY"));
+        assert!(body.contains("provider_authentication_failed"));
+        assert!(!body.contains("INVALID_API_KEY"));
+        assert!(!body.contains("Invalid API key"));
         let logs = wait_for_usage_rows(&ledger, 1).await;
         assert_eq!(logs[0]["status"], "error");
         assert_eq!(logs[0]["statusCode"], 401);
@@ -2990,7 +3464,8 @@ data: [DONE]
 
         assert_eq!(status, StatusCode::OK);
         assert!(body.contains("event: error"));
-        assert!(body.contains("ended without [DONE] or finish_reason"));
+        assert!(body.contains("upstream provider returned an incompatible response"));
+        assert!(!body.contains("ended without [DONE] or finish_reason"));
         let logs = wait_for_usage_rows(&ledger, 1).await;
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0]["status"], "error");
@@ -3193,7 +3668,8 @@ data: [DONE]
         let (status, body) = post_message(app, message_body(true)).await;
 
         assert_eq!(status, StatusCode::UNAUTHORIZED);
-        assert!(body.contains("invalid credential"));
+        assert!(body.contains("provider_authentication_failed"));
+        assert!(!body.contains("invalid credential"));
         assert!(!body.contains("event: error"));
     }
 
@@ -3486,6 +3962,53 @@ data: [DONE]
     }
 
     #[tokio::test]
+    async fn draining_disables_readiness_and_rejects_new_inference() {
+        let upstream = spawn_openai_upstream(
+            StatusCode::OK,
+            r#"{"id":"unused","choices":[]}"#,
+            "application/json",
+        )
+        .await;
+        let state = test_state(upstream, 1024 * 1024);
+        state.draining.store(true, Ordering::Release);
+        let app = router(state);
+
+        let readyz = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/readyz")
+                    .header("x-api-key", CLIENT_TOKEN)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(readyz.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let (message_status, _) = post_message(app.clone(), message_body(false)).await;
+        assert_eq!(message_status, StatusCode::SERVICE_UNAVAILABLE);
+
+        let metrics = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/metrics")
+                    .header("x-api-key", CLIENT_TOKEN)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(metrics.status(), StatusCode::OK);
+        let body = to_bytes(metrics.into_body(), usize::MAX).await.unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.contains("modelport_gateway_ready 0"));
+        assert!(body.contains("modelport_gateway_draining 1"));
+    }
+
+    #[tokio::test]
     async fn control_api_key_mode_rejects_legacy_token_but_accepts_api_key_records() {
         let upstream = spawn_openai_upstream(
             StatusCode::OK,
@@ -3529,6 +4052,80 @@ data: [DONE]
             post_message_with_key(app, &created.key, message_body(false)).await;
         assert_eq!(api_key_status, StatusCode::OK);
         assert!(body.contains("ok"));
+    }
+
+    #[tokio::test]
+    async fn models_enforces_api_key_ip_policy_with_trusted_proxy_client_ip() {
+        let state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
+        let owner = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "models-ip-owner".to_owned(),
+                email: "models-ip-owner@example.com".to_owned(),
+                password: "strong-models-ip-owner-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let created = create_test_api_key(&state, &owner, "models-ip-key");
+        state
+            .control
+            .update_api_key(
+                &created.public.id,
+                UpdateApiKeyInput {
+                    name: None,
+                    group: None,
+                    team_id: None,
+                    allowed_models: None,
+                    allowed_providers: None,
+                    expires_at: None,
+                    status: None,
+                    ip_restricted: Some(true),
+                    allowed_ips: Some(vec!["203.0.113.10".to_owned()]),
+                    spend_limit_usd: None,
+                    rate_limited: None,
+                    five_hour_limit_usd: None,
+                    daily_limit_usd: None,
+                    weekly_limit_usd: None,
+                    monthly_limit_usd: None,
+                },
+            )
+            .unwrap();
+        let app = router(state);
+
+        let allowed = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/models")
+                    .extension(ConnectInfo(
+                        "127.0.0.1:48178".parse::<SocketAddr>().unwrap(),
+                    ))
+                    .header("x-api-key", created.key.clone())
+                    .header("x-forwarded-for", "203.0.113.10")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(allowed.status(), StatusCode::OK);
+
+        let denied = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/models")
+                    .extension(ConnectInfo(
+                        "127.0.0.1:48178".parse::<SocketAddr>().unwrap(),
+                    ))
+                    .header("x-api-key", created.key)
+                    .header("x-forwarded-for", "198.51.100.20")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+        assert!(response_body(denied).await.contains("not allowed"));
     }
 
     #[tokio::test]
@@ -3707,6 +4304,151 @@ data: [DONE]
         assert_eq!(first_status, StatusCode::OK);
         assert_eq!(second_status, StatusCode::TOO_MANY_REQUESTS);
         assert!(body.contains("provider request rate limit exceeded"));
+    }
+
+    #[tokio::test]
+    async fn self_service_delete_and_recreate_does_not_reset_api_key_rpm() {
+        let upstream = spawn_openai_upstream(
+            StatusCode::OK,
+            r#"{"id":"ok","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}"#,
+            "application/json",
+        )
+        .await;
+        let mut state = test_state(upstream, 1024 * 1024);
+        state.rate_limiter = Arc::new(RateLimiter::for_tests(1, 0, 0, 0));
+        let owner = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "rpm-lineage".to_owned(),
+                email: "rpm-lineage@example.com".to_owned(),
+                password: "strong-rpm-lineage-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let owner_id = owner.id;
+        let owner_name = owner.username;
+        let control = state.control.clone();
+        let create = || {
+            control
+                .create_api_key_with_active_limit(
+                    CreateApiKeyInput {
+                        user_id: owner_id.clone(),
+                        username: Some(owner_name.clone()),
+                        name: "self-service RPM".to_owned(),
+                        principal_type: Some("user".to_owned()),
+                        purpose: None,
+                        group: None,
+                        team_id: None,
+                        allowed_models: None,
+                        allowed_providers: None,
+                        expires_at: None,
+                    },
+                    5,
+                )
+                .unwrap()
+        };
+        let key_a = create();
+        let app = router(state);
+
+        let (first_status, first_body) =
+            post_message_with_key(app.clone(), &key_a.key, message_body(false)).await;
+        assert_eq!(first_status, StatusCode::OK, "{first_body}");
+        control.delete_api_key(&key_a.public.id).unwrap();
+        let key_b = create();
+        let (second_status, second_body) =
+            post_message_with_key(app, &key_b.key, message_body(false)).await;
+        assert_eq!(second_status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(second_body.contains("rate limit"));
+    }
+
+    #[tokio::test]
+    async fn self_service_delete_and_recreate_does_not_reset_all_time_spend() {
+        let upstream = spawn_openai_upstream(
+            StatusCode::OK,
+            r#"{
+                "id":"ok",
+                "choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":900,"completion_tokens":100}
+            }"#,
+            "application/json",
+        )
+        .await;
+        let mut state = test_state(upstream, 1024 * 1024);
+        let mut config = state.config.snapshot();
+        config.providers.get_mut("mimo").unwrap().pricing = Some(crate::pricing::ModelPricing {
+            input_per_million: 1.0,
+            output_per_million: 1.0,
+            cache_read_per_million: 0.0,
+            cache_write_per_million: 0.0,
+        });
+        state.config = Arc::new(RuntimeConfig::new(config));
+        let owner = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "spend-lineage".to_owned(),
+                email: "spend-lineage@example.com".to_owned(),
+                password: "strong-spend-lineage-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let owner_id = owner.id;
+        let owner_name = owner.username;
+        let control = state.control.clone();
+        let ledger = state.ledger.clone();
+        let create = || {
+            control
+                .create_api_key_with_active_limit(
+                    CreateApiKeyInput {
+                        user_id: owner_id.clone(),
+                        username: Some(owner_name.clone()),
+                        name: "self-service spend".to_owned(),
+                        principal_type: Some("user".to_owned()),
+                        purpose: None,
+                        group: None,
+                        team_id: None,
+                        allowed_models: None,
+                        allowed_providers: None,
+                        expires_at: None,
+                    },
+                    5,
+                )
+                .unwrap()
+        };
+        let key_a = create();
+        let limits = UpdateApiKeyInput {
+            name: None,
+            group: None,
+            team_id: None,
+            allowed_models: None,
+            allowed_providers: None,
+            expires_at: None,
+            status: None,
+            ip_restricted: None,
+            allowed_ips: None,
+            spend_limit_usd: Some(0.0005),
+            rate_limited: None,
+            five_hour_limit_usd: None,
+            daily_limit_usd: None,
+            weekly_limit_usd: None,
+            monthly_limit_usd: None,
+        };
+        control.update_api_key(&key_a.public.id, limits).unwrap();
+        let app = router(state);
+
+        let (first_status, first_body) =
+            post_message_with_key(app.clone(), &key_a.key, message_body(false)).await;
+        assert_eq!(first_status, StatusCode::OK, "{first_body}");
+        wait_for_usage_rows(&ledger, 1).await;
+        control.delete_api_key(&key_a.public.id).unwrap();
+        let key_b = create();
+        assert_eq!(key_b.public.spend_limit_usd, 0.0005);
+
+        let (second_status, second_body) =
+            post_message_with_key(app, &key_b.key, message_body(false)).await;
+        assert_eq!(second_status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(second_body.contains("quota"));
     }
 
     #[test]
@@ -3926,7 +4668,7 @@ data: [DONE]
     }
 
     #[tokio::test]
-    async fn viewer_can_read_dashboard_but_not_create_users() {
+    async fn viewer_cannot_read_admin_dashboard_or_create_users() {
         let upstream = spawn_openai_upstream(StatusCode::OK, "{}", "application/json").await;
         let state = test_state(upstream, 1024 * 1024);
         state
@@ -3978,7 +4720,7 @@ data: [DONE]
             )
             .await
             .unwrap();
-        assert_eq!(dashboard_response.status(), StatusCode::OK);
+        assert_eq!(dashboard_response.status(), StatusCode::FORBIDDEN);
 
         let create_user_response = app
             .oneshot(
@@ -4003,6 +4745,846 @@ data: [DONE]
             .await
             .unwrap();
         assert_eq!(create_user_response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn organization_read_surfaces_are_admin_only_and_users_are_self_scoped() {
+        let state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
+        let user = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "boundary-user".to_owned(),
+                email: "boundary-user@example.com".to_owned(),
+                password: "strong-boundary-user-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let viewer = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "boundary-viewer".to_owned(),
+                email: "boundary-viewer@example.com".to_owned(),
+                password: "strong-boundary-viewer-password-123".to_owned(),
+                role: Some("viewer".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        state
+            .auth
+            .create_user(CreateUserInput {
+                username: "boundary-admin".to_owned(),
+                email: "boundary-admin@example.com".to_owned(),
+                password: "strong-boundary-admin-password-123".to_owned(),
+                role: Some("admin".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let app = router(state);
+        let user_cookie = login_cookie(
+            app.clone(),
+            "boundary-user",
+            "strong-boundary-user-password-123",
+        )
+        .await;
+        let viewer_cookie = login_cookie(
+            app.clone(),
+            "boundary-viewer",
+            "strong-boundary-viewer-password-123",
+        )
+        .await;
+        let admin_cookie = login_cookie(
+            app.clone(),
+            "boundary-admin",
+            "strong-boundary-admin-password-123",
+        )
+        .await;
+
+        for (cookie, own_user_id) in [
+            (user_cookie, user.id.as_str()),
+            (viewer_cookie, viewer.id.as_str()),
+        ] {
+            for uri in ["/admin/audit", "/admin/latency", "/admin/quotas"] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .uri(uri)
+                            .header(COOKIE, cookie.clone())
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::FORBIDDEN, "GET {uri}");
+            }
+
+            let own_users = get_console_json(app.clone(), "/admin/users", cookie).await;
+            let rows = own_users.as_array().unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0]["id"], own_user_id);
+        }
+
+        for uri in ["/admin/audit", "/admin/latency", "/admin/quotas"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .header(COOKIE, admin_cookie.clone())
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "GET {uri}");
+        }
+        let all_users = get_console_json(app, "/admin/users", admin_cookie).await;
+        assert_eq!(all_users.as_array().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn active_session_is_revoked_immediately_after_role_downgrade() {
+        let state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
+        let target = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "downgraded-admin".to_owned(),
+                email: "downgraded-admin@example.com".to_owned(),
+                password: "strong-downgraded-admin-password-123".to_owned(),
+                role: Some("admin".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let other_admin = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "remaining-admin".to_owned(),
+                email: "remaining-admin@example.com".to_owned(),
+                password: "strong-remaining-admin-password-123".to_owned(),
+                role: Some("admin".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let auth = state.auth.clone();
+        let app = router(state);
+        let cookie = login_cookie(
+            app.clone(),
+            "downgraded-admin",
+            "strong-downgraded-admin-password-123",
+        )
+        .await;
+
+        auth.update_user(
+            &target.id,
+            &other_admin.id,
+            UpdateUserInput {
+                email: None,
+                password: None,
+                role: Some("viewer".to_owned()),
+                status: None,
+            },
+        )
+        .unwrap();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/auth/me")
+                    .header(COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn request_logs_fail_closed_for_users_and_viewers() {
+        let upstream = spawn_openai_upstream(
+            StatusCode::OK,
+            r#"{"id":"ok","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}"#,
+            "application/json",
+        )
+        .await;
+        let state = test_state(upstream, 1024 * 1024);
+        let alice = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "alice".to_owned(),
+                email: "alice@modelport.local".to_owned(),
+                password: "strong-alice-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let bob = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "bob".to_owned(),
+                email: "bob@modelport.local".to_owned(),
+                password: "strong-bob-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let viewer = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "auditor".to_owned(),
+                email: "auditor@modelport.local".to_owned(),
+                password: "strong-viewer-password-123".to_owned(),
+                role: Some("viewer".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        state
+            .auth
+            .create_user(CreateUserInput {
+                username: "admin".to_owned(),
+                email: "admin@modelport.local".to_owned(),
+                password: "strong-admin-password-123".to_owned(),
+                role: Some("admin".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let alice_key = create_test_api_key(&state, &alice, "alice-key");
+        let bob_key = create_test_api_key(&state, &bob, "bob-key");
+        let viewer_key = create_test_api_key(&state, &viewer, "viewer-key");
+        let ledger = state.ledger.clone();
+        let app = router(state);
+
+        for key in [&alice_key.key, &bob_key.key, &viewer_key.key] {
+            let (status, body) = post_message_with_key(app.clone(), key, message_body(false)).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+        let rows = wait_for_usage_rows(&ledger, 3).await;
+        let bob_log_id = rows
+            .iter()
+            .find(|row| row["userId"] == bob.id)
+            .and_then(|row| row["id"].as_str())
+            .unwrap()
+            .to_owned();
+
+        let alice_cookie = login_cookie(app.clone(), "alice", "strong-alice-password-123").await;
+        let alice_list = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/admin/logs?userId={}", bob.id))
+                    .header(COOKIE, alice_cookie.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(alice_list.status(), StatusCode::OK);
+        let alice_body: Value =
+            serde_json::from_slice(&to_bytes(alice_list.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(alice_body["total"], 1);
+        assert!(
+            alice_body["logs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|row| row["userId"] == alice.id)
+        );
+
+        let cross_user_detail = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/admin/logs/{bob_log_id}"))
+                    .header(COOKIE, alice_cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cross_user_detail.status(), StatusCode::NOT_FOUND);
+
+        let viewer_cookie =
+            login_cookie(app.clone(), "auditor", "strong-viewer-password-123").await;
+        let viewer_list = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/admin/logs?userId={}", alice.id))
+                    .header(COOKIE, viewer_cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let viewer_body: Value =
+            serde_json::from_slice(&to_bytes(viewer_list.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(viewer_body["total"], 1);
+        assert!(
+            viewer_body["logs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|row| row["userId"] == viewer.id)
+        );
+
+        let admin_cookie = login_cookie(app.clone(), "admin", "strong-admin-password-123").await;
+        let admin_list = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/logs")
+                    .header(COOKIE, admin_cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let admin_body: Value =
+            serde_json::from_slice(&to_bytes(admin_list.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(admin_body["total"], 3);
+    }
+
+    #[tokio::test]
+    async fn users_can_only_create_and_rotate_bounded_own_api_keys() {
+        let upstream = spawn_openai_upstream(
+            StatusCode::OK,
+            r#"{"id":"ok","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}"#,
+            "application/json",
+        )
+        .await;
+        let state = test_state(upstream, 1024 * 1024);
+        let alice = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "self-service".to_owned(),
+                email: "self-service@modelport.local".to_owned(),
+                password: "strong-self-service-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let bob = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "other-owner".to_owned(),
+                email: "other-owner@modelport.local".to_owned(),
+                password: "strong-other-owner-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let bob_key = create_test_api_key(&state, &bob, "other-key");
+        let app = router(state);
+        let cookie = login_cookie(
+            app.clone(),
+            "self-service",
+            "strong-self-service-password-123",
+        )
+        .await;
+
+        let service_account = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/api-keys")
+                    .header(COOKIE, cookie.clone())
+                    .header("x-modelport-csrf", "1")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "userId": bob.id,
+                            "name": "forged-service-account",
+                            "principalType": "service_account",
+                            "purpose": "attempted privilege escalation",
+                            "allowedModels": ["mimo-v2.5-pro"],
+                            "allowedProviders": ["mimo"]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(service_account.status(), StatusCode::FORBIDDEN);
+
+        let created_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/admin/users/{}/api-keys", bob.id))
+                    .header(COOKIE, cookie.clone())
+                    .header("x-modelport-csrf", "1")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "userId": bob.id,
+                            "name": "my-claude-code",
+                            "allowedModels": ["mimo-v2.5-pro"],
+                            "allowedProviders": ["mimo"]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(created_response.status(), StatusCode::OK);
+        let created: Value = serde_json::from_slice(
+            &to_bytes(created_response.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(created["userId"], alice.id);
+        assert_eq!(created["principalType"], "user");
+        assert!(created["expiresAt"].as_str().is_some());
+        let old_key_id = created["id"].as_str().unwrap().to_owned();
+        let old_secret = created["key"].as_str().unwrap().to_owned();
+
+        let cross_owner_rotation = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/admin/api-keys/{}/rotate", bob_key.public.id))
+                    .header(COOKIE, cookie.clone())
+                    .header("x-modelport-csrf", "1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cross_owner_rotation.status(), StatusCode::FORBIDDEN);
+
+        let cancelled_rotation = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/admin/api-keys/{old_key_id}/rotate"))
+                    .header(COOKIE, cookie.clone())
+                    .header("x-modelport-csrf", "1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cancelled_rotation.status(), StatusCode::OK);
+        let cancelled: Value = serde_json::from_slice(
+            &to_bytes(cancelled_rotation.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let cancelled_id = cancelled["id"].as_str().unwrap();
+        for _ in 0..2 {
+            let cancel_response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("DELETE")
+                        .uri(format!(
+                            "/admin/api-keys/{old_key_id}/rotate/{cancelled_id}"
+                        ))
+                        .header(COOKIE, cookie.clone())
+                        .header("x-modelport-csrf", "1")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(cancel_response.status(), StatusCode::OK);
+        }
+
+        let rotate_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/admin/api-keys/{old_key_id}/rotate"))
+                    .header(COOKIE, cookie.clone())
+                    .header("x-modelport-csrf", "1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rotate_response.status(), StatusCode::OK);
+        let rotated: Value = serde_json::from_slice(
+            &to_bytes(rotate_response.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_ne!(rotated["id"], old_key_id);
+        assert_eq!(rotated["userId"], alice.id);
+        assert_eq!(rotated["allowedModels"], created["allowedModels"]);
+        assert_eq!(rotated["allowedProviders"], created["allowedProviders"]);
+        assert_eq!(rotated["status"], "pending_rotation");
+        let rotated_id = rotated["id"].as_str().unwrap().to_owned();
+        let rotated_secret = rotated["key"].as_str().unwrap().to_owned();
+
+        let (old_status, _) =
+            post_message_with_key(app.clone(), &old_secret, message_body(false)).await;
+        assert_eq!(old_status, StatusCode::OK);
+        let (pending_status, _) =
+            post_message_with_key(app.clone(), &rotated_secret, message_body(false)).await;
+        assert_eq!(pending_status, StatusCode::UNAUTHORIZED);
+
+        let confirm_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/admin/api-keys/{old_key_id}/rotate/{rotated_id}"))
+                    .header(COOKIE, cookie.clone())
+                    .header("x-modelport-csrf", "1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(confirm_response.status(), StatusCode::OK);
+
+        let replayed_confirm = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/admin/api-keys/{old_key_id}/rotate/{rotated_id}"))
+                    .header(COOKIE, cookie.clone())
+                    .header("x-modelport-csrf", "1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replayed_confirm.status(), StatusCode::OK);
+
+        let (old_status, _) =
+            post_message_with_key(app.clone(), &old_secret, message_body(false)).await;
+        assert_eq!(old_status, StatusCode::UNAUTHORIZED);
+        let (new_status, body) =
+            post_message_with_key(app.clone(), &rotated_secret, message_body(false)).await;
+        assert_eq!(new_status, StatusCode::OK, "{body}");
+
+        let revoke_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/admin/api-keys/{rotated_id}/disable"))
+                    .header(COOKIE, cookie)
+                    .header("x-modelport-csrf", "1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(revoke_response.status(), StatusCode::OK);
+        let (revoked_status, _) =
+            post_message_with_key(app, &rotated_secret, message_body(false)).await;
+        assert_eq!(revoked_status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn retention_preview_is_admin_only_csrf_protected_and_audited() {
+        let state = test_state("http://127.0.0.1:9".to_owned(), 1024 * 1024);
+        state
+            .auth
+            .create_user(CreateUserInput {
+                username: "retention-user".to_owned(),
+                email: "retention-user@modelport.local".to_owned(),
+                password: "strong-retention-user-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        state
+            .auth
+            .create_user(CreateUserInput {
+                username: "retention-admin".to_owned(),
+                email: "retention-admin@modelport.local".to_owned(),
+                password: "strong-retention-admin-password-123".to_owned(),
+                role: Some("admin".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let ledger = state.ledger.clone();
+        let app = router(state);
+        let user_cookie = login_cookie(
+            app.clone(),
+            "retention-user",
+            "strong-retention-user-password-123",
+        )
+        .await;
+        let admin_cookie = login_cookie(
+            app.clone(),
+            "retention-admin",
+            "strong-retention-admin-password-123",
+        )
+        .await;
+
+        let user_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/retention/run")
+                    .header(COOKIE, user_cookie)
+                    .header("x-modelport-csrf", "1")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"dryRun":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(user_response.status(), StatusCode::FORBIDDEN);
+
+        let no_csrf = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/retention/run")
+                    .header(COOKIE, admin_cookie.clone())
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"dryRun":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(no_csrf.status(), StatusCode::FORBIDDEN);
+
+        let preview = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/retention/run")
+                    .header(COOKIE, admin_cookie)
+                    .header("x-modelport-csrf", "1")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"dryRun":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(preview.status(), StatusCode::OK);
+        let body: Value =
+            serde_json::from_slice(&to_bytes(preview.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["dryRun"], true);
+        assert_eq!(body["applied"], false);
+        assert_eq!(body["policy"]["contentPersistence"], false);
+        assert_eq!(body["immutableBudgetEventsRetained"], true);
+        assert!(body["requestDetailCutoffMs"].as_u64().is_some());
+        assert!(body["previewToken"].as_str().is_some());
+        assert!(body["previewExpiresAtMs"].as_u64().is_some());
+
+        let (audit, _) = ledger.audit_events(20).await.unwrap();
+        assert!(audit.iter().any(|event| event["type"] == "data_retention"));
+    }
+
+    #[tokio::test]
+    async fn retention_apply_requires_and_consumes_preview_with_fixed_cutoffs() {
+        let state = test_state("http://127.0.0.1:9".to_owned(), 1024 * 1024);
+        state
+            .auth
+            .create_user(CreateUserInput {
+                username: "retention-apply-admin".to_owned(),
+                email: "retention-apply-admin@modelport.local".to_owned(),
+                password: "strong-retention-apply-password-123".to_owned(),
+                role: Some("admin".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let app = router(state);
+        let cookie = login_cookie(
+            app.clone(),
+            "retention-apply-admin",
+            "strong-retention-apply-password-123",
+        )
+        .await;
+
+        let (missing_status, _) =
+            post_retention(app.clone(), cookie.clone(), json!({ "dryRun": false })).await;
+        assert_eq!(missing_status, StatusCode::BAD_REQUEST);
+
+        let (preview_status, preview) =
+            post_retention(app.clone(), cookie.clone(), json!({ "dryRun": true })).await;
+        assert_eq!(preview_status, StatusCode::OK);
+        let token = preview["previewToken"].as_str().unwrap().to_owned();
+        assert!(preview["previewExpiresAtMs"].as_u64().unwrap() > now_millis());
+
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        let (apply_status, applied) = post_retention(
+            app.clone(),
+            cookie.clone(),
+            json!({ "dryRun": false, "previewToken": token }),
+        )
+        .await;
+        assert_eq!(apply_status, StatusCode::OK);
+        assert_eq!(applied["applied"], true);
+        assert_eq!(applied["evaluatedAtMs"], preview["evaluatedAtMs"]);
+        assert_eq!(
+            applied["requestDetailCutoffMs"],
+            preview["requestDetailCutoffMs"]
+        );
+        assert_eq!(applied["userUsageCutoffMs"], preview["userUsageCutoffMs"]);
+        assert_eq!(applied["auditCutoffMs"], preview["auditCutoffMs"]);
+        assert_eq!(applied["policy"], preview["policy"]);
+        assert!(applied["previewToken"].is_null());
+        assert!(applied["previewExpiresAtMs"].is_null());
+
+        let (replay_status, _) = post_retention(
+            app,
+            cookie,
+            json!({ "dryRun": false, "previewToken": token }),
+        )
+        .await;
+        assert_eq!(replay_status, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn retention_preview_is_actor_bound_without_cross_actor_consumption() {
+        let state = test_state("http://127.0.0.1:9".to_owned(), 1024 * 1024);
+        for username in ["retention-owner", "retention-other"] {
+            state
+                .auth
+                .create_user(CreateUserInput {
+                    username: username.to_owned(),
+                    email: format!("{username}@modelport.local"),
+                    password: format!("strong-{username}-password-123"),
+                    role: Some("admin".to_owned()),
+                    status: Some("active".to_owned()),
+                })
+                .unwrap();
+        }
+        let app = router(state);
+        let owner_cookie = login_cookie(
+            app.clone(),
+            "retention-owner",
+            "strong-retention-owner-password-123",
+        )
+        .await;
+        let other_cookie = login_cookie(
+            app.clone(),
+            "retention-other",
+            "strong-retention-other-password-123",
+        )
+        .await;
+        let (_, preview) =
+            post_retention(app.clone(), owner_cookie.clone(), json!({ "dryRun": true })).await;
+        let token = preview["previewToken"].as_str().unwrap().to_owned();
+
+        let (wrong_actor_status, _) = post_retention(
+            app.clone(),
+            other_cookie,
+            json!({ "dryRun": false, "previewToken": token }),
+        )
+        .await;
+        assert_eq!(wrong_actor_status, StatusCode::CONFLICT);
+
+        let (owner_status, owner_apply) = post_retention(
+            app,
+            owner_cookie,
+            json!({ "dryRun": false, "previewToken": token }),
+        )
+        .await;
+        assert_eq!(owner_status, StatusCode::OK);
+        assert_eq!(owner_apply["applied"], true);
+    }
+
+    #[tokio::test]
+    async fn retention_apply_rejects_expired_preview() {
+        let mut state = test_state("http://127.0.0.1:9".to_owned(), 1024 * 1024);
+        state.retention_previews = Arc::new(RetentionPreviewStore::with_ttl_ms(0));
+        state
+            .auth
+            .create_user(CreateUserInput {
+                username: "retention-expired-admin".to_owned(),
+                email: "retention-expired-admin@modelport.local".to_owned(),
+                password: "strong-retention-expired-password-123".to_owned(),
+                role: Some("admin".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let app = router(state);
+        let cookie = login_cookie(
+            app.clone(),
+            "retention-expired-admin",
+            "strong-retention-expired-password-123",
+        )
+        .await;
+        let (_, preview) =
+            post_retention(app.clone(), cookie.clone(), json!({ "dryRun": true })).await;
+        let token = preview["previewToken"].as_str().unwrap();
+
+        let (status, _) = post_retention(
+            app,
+            cookie,
+            json!({ "dryRun": false, "previewToken": token }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn retention_legal_hold_consumes_preview_without_applying() {
+        let state = test_state("http://127.0.0.1:9".to_owned(), 1024 * 1024);
+        let admin = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "retention-held-admin".to_owned(),
+                email: "retention-held-admin@modelport.local".to_owned(),
+                password: "strong-retention-held-password-123".to_owned(),
+                role: Some("admin".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let evaluated_at_ms = 1_900_000_000_000;
+        let policy = RetentionPolicy {
+            request_detail_days: 30,
+            user_usage_days: 90,
+            audit_days: 395,
+            legal_hold: true,
+            content_persistence: false,
+        };
+        let (token, _) =
+            state
+                .retention_previews
+                .issue(&admin.id, policy, evaluated_at_ms, now_millis());
+        let app = router(state);
+        let cookie = login_cookie(
+            app.clone(),
+            "retention-held-admin",
+            "strong-retention-held-password-123",
+        )
+        .await;
+
+        let (status, held) = post_retention(
+            app.clone(),
+            cookie.clone(),
+            json!({ "dryRun": false, "previewToken": token }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(held["applied"], false);
+        assert_eq!(held["skippedReason"], "legal_hold");
+        assert_eq!(held["evaluatedAtMs"], evaluated_at_ms);
+
+        let (replay_status, _) = post_retention(
+            app,
+            cookie,
+            json!({ "dryRun": false, "previewToken": token }),
+        )
+        .await;
+        assert_eq!(replay_status, StatusCode::CONFLICT);
     }
 
     #[tokio::test]
@@ -4094,6 +5676,445 @@ data: [DONE]
         assert!(body.contains(
             r#"modelport_message_requests_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 1"#
         ));
+    }
+
+    #[tokio::test]
+    async fn non_admin_catalog_is_key_and_team_scoped_and_redacted() {
+        let mut state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
+        let mut config = state.config.snapshot();
+        let mut other = config.providers["mimo"].clone();
+        other.display_name = "Other".to_owned();
+        other.default_model = "other-model".to_owned();
+        other.models = vec!["other-model".to_owned()];
+        other.pricing = Some(crate::pricing::ModelPricing {
+            input_per_million: 1.0,
+            output_per_million: 2.0,
+            cache_read_per_million: 0.5,
+            cache_write_per_million: 1.5,
+        });
+        config.provider_order.push("other".to_owned());
+        config.providers.insert("other".to_owned(), other);
+        config
+            .aliases
+            .insert("fast".to_owned(), "mimo:mimo-v2.5-pro".to_owned());
+        config
+            .aliases
+            .insert("Fast".to_owned(), "mimo:mimo-v2.5-pro".to_owned());
+        config
+            .aliases
+            .insert("other".to_owned(), "other:other-model".to_owned());
+        state.config = Arc::new(RuntimeConfig::new(config));
+
+        let no_key_user = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "catalog-no-key".to_owned(),
+                email: "catalog-no-key@example.com".to_owned(),
+                password: "strong-catalog-no-key-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let scoped_user = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "catalog-scoped".to_owned(),
+                email: "catalog-scoped@example.com".to_owned(),
+                password: "strong-catalog-scoped-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let expired_user = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "catalog-expired".to_owned(),
+                email: "catalog-expired@example.com".to_owned(),
+                password: "strong-catalog-expired-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let admin = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "catalog-admin".to_owned(),
+                email: "catalog-admin@example.com".to_owned(),
+                password: "strong-catalog-admin-password-123".to_owned(),
+                role: Some("admin".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        assert_eq!(no_key_user.role, "user");
+        assert_eq!(admin.role, "admin");
+
+        let team = state
+            .control
+            .upsert_team(UpsertTeamInput {
+                id: Some("team_catalog".to_owned()),
+                name: "Catalog Team".to_owned(),
+                slug: Some("catalog-team".to_owned()),
+                description: None,
+                status: Some("active".to_owned()),
+                daily_limit_usd: None,
+                monthly_limit_usd: None,
+                allowed_models: Some(vec!["fast".to_owned()]),
+                allowed_providers: Some(vec!["mimo".to_owned()]),
+            })
+            .unwrap();
+        let team_id = team["id"].as_str().unwrap().to_owned();
+        let scoped_key = state
+            .control
+            .create_api_key(CreateApiKeyInput {
+                user_id: scoped_user.id.clone(),
+                username: Some(scoped_user.username.clone()),
+                name: "catalog scoped key".to_owned(),
+                principal_type: Some("user".to_owned()),
+                purpose: None,
+                group: None,
+                team_id: Some(team_id),
+                // The key permits both providers, but the team must remain an
+                // independent upper bound. `fast` is deliberately lowercase.
+                allowed_models: Some(vec!["fast".to_owned(), "other-model".to_owned()]),
+                allowed_providers: Some(vec!["mimo".to_owned(), "other".to_owned()]),
+                expires_at: None,
+            })
+            .unwrap();
+        let expires_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .saturating_add(10);
+        state
+            .control
+            .create_api_key(CreateApiKeyInput {
+                user_id: expired_user.id.clone(),
+                username: Some(expired_user.username.clone()),
+                name: "catalog expiring key".to_owned(),
+                principal_type: Some("user".to_owned()),
+                purpose: None,
+                group: None,
+                team_id: None,
+                allowed_models: None,
+                allowed_providers: None,
+                expires_at: Some(expires_at.to_string()),
+            })
+            .unwrap();
+
+        let app = router(state);
+        let no_key_cookie = login_cookie(
+            app.clone(),
+            "catalog-no-key",
+            "strong-catalog-no-key-password-123",
+        )
+        .await;
+        let scoped_cookie = login_cookie(
+            app.clone(),
+            "catalog-scoped",
+            "strong-catalog-scoped-password-123",
+        )
+        .await;
+        let expired_cookie = login_cookie(
+            app.clone(),
+            "catalog-expired",
+            "strong-catalog-expired-password-123",
+        )
+        .await;
+        let admin_cookie = login_cookie(
+            app.clone(),
+            "catalog-admin",
+            "strong-catalog-admin-password-123",
+        )
+        .await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        for uri in ["/admin/providers", "/admin/aliases"] {
+            let no_key = get_console_json(app.clone(), uri, no_key_cookie.clone()).await;
+            assert_eq!(no_key, json!([]), "no-key catalog leaked at {uri}");
+            let expired = get_console_json(app.clone(), uri, expired_cookie.clone()).await;
+            assert_eq!(expired, json!([]), "expired-key catalog leaked at {uri}");
+        }
+
+        let providers =
+            get_console_json(app.clone(), "/admin/providers", scoped_cookie.clone()).await;
+        let providers = providers.as_array().unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0]["id"], "mimo");
+        assert_eq!(providers[0]["models"], json!(["mimo-v2.5-pro"]));
+        assert_eq!(providers[0]["aliases"], json!(["fast"]));
+        assert_catalog_is_redacted(&providers[0]);
+
+        let aliases = get_console_json(app.clone(), "/admin/aliases", scoped_cookie).await;
+        assert_eq!(aliases.as_array().unwrap().len(), 1);
+        assert_eq!(aliases[0]["alias"], "fast");
+        assert_eq!(aliases[0]["resolvedProvider"], "mimo");
+        assert_eq!(aliases[0]["resolvedModel"], "mimo-v2.5-pro");
+        assert_catalog_is_redacted(&aliases);
+        assert!(
+            aliases
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|row| row["alias"] != "Fast")
+        );
+        assert!(
+            aliases
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|row| row["alias"] != "other")
+        );
+
+        let models_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/models")
+                    .extension(ConnectInfo(
+                        "127.0.0.1:48178".parse::<SocketAddr>().unwrap(),
+                    ))
+                    .header("x-api-key", scoped_key.key)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(models_response.status(), StatusCode::OK);
+        let models: Value = serde_json::from_slice(
+            &to_bytes(models_response.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let model_ids = models["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row["id"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(model_ids, vec!["fast"]);
+
+        // Administrators retain the complete management contract.
+        let admin_providers = get_console_json(app, "/admin/providers", admin_cookie).await;
+        assert!(admin_providers[0].get("baseUrl").is_some());
+        assert!(admin_providers[0].get("apiKeyEnv").is_some());
+        assert!(admin_providers[0].get("credentials").is_some());
+        assert!(admin_providers[0].get("pricing").is_some());
+    }
+
+    #[tokio::test]
+    async fn smart_alias_catalog_uses_real_candidates_instead_of_the_default_provider() {
+        let upstream = spawn_openai_upstream(
+            StatusCode::OK,
+            r#"{
+                "id": "chatcmpl_smart_catalog",
+                "choices": [{
+                    "message": {"role": "assistant", "content": "candidate b"},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 2}
+            }"#,
+            "application/json",
+        )
+        .await;
+        let mut state = test_state(upstream, 1024 * 1024);
+        let mut config = state.config.snapshot();
+        let mut candidate_b = config.providers["mimo"].clone();
+        candidate_b.display_name = "Candidate B".to_owned();
+        candidate_b.default_model = "candidate-b-model".to_owned();
+        candidate_b.models = vec!["candidate-b-model".to_owned()];
+        candidate_b.model_prefixes.clear();
+        config.provider_order.push("candidate_b".to_owned());
+        config
+            .providers
+            .insert("candidate_b".to_owned(), candidate_b);
+        config.smart_routing = SmartRoutingConfig {
+            mode: SmartRoutingMode::Active,
+            default_profile: RoutingProfile::Balanced,
+            policy_version: "catalog-candidate-v1".to_owned(),
+            activation_percent: 100,
+            groups: HashMap::from([(
+                "smart-catalog".to_owned(),
+                RouteGroupConfig {
+                    aliases: vec!["smart-model".to_owned()],
+                    default_profile: None,
+                    candidates: vec![RouteCandidateConfig {
+                        provider: "candidate_b".to_owned(),
+                        model: "candidate-b-model".to_owned(),
+                        quality: 1.0,
+                        latency_hint_ms: 1,
+                        enabled: true,
+                    }],
+                },
+            )]),
+        };
+        state.config = Arc::new(RuntimeConfig::new(config));
+
+        let candidate_user = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "smart-candidate-user".to_owned(),
+                email: "smart-candidate-user@example.com".to_owned(),
+                password: "strong-smart-candidate-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let default_user = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "smart-default-user".to_owned(),
+                email: "smart-default-user@example.com".to_owned(),
+                password: "strong-smart-default-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let candidate_key = state
+            .control
+            .create_api_key(CreateApiKeyInput {
+                user_id: candidate_user.id,
+                username: Some(candidate_user.username),
+                name: "candidate B only".to_owned(),
+                principal_type: Some("user".to_owned()),
+                purpose: None,
+                group: None,
+                team_id: None,
+                allowed_models: Some(vec!["smart-model".to_owned()]),
+                allowed_providers: Some(vec!["candidate_b".to_owned()]),
+                expires_at: None,
+            })
+            .unwrap();
+        let default_key = state
+            .control
+            .create_api_key(CreateApiKeyInput {
+                user_id: default_user.id,
+                username: Some(default_user.username),
+                name: "default A only".to_owned(),
+                principal_type: Some("user".to_owned()),
+                purpose: None,
+                group: None,
+                team_id: None,
+                allowed_models: Some(vec!["smart-model".to_owned()]),
+                allowed_providers: Some(vec!["mimo".to_owned()]),
+                expires_at: None,
+            })
+            .unwrap();
+
+        let app = router(state);
+        let candidate_cookie = login_cookie(
+            app.clone(),
+            "smart-candidate-user",
+            "strong-smart-candidate-password-123",
+        )
+        .await;
+        let default_cookie = login_cookie(
+            app.clone(),
+            "smart-default-user",
+            "strong-smart-default-password-123",
+        )
+        .await;
+
+        let candidate_models = get_client_models(app.clone(), &candidate_key.key).await;
+        assert!(client_model_ids(&candidate_models).contains(&"smart-model"));
+        let candidate_aliases =
+            get_console_json(app.clone(), "/admin/aliases", candidate_cookie).await;
+        assert_eq!(candidate_aliases[0]["alias"], "smart-model");
+        assert_eq!(candidate_aliases[0]["resolvedProvider"], "modelport-router");
+
+        // The logical alias happens to resolve through the default provider in
+        // static routing. That must not make it visible when every real smart
+        // candidate is outside this key's provider policy.
+        let default_models = get_client_models(app.clone(), &default_key.key).await;
+        assert!(!client_model_ids(&default_models).contains(&"smart-model"));
+        assert_eq!(
+            get_console_json(app.clone(), "/admin/aliases", default_cookie).await,
+            json!([])
+        );
+
+        let mut request = message_body(false);
+        request["model"] = json!("smart-model");
+        let (status, body) = post_message_with_key(app, &candidate_key.key, request).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap()["content"][0]["text"],
+            "candidate b"
+        );
+    }
+
+    #[tokio::test]
+    async fn catalogs_respect_credential_pool_route_readiness() {
+        const PRIMARY_ENV: &str = "MODELPORT_CATALOG_POOL_PRIMARY_UNSET";
+        const SECONDARY_ENV: &str = "MODELPORT_CATALOG_POOL_SECONDARY_READY";
+        unsafe {
+            env::remove_var(PRIMARY_ENV);
+            env::set_var(SECONDARY_ENV, "secondary-key");
+        }
+
+        let state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
+        let user = state
+            .auth
+            .create_user(CreateUserInput {
+                username: "credential-catalog-user".to_owned(),
+                email: "credential-catalog-user@example.com".to_owned(),
+                password: "strong-credential-catalog-password-123".to_owned(),
+                role: Some("user".to_owned()),
+                status: Some("active".to_owned()),
+            })
+            .unwrap();
+        let key = create_test_api_key(&state, &user, "credential catalog");
+        state
+            .control
+            .upsert_provider_credential(ProviderCredentialRecord {
+                id: "catalog-primary".to_owned(),
+                provider_id: "mimo".to_owned(),
+                name: "Unavailable primary".to_owned(),
+                api_key_env: PRIMARY_ENV.to_owned(),
+                base_url: None,
+                status: "active".to_owned(),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+        state
+            .control
+            .upsert_provider_credential(ProviderCredentialRecord {
+                id: "catalog-secondary".to_owned(),
+                provider_id: "mimo".to_owned(),
+                name: "Ready secondary".to_owned(),
+                api_key_env: SECONDARY_ENV.to_owned(),
+                base_url: None,
+                status: "active".to_owned(),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+
+        let app = router(state);
+        let cookie = login_cookie(
+            app.clone(),
+            "credential-catalog-user",
+            "strong-credential-catalog-password-123",
+        )
+        .await;
+        let ready_models = get_client_models(app.clone(), &key.key).await;
+        assert!(client_model_ids(&ready_models).contains(&"mimo:mimo-v2.5-pro"));
+        let ready_providers =
+            get_console_json(app.clone(), "/admin/providers", cookie.clone()).await;
+        assert_eq!(ready_providers[0]["id"], "mimo");
+
+        // Once the only usable pool member disappears, the static key on the
+        // provider must not override the explicit (now-unready) pool state.
+        unsafe {
+            env::remove_var(SECONDARY_ENV);
+        }
+        let unready_models = get_client_models(app.clone(), &key.key).await;
+        assert!(!client_model_ids(&unready_models).contains(&"mimo:mimo-v2.5-pro"));
+        assert_eq!(
+            get_console_json(app, "/admin/providers", cookie).await,
+            json!([])
+        );
     }
 
     #[tokio::test]
@@ -4262,12 +6283,16 @@ data: [DONE]
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["success"], json!(true));
         assert_eq!(body["modelCount"], json!(2));
+        assert_eq!(body["testedCredentialId"], Value::Null);
 
         let models_response = app
             .oneshot(
                 Request::builder()
                     .method("GET")
                     .uri("/v1/models")
+                    .extension(ConnectInfo(
+                        "127.0.0.1:48178".parse::<SocketAddr>().unwrap(),
+                    ))
                     .header("x-api-key", CLIENT_TOKEN)
                     .body(Body::empty())
                     .unwrap(),
@@ -4286,6 +6311,136 @@ data: [DONE]
             .filter_map(|row| row.get("id").and_then(Value::as_str))
             .collect::<Vec<_>>();
         assert!(!ids.contains(&"mimo:mimo-v2.6-pro"));
+    }
+
+    #[tokio::test]
+    async fn admin_provider_test_uses_failover_pool_credential_and_records_its_id() {
+        const PRIMARY_ENV: &str = "MODELPORT_PROBE_FAILOVER_PRIMARY_UNSET";
+        const SECONDARY_ENV: &str = "MODELPORT_PROBE_FAILOVER_SECONDARY";
+        unsafe {
+            env::remove_var(PRIMARY_ENV);
+            env::set_var(SECONDARY_ENV, "probe-failover-secondary-key");
+        }
+        let (upstream, hits) =
+            spawn_credential_probe_upstream("Bearer probe-failover-secondary-key").await;
+        let state = test_state_with_admin(upstream, 1024 * 1024);
+        upsert_probe_credential(&state, "probe-primary", PRIMARY_ENV);
+        upsert_probe_credential(&state, "probe-secondary", SECONDARY_ENV);
+        let control = state.control.clone();
+        let app = router(state);
+        let cookie = login_cookie(app.clone(), "admin", "strong-password-123").await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/settings/test-provider")
+                    .header("x-modelport-csrf", "1")
+                    .header(COOKIE, cookie)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({"providerId": "mimo"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["success"], true);
+        assert_eq!(body["testedCredentialId"], "probe-secondary");
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+
+        let test_rows = control.provider_test_rows();
+        assert_eq!(test_rows["mimo"]["testedCredentialId"], "probe-secondary");
+        let health_rows = control.provider_credential_health_rows();
+        assert_eq!(health_rows["mimo"]["probe-secondary"]["status"], "healthy");
+
+        unsafe {
+            env::remove_var(SECONDARY_ENV);
+        }
+    }
+
+    #[tokio::test]
+    async fn admin_provider_discovery_uses_round_robin_pool_credential() {
+        const PRIMARY_ENV: &str = "MODELPORT_PROBE_ROUND_ROBIN_PRIMARY_UNSET";
+        const SECONDARY_ENV: &str = "MODELPORT_PROBE_ROUND_ROBIN_SECONDARY";
+        unsafe {
+            env::remove_var(PRIMARY_ENV);
+            env::set_var(SECONDARY_ENV, "probe-round-robin-secondary-key");
+        }
+        let (upstream, hits) =
+            spawn_credential_probe_upstream("Bearer probe-round-robin-secondary-key").await;
+        let state = test_state_with_admin(upstream, 1024 * 1024);
+        upsert_probe_credential(&state, "round-robin-primary", PRIMARY_ENV);
+        upsert_probe_credential(&state, "round-robin-secondary", SECONDARY_ENV);
+        state
+            .control
+            .set_provider_credential_pool_mode("mimo", "round_robin")
+            .unwrap();
+        let control = state.control.clone();
+        let app = router(state);
+        let cookie = login_cookie(app.clone(), "admin", "strong-password-123").await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/providers/mimo/models")
+                    .header("x-modelport-csrf", "1")
+                    .header(COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["success"], true);
+        assert_eq!(body["testedCredentialId"], "round-robin-secondary");
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            control.provider_test_rows()["mimo"]["testedCredentialId"],
+            "round-robin-secondary"
+        );
+
+        unsafe {
+            env::remove_var(SECONDARY_ENV);
+        }
+    }
+
+    #[tokio::test]
+    async fn management_probe_fails_closed_for_unusable_pool_but_static_provider_still_works() {
+        const MISSING_ENV: &str = "MODELPORT_PROBE_POOL_ALL_UNSET";
+        unsafe {
+            env::remove_var(MISSING_ENV);
+        }
+        let (upstream, hits) = spawn_credential_probe_upstream("Bearer upstream-key").await;
+        let pooled_state = test_state(upstream.clone(), 1024 * 1024);
+        upsert_probe_credential(&pooled_state, "missing-pool-key", MISSING_ENV);
+        pooled_state
+            .control
+            .set_provider_credential_pool_mode("mimo", "round_robin")
+            .unwrap();
+        let pooled_provider = management_config(&pooled_state).providers["mimo"].clone();
+
+        let pooled_probe = run_provider_management_probe(&pooled_state, "mimo", &pooled_provider)
+            .await
+            .unwrap();
+        assert_eq!(pooled_probe.tested_credential_id, None);
+        assert!(pooled_probe.result.is_err());
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+
+        let static_state = test_state(upstream, 1024 * 1024);
+        let static_provider = management_config(&static_state).providers["mimo"].clone();
+        let static_probe = run_provider_management_probe(&static_state, "mimo", &static_provider)
+            .await
+            .unwrap();
+        assert_eq!(static_probe.tested_credential_id, None);
+        assert_eq!(static_probe.result.unwrap(), vec!["mimo-v2.5-pro"]);
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -4873,6 +7028,94 @@ data: [DONE]
     }
 
     #[tokio::test]
+    async fn discover_anthropic_models_records_only_real_network_probe_success() {
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let handler_hits = hits.clone();
+        let app = Router::new().route(
+            "/v1/messages",
+            post(move |Json(body): Json<Value>| {
+                let hits = handler_hits.clone();
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(body["max_tokens"], json!(1));
+                    assert_eq!(body["messages"][0]["content"], json!("Reply OK."));
+                    Json(json!({
+                        "id": "msg_probe",
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "OK"}],
+                    }))
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let state = test_state("http://127.0.0.1:1/v1".to_owned(), 1024 * 1024);
+        let provider = ProviderConfig {
+            display_name: "Anthropic-compatible".to_owned(),
+            protocol: ProviderProtocol::Anthropic,
+            base_url: format!("http://{address}"),
+            api_key_env: Some("ANTHROPIC_API_KEY".to_owned()),
+            api_key: Some("test-secret".to_owned()),
+            api_key_required: true,
+            default_model: "claude-test".to_owned(),
+            models: vec!["claude-test".to_owned()],
+            model_prefixes: vec!["claude-".to_owned()],
+            passthrough_unknown_models: false,
+            max_tokens_field: MaxTokensField::MaxTokens,
+            deduplicate_stream_text: false,
+            buffer_stream_text: false,
+            fidelity_mode: FidelityMode::Strict,
+            tool_use: ToolUseConfig::default_for_provider(
+                "anthropic",
+                ProviderProtocol::Anthropic,
+                false,
+            ),
+            reasoning: Default::default(),
+            sampling: Default::default(),
+            token_counting: Default::default(),
+            pricing: None,
+        };
+
+        let models = discover_provider_models(&state, "local_anthropic", &provider)
+            .await
+            .unwrap();
+
+        assert_eq!(models, vec!["claude-test"]);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn discover_openai_models_does_not_treat_catalog_only_as_production_ready() {
+        let app = Router::new()
+            .route(
+                "/v1/models",
+                get(|| async { Json(json!({"data": [{"id": "mimo-v2.5-pro"}]})) }),
+            )
+            .route(
+                "/v1/chat/completions",
+                post(|| async {
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({"error": {"message": "probe rejected"}})),
+                    )
+                }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let state = test_state(format!("http://{address}/v1"), 1024 * 1024);
+        let provider = state.config.snapshot().providers["mimo"].clone();
+
+        let error = discover_provider_models(&state, "mimo", &provider)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, AppError::Upstream { status: 401, .. }));
+    }
+
+    #[tokio::test]
     async fn discover_cpa_claude_models_through_shared_compatibility_catalog() {
         let upstream = spawn_openai_models_upstream(
             r#"{"data":[{"id":"claude-sonnet-4-6"},{"id":"claude-opus-4-7"}]}"#,
@@ -5060,9 +7303,31 @@ data: [DONE]
         .await;
         let state = test_state(upstream, 1024 * 1024);
         let ledger = state.ledger.clone();
-        let (status, _) = post_message(router(state), message_body(false)).await;
+        let response =
+            post_message_response(router(state), CLIENT_TOKEN, message_body(false)).await;
+        let status = response.status();
+        let response_request_id = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .unwrap()
+            .to_owned();
 
         assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            response.headers()["x-modelport-logical-model"],
+            "mimo-v2.5-pro"
+        );
+        assert_eq!(response.headers()["x-modelport-resolved-provider"], "mimo");
+        assert_eq!(
+            response.headers()["x-modelport-resolved-model"],
+            "mimo-v2.5-pro"
+        );
+        assert_eq!(
+            response.headers()["x-modelport-routing-policy"],
+            "local_strict"
+        );
+        assert_eq!(response.headers()["x-modelport-cloud-egress"], "false");
         let rows = wait_for_usage_rows(&ledger, 1).await;
         assert_eq!(rows.len(), 1);
         assert!(
@@ -5070,12 +7335,45 @@ data: [DONE]
                 .as_str()
                 .is_some_and(|request_id| !request_id.is_empty())
         );
+        assert_eq!(rows[0]["requestId"], response_request_id);
         assert!(
             rows[0]["attemptId"]
                 .as_str()
                 .is_some_and(|attempt_id| attempt_id.starts_with("att_"))
         );
         assert_eq!(rows[0]["terminalReason"], "completed");
+    }
+
+    #[tokio::test]
+    async fn error_contract_includes_safe_request_id_retryability_and_action() {
+        let app = router(test_state("http://127.0.0.1:9".to_owned(), 1024 * 1024));
+        let response = post_message_response(
+            app,
+            CLIENT_TOKEN,
+            json!({
+                "model": "mimo-v2.5-pro",
+                "messages": [{"role": "user", "content": "hello"}]
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let request_id = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .unwrap()
+            .to_owned();
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["error"]["code"], "invalid_request");
+        assert_eq!(body["error"]["request_id"], request_id);
+        assert_eq!(body["error"]["retryable"], false);
+        assert!(
+            body["error"]["action"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
     }
 
     #[tokio::test]
@@ -5461,6 +7759,142 @@ data: {"type":"message_stop"}
         post_message_with_key(app, CLIENT_TOKEN, body).await
     }
 
+    async fn login_cookie(app: Router, username: &str, password: &str) -> HeaderValue {
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/auth/login")
+                    .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+                    .body(Body::from(
+                        json!({ "username": username, "password": password }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        response
+            .headers()
+            .get(SET_COOKIE)
+            .expect("login should set session cookie")
+            .clone()
+    }
+
+    async fn post_retention(app: Router, cookie: HeaderValue, input: Value) -> (StatusCode, Value) {
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/retention/run")
+                    .header(COOKIE, cookie)
+                    .header("x-modelport-csrf", "1")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(input.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        (status, body)
+    }
+
+    async fn get_console_json(app: Router, uri: &str, cookie: HeaderValue) -> Value {
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(uri)
+                    .header(COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "GET {uri}");
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
+    }
+
+    async fn get_client_models(app: Router, key: &str) -> Value {
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/models")
+                    .extension(ConnectInfo(
+                        "127.0.0.1:48178".parse::<SocketAddr>().unwrap(),
+                    ))
+                    .header("x-api-key", key)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
+    }
+
+    fn client_model_ids(models: &Value) -> Vec<&str> {
+        models["data"]
+            .as_array()
+            .expect("model catalog data")
+            .iter()
+            .filter_map(|row| row["id"].as_str())
+            .collect()
+    }
+
+    fn assert_catalog_is_redacted(value: &Value) {
+        match value {
+            Value::Array(values) => values.iter().for_each(assert_catalog_is_redacted),
+            Value::Object(object) => {
+                for (key, value) in object {
+                    let normalized = key.to_ascii_lowercase();
+                    assert!(
+                        !matches!(
+                            normalized.as_str(),
+                            "baseurl"
+                                | "apikeyenv"
+                                | "credentials"
+                                | "health"
+                                | "error"
+                                | "lasterror"
+                                | "errormessage"
+                                | "pricing"
+                        ) && !normalized.contains("path"),
+                        "sensitive catalog field {key} was returned"
+                    );
+                    assert_catalog_is_redacted(value);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn create_test_api_key(
+        state: &AppState,
+        user: &PublicUser,
+        name: &str,
+    ) -> crate::control::CreatedApiKey {
+        state
+            .control
+            .create_api_key(CreateApiKeyInput {
+                user_id: user.id.clone(),
+                username: Some(user.username.clone()),
+                name: name.to_owned(),
+                principal_type: Some("user".to_owned()),
+                purpose: None,
+                group: None,
+                team_id: None,
+                allowed_models: None,
+                allowed_providers: None,
+                expires_at: None,
+            })
+            .unwrap()
+    }
+
     async fn wait_for_usage_rows(
         ledger: &EnterpriseLedger,
         expected: usize,
@@ -5650,12 +8084,33 @@ data: {"type":"message_stop"}
     }
 
     async fn spawn_openai_models_upstream(body: &'static str) -> String {
-        let app = Router::new().route(
-            "/v1/models",
-            get(
-                move || async move { (StatusCode::OK, [(CONTENT_TYPE, "application/json")], body) },
-            ),
-        );
+        let app =
+            Router::new()
+                .route(
+                    "/v1/models",
+                    get(move || async move {
+                        (StatusCode::OK, [(CONTENT_TYPE, "application/json")], body)
+                    }),
+                )
+                .route(
+                    "/v1/chat/completions",
+                    post(|| async {
+                        Json(json!({
+                            "id": "chatcmpl_probe",
+                            "choices": [{"message": {"role": "assistant", "content": "OK"}}],
+                        }))
+                    }),
+                )
+                .route(
+                    "/v1/messages",
+                    post(|| async {
+                        Json(json!({
+                            "id": "msg_probe",
+                            "type": "message",
+                            "content": [{"type": "text", "text": "OK"}],
+                        }))
+                    }),
+                );
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -5663,6 +8118,114 @@ data: {"type":"message_stop"}
         });
 
         format!("http://{addr}/v1")
+    }
+
+    async fn spawn_credential_probe_upstream(
+        expected_bearer: &'static str,
+    ) -> (String, Arc<AtomicUsize>) {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let model_hits = hits.clone();
+        let chat_hits = hits.clone();
+        let app = Router::new()
+            .route(
+                "/v1/models",
+                get(move |headers: HeaderMap| async move {
+                    model_hits.fetch_add(1, Ordering::SeqCst);
+                    if headers
+                        .get("authorization")
+                        .and_then(|value| value.to_str().ok())
+                        != Some(expected_bearer)
+                    {
+                        return (
+                            StatusCode::UNAUTHORIZED,
+                            Json(json!({"error": {"message": "wrong test credential"}})),
+                        );
+                    }
+                    (
+                        StatusCode::OK,
+                        Json(json!({"data": [{"id": "mimo-v2.5-pro"}]})),
+                    )
+                }),
+            )
+            .route(
+                "/v1/chat/completions",
+                post(move |headers: HeaderMap| async move {
+                    chat_hits.fetch_add(1, Ordering::SeqCst);
+                    if headers
+                        .get("authorization")
+                        .and_then(|value| value.to_str().ok())
+                        != Some(expected_bearer)
+                    {
+                        return (
+                            StatusCode::UNAUTHORIZED,
+                            Json(json!({"error": {"message": "wrong test credential"}})),
+                        );
+                    }
+                    (
+                        StatusCode::OK,
+                        Json(json!({
+                            "id": "chatcmpl_probe",
+                            "choices": [{"message": {"role": "assistant", "content": "OK"}}],
+                        })),
+                    )
+                }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        (format!("http://{addr}/v1"), hits)
+    }
+
+    fn upsert_probe_credential(state: &AppState, credential_id: &str, api_key_env: &str) {
+        state
+            .control
+            .upsert_provider_credential(ProviderCredentialRecord {
+                id: credential_id.to_owned(),
+                provider_id: "mimo".to_owned(),
+                name: credential_id.to_owned(),
+                api_key_env: api_key_env.to_owned(),
+                base_url: None,
+                status: "active".to_owned(),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn dual_approval_is_optional_for_small_team_mode_and_required_when_enabled() {
+        let mut state = test_state("http://127.0.0.1:9/v1".to_owned(), 1024);
+        let headers = HeaderMap::new();
+        let payload = json!({ "role": "user" });
+
+        assert_eq!(
+            require_high_risk_change(
+                &state,
+                &headers,
+                "identity.permission",
+                "user:new:test-user",
+                &payload,
+            )
+            .unwrap(),
+            None,
+        );
+
+        Arc::get_mut(&mut state.security)
+            .expect("test security policy should be uniquely owned")
+            .require_dual_approval = true;
+        assert!(matches!(
+            require_high_risk_change(
+                &state,
+                &headers,
+                "identity.permission",
+                "user:new:test-user",
+                &payload,
+            ),
+            Err(AppError::Forbidden(_))
+        ));
     }
 
     fn test_state(base_url: String, max_request_body_bytes: usize) -> AppState {
@@ -5761,6 +8324,8 @@ data: {"type":"message_stop"}
             ),
             ledger: Arc::new(EnterpriseLedger::memory()),
             finalizers: Arc::new(FinalizationTracker::default()),
+            draining: Arc::new(AtomicBool::new(false)),
+            retention_previews: Arc::new(RetentionPreviewStore::default()),
         }
     }
 
@@ -5856,6 +8421,8 @@ data: {"type":"message_stop"}
             ),
             ledger: Arc::new(EnterpriseLedger::memory()),
             finalizers: Arc::new(FinalizationTracker::default()),
+            draining: Arc::new(AtomicBool::new(false)),
+            retention_previews: Arc::new(RetentionPreviewStore::default()),
         }
     }
 

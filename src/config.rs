@@ -622,6 +622,89 @@ pub fn validate_provider_base_url_for_request(
         .map_err(AppError::InvalidRequest)
 }
 
+/// A DNS answer set that has been checked against the Provider URL policy and
+/// can be bound to the subsequent HTTP connection. Keeping the original DNS
+/// name lets reqwest preserve the Host header and TLS SNI while preventing a
+/// second, attacker-controlled resolution from changing the destination.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProviderEndpointPin {
+    pub(crate) dns_name: Option<String>,
+    pub(crate) addresses: Vec<SocketAddr>,
+}
+
+/// Resolves a remote provider immediately before an outbound request and
+/// rejects every answer set containing a non-public or special-use address.
+/// Literal-only checks are insufficient for hostnames such as
+/// attacker-controlled DNS records.
+pub async fn validate_provider_base_url_dns_for_request(
+    provider_id: &str,
+    base_url: &str,
+    allow_private_provider_urls: bool,
+) -> Result<(), AppError> {
+    resolve_provider_base_url_for_connection(provider_id, base_url, allow_private_provider_urls)
+        .await
+        .map(|_| ())
+}
+
+pub(crate) async fn resolve_provider_base_url_for_connection(
+    provider_id: &str,
+    base_url: &str,
+    allow_private_provider_urls: bool,
+) -> Result<ProviderEndpointPin, AppError> {
+    validate_provider_base_url_for_request(provider_id, base_url, allow_private_provider_urls)?;
+
+    let url = Url::parse(base_url)
+        .map_err(|_| AppError::InvalidRequest("provider endpoint URL is invalid".to_owned()))?;
+    let dns_host = url
+        .host_str()
+        .ok_or_else(|| AppError::InvalidRequest("provider endpoint host is missing".to_owned()))?
+        .trim_matches(['[', ']']);
+    let host = dns_host.trim_end_matches('.');
+    let port = url.port_or_known_default().ok_or_else(|| {
+        AppError::InvalidRequest("provider endpoint port could not be determined".to_owned())
+    })?;
+    let literal_ip = host.parse::<IpAddr>().ok();
+    let mut addresses = if let Some(ip) = literal_ip {
+        vec![SocketAddr::new(ip, port)]
+    } else {
+        tokio::net::lookup_host((host, port))
+            .await
+            .map_err(|_| AppError::Transport("provider endpoint DNS resolution failed".to_owned()))?
+            .collect::<Vec<_>>()
+    };
+    if addresses.is_empty() {
+        return Err(AppError::Transport(
+            "provider endpoint DNS returned no addresses".to_owned(),
+        ));
+    }
+    addresses.sort_unstable();
+    addresses.dedup();
+
+    let private_addresses_allowed = allow_private_provider_urls
+        || provider_allows_loopback_base_url(provider_id)
+        || provider_allows_trusted_internal_http(provider_id, host);
+    if !private_addresses_allowed {
+        validate_provider_resolved_ips(addresses.iter().map(|address| address.ip()))?;
+    }
+
+    Ok(ProviderEndpointPin {
+        dns_name: literal_ip.is_none().then(|| dns_host.to_owned()),
+        addresses,
+    })
+}
+
+fn validate_provider_resolved_ips(
+    addresses: impl IntoIterator<Item = IpAddr>,
+) -> Result<(), AppError> {
+    if addresses.into_iter().any(private_or_metadata_ip) {
+        Err(AppError::Forbidden(
+            "provider endpoint DNS resolved to a non-public or special-use address".to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct FileConfig {
     server: Option<ServerSection>,
@@ -2820,7 +2903,7 @@ fn validate_provider_base_url_policy(
         }
         if private_or_metadata_ip(ip) {
             return Err(format!(
-                "private, link-local, metadata, or unspecified IP `{ip}` requires MODELPORT_ALLOW_PRIVATE_PROVIDER_URLS=1"
+                "non-public or special-use IP `{ip}` requires MODELPORT_ALLOW_PRIVATE_PROVIDER_URLS=1"
             ));
         }
     }
@@ -2883,32 +2966,53 @@ fn provider_allows_trusted_internal_http(provider_id: &str, host: &str) -> bool 
 fn private_or_metadata_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => private_or_metadata_ipv4(ip),
-        IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or_else(
-            || {
-                ip.is_loopback()
-                    || ip.is_unspecified()
-                    || ipv6_is_unique_local(ip)
-                    || ipv6_is_unicast_link_local(ip)
-            },
-            private_or_metadata_ipv4,
-        ),
+        IpAddr::V6(ip) => ip
+            .to_ipv4_mapped()
+            .map_or_else(|| special_use_ipv6(ip), private_or_metadata_ipv4),
     }
 }
 
 fn private_or_metadata_ipv4(ip: std::net::Ipv4Addr) -> bool {
-    ip.is_private()
-        || ip.is_loopback()
-        || ip.is_link_local()
-        || ip.is_unspecified()
-        || ip.octets() == [169, 254, 169, 254]
+    let [first, second, third, _] = ip.octets();
+    first == 0
+        || first == 10
+        || (first == 100 && (64..=127).contains(&second))
+        || first == 127
+        || (first == 169 && second == 254)
+        || (first == 172 && (16..=31).contains(&second))
+        || (first == 192 && second == 0 && third == 0)
+        || (first == 192 && second == 0 && third == 2)
+        || (first == 192 && second == 88 && third == 99)
+        || (first == 192 && second == 168)
+        || (first == 198 && matches!(second, 18 | 19))
+        || (first == 198 && second == 51 && third == 100)
+        || (first == 203 && second == 0 && third == 113)
+        || first >= 224
 }
 
-fn ipv6_is_unique_local(ip: std::net::Ipv6Addr) -> bool {
-    (ip.segments()[0] & 0xfe00) == 0xfc00
-}
+fn special_use_ipv6(ip: std::net::Ipv6Addr) -> bool {
+    let segments = ip.segments();
+    let global_unicast = (segments[0] & 0xe000) == 0x2000;
+    let ietf_special_use = segments[0] == 0x2001 && (segments[1] & 0xfe00) == 0;
+    let documentation = (segments[0] == 0x2001 && segments[1] == 0x0db8)
+        || (segments[0] == 0x3fff && (segments[1] & 0xf000) == 0);
 
-fn ipv6_is_unicast_link_local(ip: std::net::Ipv6Addr) -> bool {
-    (ip.segments()[0] & 0xffc0) == 0xfe80
+    // IPv4-compatible, NAT64 and other translation prefixes can otherwise
+    // smuggle a private IPv4 target through an apparently IPv6 DNS answer.
+    let ipv4_compatible = segments[..6].iter().all(|segment| *segment == 0);
+    let nat64_well_known = segments[0] == 0x0064
+        && segments[1] == 0xff9b
+        && segments[2..6].iter().all(|segment| *segment == 0);
+    let nat64_local = segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 1;
+
+    !global_unicast
+        || ietf_special_use
+        || documentation
+        || segments[0] == 0x2002
+        || segments[0] == 0x5f00
+        || ipv4_compatible
+        || nat64_well_known
+        || nat64_local
 }
 
 pub(crate) fn is_placeholder_value(value: &str) -> bool {
@@ -3248,7 +3352,7 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(err.to_string().contains("private"));
+        assert!(err.to_string().contains("non-public"));
     }
 
     #[test]
@@ -3260,7 +3364,70 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(err.to_string().contains("private"));
+        assert!(err.to_string().contains("non-public"));
+    }
+
+    #[test]
+    fn provider_dns_and_literal_url_policies_reject_special_use_addresses() {
+        let special_use_addresses = [
+            "0.0.0.1",
+            "10.0.0.1",
+            "100.64.0.1",
+            "100.100.100.200",
+            "127.0.0.1",
+            "169.254.169.254",
+            "172.16.0.1",
+            "192.0.0.9",
+            "192.0.2.1",
+            "192.88.99.1",
+            "192.168.0.1",
+            "198.18.0.1",
+            "198.51.100.1",
+            "203.0.113.1",
+            "224.0.0.1",
+            "255.255.255.255",
+            "::",
+            "::1",
+            "::ffff:127.0.0.1",
+            "64:ff9b::a00:1",
+            "64:ff9b:1::a00:1",
+            "100::1",
+            "2001::1",
+            "2001:db8::1",
+            "2002:a00:1::",
+            "3fff::1",
+            "5f00::1",
+            "fc00::1",
+            "fe80::1",
+            "fec0::1",
+            "ff02::1",
+        ];
+        for address in special_use_addresses {
+            let ip = address.parse::<IpAddr>().unwrap();
+            assert!(
+                matches!(
+                    validate_provider_resolved_ips([ip]),
+                    Err(AppError::Forbidden(_))
+                ),
+                "DNS policy accepted special-use address {address}"
+            );
+
+            let url = match ip {
+                IpAddr::V4(_) => format!("https://{address}/v1"),
+                IpAddr::V6(_) => format!("https://[{address}]/v1"),
+            };
+            assert!(
+                validate_provider_base_url_for_request("deepseek", &url, false).is_err(),
+                "literal URL policy accepted special-use address {address}"
+            );
+        }
+
+        validate_provider_resolved_ips([
+            "8.8.8.8".parse().unwrap(),
+            "192.31.196.1".parse().unwrap(),
+            "2606:4700:4700::1111".parse().unwrap(),
+        ])
+        .unwrap();
     }
 
     #[test]

@@ -702,7 +702,8 @@ impl AuthStore {
         }
 
         let previous = inner.clone();
-        let should_clear_sessions = password_hash.is_some() || next_status != "active";
+        let should_clear_sessions =
+            password_hash.is_some() || next_status != "active" || next_role != existing.role;
         let public = {
             let Some(user) = inner.users.get_mut(user_id) else {
                 return Err(AppError::InvalidRequest("user not found".to_owned()));

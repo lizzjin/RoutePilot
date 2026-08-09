@@ -362,6 +362,7 @@ direct path and cannot govern its usage or balance.
 | `MODELPORT_ADMIN_EMAIL` | `admin@modelport.local` | First-admin bootstrap email. |
 | `MODELPORT_ADMIN_SESSION_TTL_SECONDS` | `43200` | Dashboard session lifetime. |
 | `MODELPORT_ADMIN_COOKIE_SECURE` | off | Add `Secure` to the dashboard cookie. Set to `1` behind HTTPS. |
+| `MODELPORT_REQUIRE_DUAL_APPROVAL` | off; always on in enterprise mode | Require an approved change request from two distinct administrators before high-risk identity, Provider, model, or hard-budget writes. Small-Team mode otherwise relies on the administrator session, CSRF protection, and audit trail so a one-admin first install remains operable. |
 | `MODELPORT_OIDC_ISSUER` | unset | OIDC issuer discovery URL. OIDC console sign-in stays disabled when no OIDC values are configured. |
 | `MODELPORT_OIDC_CLIENT_ID` | unset | OIDC client identifier; required with issuer and redirect URI when OIDC is enabled. |
 | `MODELPORT_OIDC_CLIENT_SECRET` | unset | Optional confidential-client secret. Leave unset only when the identity provider accepts the supported public-client code exchange. |
@@ -381,6 +382,10 @@ direct path and cannot govern its usage or balance.
 | `MODELPORT_LEDGER_LEASE_TTL_SECS` | `300` | Lifetime of a request/attempt ownership lease; minimum 30 seconds. Active requests renew at one-third of this interval. |
 | `MODELPORT_LEDGER_RECONCILE_INTERVAL_SECS` | `60` | Interval for reclaiming expired `started` rows; minimum 5 seconds and strictly smaller than the lease TTL. |
 | `MODELPORT_FINALIZATION_DRAIN_TIMEOUT_SECONDS` | `30` | Graceful-shutdown deadline for tracked streaming ledger finalizers; valid range `1..300`. |
+| `MODELPORT_REQUEST_DETAIL_RETENTION_DAYS` | `30` | Age after which an explicit admin retention apply redacts request identity/network/error/idempotency details, redacts mutable Provider-attempt details, and removes routing-decision evidence. |
+| `MODELPORT_USER_USAGE_RETENTION_DAYS` | `90` | Age after which an explicit retention apply de-identifies user-level usage rows while preserving required aggregate/budget evidence. Must not be shorter than request-detail retention. |
+| `MODELPORT_AUDIT_RETENTION_DAYS` | `395` | Age after which an explicit retention apply removes ordinary governance audit events. Must not be shorter than user-usage retention; immutable budget events remain. |
+| `MODELPORT_RETENTION_LEGAL_HOLD` | off | When `1`, retention dry-run still previews but an apply returns `applied=false` and changes no retained data. Restart required. |
 | `MODELPORT_ENTERPRISE_MODE` | off | Fail-closed production profile. Requires database TLS `verify-full`, secure admin cookies, dashboard-issued control API keys, HTTPS-only allowed origins, explicit trusted proxies, and enabled CSRF protection. |
 
 Bootstrap variables do not overwrite existing users. Dashboard sessions are
@@ -480,9 +485,13 @@ network just to make forwarding work. A single-hop proxy should overwrite XFF
 with its observed `$remote_addr` instead of preserving an untrusted incoming
 chain.
 
-Provider URL filtering does not currently resolve hostnames and reject private
-DNS answers. Use an outbound firewall or allowlist when untrusted administrators
-can edit provider URLs.
+Before every outbound Provider request, ModelPort resolves the hostname, rejects
+an answer set containing a private, link-local, metadata, or unspecified address
+unless that Provider is explicitly allowed to use private networking, and pins
+the original hostname to the validated addresses for the connection. Redirects
+and environment HTTP proxies are disabled so they cannot trigger an independent
+destination lookup. Keep an outbound firewall or allowlist as defense in depth,
+especially when administrators may approve private Provider URLs.
 
 Provider base URLs must be clean HTTP(S) API bases. Validation rejects userinfo,
 query strings, and fragments; the transport also refuses redirects. Do not put
@@ -505,7 +514,7 @@ separately by `MODELPORT_ALLOW_PRIVATE_PROVIDER_URLS`.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `MODELPORT_HTTP_CONNECT_TIMEOUT_SECS` | `10` | Upstream connect timeout. |
-| `MODELPORT_HTTP_REQUEST_TIMEOUT_SECS` | `600` | Complete non-stream request timeout; for SSE, only the `send()`/response-header handshake timeout. |
+| `MODELPORT_HTTP_REQUEST_TIMEOUT_SECS` | `600` | Complete non-stream timeout and total upstream SSE lifecycle timeout, including connection, response headers, and event-body reads. |
 | `MODELPORT_HTTP_STREAM_IDLE_TIMEOUT_SECS` | `300` | Maximum silence between upstream stream chunks after the handshake. |
 | `MODELPORT_HTTP_MAX_RESPONSE_BYTES` | `33554432` | Maximum non-stream/error body accepted from upstream. |
 | `MODELPORT_HTTP_SSE_MAX_LINE_BYTES` | `1048576` | Maximum buffered SSE line. |
@@ -513,11 +522,10 @@ separately by `MODELPORT_ALLOW_PRIVATE_PROVIDER_URLS`.
 | `MODELPORT_HTTP_SSE_MAX_STREAM_BYTES` | `67108864` | Maximum raw bytes accepted for one upstream stream. |
 | `MODELPORT_HTTP_USER_AGENT` | `model-port/<version>` | Upstream User-Agent override. |
 
-Upstream redirects are disabled. A live SSE stream has no fixed wall-clock total
-timeout after its response headers arrive: the request timeout no longer applies
-then. Its lifetime is bounded by the per-chunk idle timeout and the line, event,
-and total-stream byte limits. A stream that continues delivering chunks within
-all limits can therefore run longer than `MODELPORT_HTTP_REQUEST_TIMEOUT_SECS`.
+Upstream redirects are disabled. A live SSE stream is bounded by the total
+request timeout measured from the outbound request start. Each event-body read
+uses the smaller of the remaining total time and the resettable per-chunk idle
+timeout. Line, event, and total-stream byte limits apply independently.
 Increasing byte or timeout limits increases memory/connection exposure; change
 them deliberately.
 
@@ -527,8 +535,8 @@ response headers. Non-2xx and wrong-content-type error bodies are then bounded
 by `MODELPORT_HTTP_MAX_RESPONSE_BYTES` and by both a total body-read timeout
 using the request-timeout value and the resettable stream-idle timeout, so a
 slow-drip error cannot hold the connection indefinitely. Established event
-streams use the idle and SSE
-byte limits and must still end with the protocol's required termination event.
+streams use the total request timeout, idle timeout, and SSE byte limits and
+must still end with the protocol's required termination event.
 
 ## Rate Limits And Request Guardrails
 
@@ -562,9 +570,12 @@ be positive and within the same global cap. An omitted value uses a bounded
 Provider contract requires it.
 
 A per-window rate value of `0` disables that dimension. Rate limits are
-process-local and reset on restart. Quotas and spend limits are persisted, but
-the current pre-check and post-request update are not a reservation transaction;
-concurrent requests can overshoot a tight budget.
+process-local and reset on restart. User quotas and API-key/team spend limits
+are persisted. Before Provider egress, PostgreSQL serializes competing scopes
+and atomically admits both the tenant budget and the request's usage
+reservation in the same transaction as attempt creation. Admission counts
+settled usage plus open reservations; terminal requests settle actual usage or
+release a non-chargeable/expired reservation.
 
 ## Provider Environment Pattern
 
@@ -893,6 +904,13 @@ These names are consumed outside the backend configuration loader:
 | `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_*_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL` | Claude client | Client-side selected model names. |
 | `MODELPORT_API_PUBLISH`, `MODELPORT_DASHBOARD_PUBLISH` | Compose | Host publish address/port. |
 | `MODELPORT_POSTGRES_DB`, `MODELPORT_POSTGRES_USER`, `MODELPORT_POSTGRES_PASSWORD` | Compose/PostgreSQL | Internal database bootstrap. |
+| `MODELPORT_IMAGE`, `MODELPORT_DASHBOARD_IMAGE` | Compose | Release images; use version tags for evaluation and immutable digests for shared/production use. |
+| `MODELPORT_PULL_POLICY` | Compose | Image pull policy; root source-build Compose defaults to `never`, release Compose to `missing`. Production upgrades set `always`. |
+| `MODELPORT_COMPOSE_FILE` | `scripts/compose-up.sh`, `scripts/doctor.sh` | Selected Compose manifest; defaults to the root source-build profile. |
+| `MODELPORT_LOCAL_BUILD` | `scripts/compose-up.sh` | Set to `1` after `scripts/build-container.sh` to select the two `:local` images and disable pulls. |
+| `MODELPORT_HEALTHCHECK_API_KEY` | Compose healthcheck | Dedicated scoped key for authenticated `/readyz`; local Compose falls back to the legacy router token when omitted. |
+| `MODELPORT_STOP_GRACE_PERIOD` | Compose | Backend SIGTERM-to-SIGKILL window; defaults to 11 minutes. |
+| `MODELPORT_RUNTIME_ENV_FILE`, `MODELPORT_CONFIG_FILE`, `MODELPORT_DATABASE_CA_FILE`, `MODELPORT_OWNERSHIP_FILE` | Production Compose/preflight | Operator-owned runtime secret, reviewed config, PostgreSQL CA, and named operations-ownership paths required by the single-instance production profile. |
 | `RUST_LOG` | tracing | Backend log filter. |
 | `MODELPORT_RUNTIME_DIR`, `MODELPORT_PID_FILE`, `MODELPORT_LOG_FILE` | local scripts | Background process files. |
 | `MODELPORT_FORCE_BUILD` | local scripts | Force rebuilding a local binary. |

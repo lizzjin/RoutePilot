@@ -44,3 +44,11 @@ Workflow files cannot enable these external repository settings.
 
 Follow [Releasing](../docs/RELEASING.md) for versioning, evidence, artifacts,
 and rollback.
+
+## Stable Release Continuity Gate
+
+Do not publish `v1.0.0` until two named maintainers have tag/release, package,
+private vulnerability-reporting, and security-advisory access. Both must
+complete one release rehearsal and document the security handoff. The current
+single-maintainer state is acceptable for Beta and must not be represented as
+stable-project bus-factor coverage.

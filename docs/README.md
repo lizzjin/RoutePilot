@@ -20,6 +20,12 @@ read every document: choose the path that matches your task.
    directory.
 8. [40 人团队第一阶段生产基线](PRODUCTION_BASELINE_40_USERS.zh-CN.md) — 单
    ModelPort 现状下的数据库、备份、密钥和投产检查清单。
+9. [Compatibility matrix](COMPATIBILITY.md) — Tier 1 platform and explicit
+   experimental/unsupported boundaries.
+10. [Observability runbook](OBSERVABILITY_RUNBOOK.md) — official alerts,
+    triage, and recovery actions.
+11. [Upgrading and rollback](UPGRADING.md) — safe stop, migration acceptance,
+    and paired application/database rollback.
 
 ## I Want To Connect An Application
 
@@ -55,8 +61,8 @@ read every document: choose the path that matches your task.
 
 ## Project Direction
 
-[Roadmap](ROADMAP.md) separates the current single-host/small-team product from
-proposed enterprise work. Proposed work must not be described as shipped.
+[Roadmap](ROADMAP.md) defines the Small-Team Beta productization freeze and its
+deliberate deferrals. Deferred work must not be described as shipped.
 
 ## Documentation Rules
 
@@ -71,4 +77,4 @@ proposed enterprise work. Proposed work must not be described as shipped.
 6. Run `node scripts/check-doc-links.mjs` and the relevant checks from
    [Development](DEVELOPMENT.md) before merging.
 
-Last reviewed: 2026-07-30.
+Last reviewed: 2026-08-09.

@@ -16,9 +16,13 @@ to the relevant documentation so the issue tracker remains actionable.
 
 ## Supported Versions
 
-The latest published release and current `main` are the maintained lines.
-Older releases receive no guaranteed backports unless a release notice states
-otherwise. Storage-breaking releases include explicit upgrade instructions.
+During Small-Team Beta, only the latest published Beta is supported. The
+project targets one planned release every four weeks and gives the previous
+Beta a 30-day upgrade window after its successor is published. Security fixes
+may be released outside that cadence. `main` is a contributor integration line,
+not a supported production release; older Betas receive no guaranteed
+backports. Storage-breaking releases include explicit upgrade and rollback
+instructions.
 
 ## Response Expectations
 
@@ -26,9 +30,10 @@ Community support is best effort and has no response-time, availability, or
 resolution SLA. Provider outages, account billing, model availability, and
 third-party API behavior remain the responsibility of the Provider.
 
-No paid support plan or hosted ModelPort service is represented by this
-repository unless a separate written agreement explicitly says so. A reseller
-or consultant cannot create obligations for the ModelPort maintainers.
+ModelPort is free, self-hosted MIT software. This project provides no paid
+edition, paid support plan, hosted ModelPort service, response SLA, or LTS line.
+A third-party reseller, host, or consultant cannot create obligations for the
+ModelPort maintainers.
 
 ## Security
 

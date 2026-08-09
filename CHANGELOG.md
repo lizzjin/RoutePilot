@@ -5,6 +5,22 @@ All notable ModelPort changes are recorded here. The project follows
 
 ## [Unreleased]
 
+### Release preparation
+
+- Prepared `v0.1.0 Small-Team Beta` for a free, MIT-licensed, self-hosted
+  20–50 person internal development team; this changelog does not claim the tag,
+  GHCR images, signatures, or GitHub Release exist before the release workflow
+  succeeds.
+- Added a versioned prebuilt-image Compose profile, Linux x86_64 compatibility
+  matrix, signed-image/digest/SBOM release contract, safe upgrade/rollback
+  guide, 30/90/395-day retention controls, independent Dashboard failure mode,
+  and official Prometheus/Grafana/runbook package.
+- Set a 6–8 week productization freeze: no new protocol, Provider, HA,
+  Kubernetes, hosted, paid, or public-multi-tenant surface except to resolve a
+  security/data-loss/release blocker or a verified design-partner blocker.
+
+## [0.1.0] - Pending publication
+
 ### Added
 
 - Relational PostgreSQL request, Provider-attempt, usage, quota/spend, budget,
@@ -18,8 +34,8 @@ All notable ModelPort changes are recorded here. The project follows
   session affinity, metrics, and relational decision evidence.
 - Separate `cpa_codex` and `cpa_claude` internal Provider templates with
   closed model allowlists, CPA catalog discovery, and internal-HTTP URL policy.
-- Commercial open-source governance, support, privacy, release, and supply
-  chain policies.
+- Free open-source governance, support, privacy, release, and supply-chain
+  policies.
 
 ### Changed
 
@@ -60,4 +76,5 @@ Back up PostgreSQL and run a restore drill before upgrading. Compose still uses
 the PostgreSQL 18 volume `modelport_modelport-postgres-18`; export any older
 volume before removing it.
 
-[Unreleased]: https://github.com/tiammomo/ModelPort/commits/main
+[Unreleased]: https://github.com/tiammomo/ModelPort/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/tiammomo/ModelPort/releases/tag/v0.1.0

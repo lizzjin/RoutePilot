@@ -223,9 +223,9 @@ Use the response metadata when interpreting a chart:
 - `rangeDataEstimated=false` confirms no process-metric estimate was used;
 - `rangeDataAtRetentionLimit=false` confirms there is no document-ring limit.
 
-The query reads only the selected window and current UTC day. Apply an explicit
-database retention policy if required by cost or personal-data policy; ModelPort
-does not silently evict rows from an in-document ring.
+The query reads only the selected window and current UTC day. Retention is an
+explicit preview/apply operation; ModelPort does not silently evict rows from
+an in-document ring.
 
 ## Data Lifecycle And Retention
 
@@ -235,15 +235,83 @@ Treat persisted data by ownership class:
 | --- | --- |
 | Organizations, projects, environments, Providers, routes, users, and API-key metadata | Configuration authority; retain and back up while referenced. |
 | Provider secrets | Keep only in the configured secret input; never copy into logs, backups of public metadata, or the repository. |
-| Gateway requests, attempts, routing decisions, and feedback | Operational evidence; retain or archive as one request-scoped unit under an explicit policy. |
+| Gateway requests, attempts, routing decisions, and feedback | Operational evidence; default request-detail minimization begins after 30 days. |
 | Budget accounts, reservations, and events | Financial/audit evidence; events are append-only and are not ordinary cleanup targets. |
 | Sessions and transient login/rate-limit state | Expire through the built-in lifecycle rather than manual table deletion. |
 | Acceptance objects | Scripts remove temporary control objects; request-ledger evidence can remain. |
 
-Budget foreign keys and append-only event controls intentionally reject unsafe
-deletion. Do not disable them to make the dashboard look empty. When physical
-retention becomes necessary, export required audit/reconciliation evidence and
-use a reviewed archive or partition policy.
+ModelPort never intentionally persists prompt, response, tool name, tool
+arguments, tool results, or raw Provider bodies. Retention controls metadata;
+it cannot remove content captured by a client, Provider, reverse proxy, custom
+logging integration, crash dump, or host outside ModelPort's ledger.
+
+The default policy is:
+
+| Age | Action on explicit apply |
+| ---: | --- |
+| 30 days | Redact request identity, IP, error, idempotency, and other user-level detail; redact mutable Provider-attempt error/terminal/lease-owner detail; delete routing-decision evidence. Attempt IDs, usage, cost, billing provenance, and request `lastAttemptId` remain where immutable budget/reservation evidence requires them. |
+| 90 days | De-identify user-level usage rows while retaining aggregate operational and immutable budget evidence. |
+| 395 days (13 months) | Delete ordinary governance audit events. Append-only budget events are retained. |
+
+Configure the policy with
+`MODELPORT_REQUEST_DETAIL_RETENTION_DAYS`,
+`MODELPORT_USER_USAGE_RETENTION_DAYS`, and
+`MODELPORT_AUDIT_RETENTION_DAYS`. The periods must remain ordered
+`request detail <= user usage <= audit`. Changing them requires restart.
+
+Retention is administrator-only and always starts with a preview. Both preview
+and apply append a `data_retention` governance audit event:
+
+Administrators can run the same preview-first workflow from **Dashboard → 运行设置与运维 → 运维审计 → 数据保留**. The UI keeps apply disabled until a successful preview and surfaces legal-hold state and immutable-budget-evidence retention explicitly.
+
+```http
+POST /admin/retention/run
+X-ModelPort-CSRF: 1
+Content-Type: application/json
+
+{"dryRun":true}
+```
+
+The body defaults to `dryRun=true` when the field is omitted. The response
+reports `evaluatedAtMs`, three cutoff timestamps, the effective `policy`, and
+these preview counts: `requestDetailsRedacted`,
+`providerAttemptsRedacted`, `routingDecisionsDeleted`,
+`userUsageRowsDeidentified`, and `auditEventsDeleted`. It also reports
+`immutableBudgetEventsRetained=true` and
+`policy.contentPersistence=false`. A successful preview additionally returns a
+random, single-use `previewToken` and its five-minute `previewExpiresAtMs`.
+Tokens are process-local because Beta is explicitly single-instance; a restart
+invalidates outstanding previews.
+
+Before applying:
+
+1. create, verify, and restore-drill a new database backup;
+2. export evidence required by the team's incident, legal, and reconciliation
+   policy;
+3. have the retention owner review the preview counts and cutoff timestamps;
+4. before `previewExpiresAtMs`, send
+   `{"dryRun":false,"previewToken":"<value from preview>"}` as the same
+   administrator;
+5. require `applied=true`, then rerun readiness, budget reconciliation, logs,
+   and dashboard checks.
+
+Apply uses the exact effective policy, `evaluatedAtMs`, and cutoffs authorized
+by that preview; it does not move the cutoff forward while waiting for
+confirmation. Missing, expired, cross-administrator, superseded, or replayed
+tokens fail closed. The service consumes a valid token before starting the
+operation, including when legal hold prevents mutation or storage returns an
+uncertain error. Run a new preview before every retry.
+
+Set `MODELPORT_RETENTION_LEGAL_HOLD=1` during an approved hold and restart. A
+preview still works; an apply returns `applied=false` and
+`skippedReason="legal_hold"`. When no hold is active, `skippedReason` is null.
+Ordinary users and viewers receive 403. The endpoint requires an administrator
+console session, `X-ModelPort-CSRF: 1`, and the normal same-origin check.
+
+Budget foreign keys and append-only controls intentionally preserve required
+attempt IDs, usage/cost/billing fields, reservations, and budget events. Do not
+disable them to make the dashboard look empty. Any deeper physical archive or
+partition policy requires separate review and restore evidence.
 
 Migrations preserve normalized request and attempt history. Routing decisions
 and feedback cascade with their owning request and store no prompt, response,
@@ -293,10 +361,17 @@ Metrics are process-local and reset on restart:
 - `modelport_message_{requests,successes,failures,duration_ms}_total`
 - `modelport_message_{input,output,cache_write,cache_read}_tokens_total`
 - `modelport_message_cost_estimate_usd_total`
+- `modelport_message_latency_ms` (global histogram)
 - `modelport_ledger_operation_failures_total`
 - `modelport_ledger_operation_degraded`
 - `modelport_ledger_reconciled_{requests,attempts}_total`
 - `modelport_ledger_pending_finalizers`
+- `modelport_gateway_ready`
+- `modelport_database_ready`
+- `modelport_database_pool_connections`, `modelport_database_pool_max_connections`, and `modelport_database_pool_utilization_ratio`
+- `modelport_provider_available` and `modelport_provider_cooldown`
+- `modelport_local_scheduler_{running,interactive_queued,batch_queued,users_queued,estimated_service_ms,oldest_interactive_wait_ms,oldest_batch_wait_ms}`
+- `modelport_stream_permits_available`
 
 Message series have `provider`, `model`, `traffic_class`, and `stream` labels.
 Model names are operator-controlled and can create high cardinality when
@@ -313,6 +388,15 @@ failed. A degraded operation also makes `/readyz` fail until a later successful
 operation proves recovery. `modelport_ledger_pending_finalizers` should normally
 return to zero promptly and is drained for up to
 `MODELPORT_FINALIZATION_DRAIN_TIMEOUT_SECONDS` during graceful shutdown.
+
+The official minimum monitoring package is in
+[`deploy/observability`](../deploy/observability/README.md). It includes
+Prometheus alerts, an importable Chinese-first Grafana dashboard, an optional
+authenticated `/readyz` Blackbox probe, and the
+[alert runbook](OBSERVABILITY_RUNBOOK.md). Remaining budget, PostgreSQL acquire
+latency, reconciled Provider invoice cost, configured stream capacity, and
+per-Provider latency percentiles are not emitted; the package labels these
+dependencies instead of inventing proxy precision.
 
 ## Performance And Benchmarking
 
@@ -505,7 +589,7 @@ pause and the reconciliation interval below the TTL.
 | 413 | Request body exceeds the Axum/Nginx limit. |
 | 502 before a requested stream starts | Upstream returned 204, omitted/returned a non-SSE content type, returned an invalid status, or hit a pre-header transport/protocol failure; inspect the bounded redacted error and fallback attempts. |
 | SSE `event: error` with HTTP 200 | Upstream failed after stream headers or ended without `message_stop` / `[DONE]` / `finish_reason`; inspect the event and backend log. |
-| Active SSE exceeds `MODELPORT_HTTP_REQUEST_TIMEOUT_SECS` | Expected: that value governs only the SSE handshake. Check the resettable stream idle timeout and byte ceilings for the established phase. |
+| SSE ends at `MODELPORT_HTTP_REQUEST_TIMEOUT_SECS` | Expected total upstream lifecycle limit. Check the configured total and idle timeouts before increasing either; post-header failure is reported in the event stream. |
 | Provider is cooling down | Recent retryable/account failures; ordinary non-retryable 4xx responses do not trigger cooldown. Verify key, rate limit, and balance. |
 | Provider pool has no usable credential | `failover`/`round_robin` fail closed when every credential is disabled, cooling down, or missing its environment value; repair the pool or verify the next Provider candidate. |
 | CPA request shows excessive attempts or latency | Verify CPA `request-retry: 0` and a bounded `max-retry-credentials`; ModelPort already owns retry/fallback and records each ModelPort attempt. |
@@ -524,10 +608,14 @@ pause and the reconciliation interval below the TTL.
   coordination.
 - Concurrent-stream permits are process-local and remain occupied through
   response body completion/drop.
-- Quota checks and usage updates are not transactional reservations. Parallel
-  requests can overshoot a tight limit.
-- API-key/team rolling spend is summed from terminal relational request rows.
-- Provider URL checks do not revalidate DNS answers against private ranges.
+- User/API-key/team quota and spend admission is transactionally reserved in
+  PostgreSQL against settled plus open amounts. One logical request consumes
+  one request unit even when retries add token/cost reservations; terminal work
+  settles actual usage or releases non-chargeable capacity.
+- Provider hostnames are resolved, private/metadata answers are rejected by
+  default, and validated addresses are pinned for the outbound connection.
+  Explicit private-Provider approval and host egress policy remain operator-
+  owned controls.
 - Low-frequency auth/control persistence still replaces complete JSON
   documents, but revision compare-and-swap rejects stale writers and readiness
   fails closed after detecting a newer database revision. This prevents silent
@@ -539,8 +627,8 @@ pause and the reconciliation interval below the TTL.
 - Live-stream terminal status, duration, metrics, and known Provider outcome are
   reconciled in-process. Final usage/cost commonly remains estimated, and
   fallback cannot restart after headers.
-- Established live streams have no fixed total-duration timeout; an active
-  stream ends through completion, cancellation, idle timeout, or a byte limit.
+- Established upstream live streams remain bounded by the total request timeout,
+  resettable idle timeout, completion/cancellation, and SSE byte limits.
 - `/readyz` gates on readable auth/control storage and a reachable normalized
   ledger, not on every Provider.
 
@@ -548,6 +636,10 @@ These limits are acceptable for the intended single-host/small-team profile but
 must be addressed before public multi-tenant or horizontally scaled use.
 
 ## Upgrade Checklist
+
+The complete safe-stop and paired rollback procedure is maintained in
+[Upgrading and Rollback](UPGRADING.md). This abbreviated list is not a
+zero-downtime promise.
 
 1. Read the release notes and compare environment/configuration changes.
 2. Export and validate a complete backup.

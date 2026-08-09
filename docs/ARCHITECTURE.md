@@ -71,10 +71,10 @@ operator must still account for.
 | --- | --- | --- |
 | Protocol adaptation | Anthropic Messages and the scoped OpenAI Chat Completions contract parse into a typed Exchange IR and share routing/governance. Anthropic/OpenAI Provider adapters render native non-stream and SSE responses in the original client protocol. Parsers enforce frame/stream limits, require terminal signals, preserve reported usage, and reject unsupported semantics. | The IR does not yet cover Responses, multimodal content, reasoning items, or every OpenAI/Anthropic extension. Configured adapters and models are not proof of real-upstream compatibility. |
 | Model routing and fallback | Resolution covers deterministic `provider:model`, recursive aliases, exact model matches, prefixes, and the default Provider. Opt-in smart aliases add capability/policy/quota/cooldown hard gates followed by explainable quality, reliability, latency, cost, and session-affinity scoring. Off, shadow, deterministic canary-control, and active decisions preserve a baseline path and store versioned evidence with the request. Retries remain limited to transport/protocol failures, 429, and 5xx against an eligible Provider. | Quality and latency configuration values are reviewed priors, not learned truth. Runtime latency and reliability signals are process-local. Fallback does not promise semantic model equivalence. Once live-stream headers are sent, a later failure cannot replay on another Provider. |
-| Identity, policy, and budget | Human console sign-in supports local Argon2 credentials and an optional single-host OIDC Authorization Code + PKCE preview. A verified OIDC issuer/subject is bound to a local user, and both methods issue the same first-party console session. The data plane separately accepts a control-plane API key or the explicitly allowed shared token. API-key model/Provider/IP policy is configured in the control store; user quota and API-key/team spend consumption are calculated from terminal relational request rows before an attempt is sent. The enterprise ledger atomically reserves a tenant budget before egress and settles or releases it with the attempt terminal state. Only a sent attempt is chargeable. | OIDC authorization state and console sessions are process-local and do not provide multi-instance SSO continuity. OIDC does not authenticate `/v1/*` clients. Quota/spend checks are preflight guards; PostgreSQL tenant budgets are distributed hard admission control. Rate limits and stream permits remain process-local. |
+| Identity, policy, and budget | Human console sign-in supports local Argon2 credentials and an optional single-host OIDC Authorization Code + PKCE preview. A verified OIDC issuer/subject is bound to a local user, and both methods issue the same first-party console session. The data plane separately accepts a control-plane API key or the explicitly allowed shared token. API-key model/Provider/IP policy is configured in the control store. Before egress, PostgreSQL atomically admits the tenant budget and reserves user/API-key/team usage against settled plus open amounts in the attempt-creation transaction; terminal paths settle or release both forms of reservation. Only a sent attempt is chargeable. | OIDC authorization state and console sessions are process-local and do not provide multi-instance SSO continuity. OIDC does not authenticate `/v1/*` clients. PostgreSQL quota, spend, and tenant-budget reservations provide hard concurrent admission for their configured estimates. Rate limits and stream permits remain process-local. |
 | Credential and Provider lifecycle | Provider credentials are environment-backed. Pool selection supports manual, failover, and round-robin behavior; outcomes feed credential/Provider health and cooldown state; unusable managed pools fail closed. | Health is operational state, not an external SLA. A configured credential or successful synthetic test does not establish every model, Tool Use, or stream path as verified. |
-| Persistence and ledger | A running server requires PostgreSQL. SQLx/rustls, bounded pools, embedded migrations, composite tenant foreign keys, normalized request/attempt/routing-decision rows, hashed idempotency claims, instance leases, heartbeats, and an expired-lease reconciler form the operational ledger. The request and its routing evidence are inserted in one transaction. Terminal request rows are the source for logs, Dashboard ranges, API-key/team usage, quota/spend checks, and price snapshots. Audit events are append-only relational rows. | Low-frequency auth, API-key/team definitions, Provider overrides, and credential-pool configuration still use control documents. Routing feedback has a normalized storage foundation but is not allowed to mutate production weights online. Response replay is not implemented, and reconciled rows remain explicitly unbilled. |
-| Security and observability | Browser writes require a ModelPort session and CSRF token, with Origin/Referer checks when present. The OIDC preview validates discovery metadata, signed ID-token claims, state, nonce, and PKCE before issuing that session. Trusted-proxy parsing, remote-Provider HTTPS defaults, URL guards, disabled redirects, bounded bodies/SSE, request/attempt IDs, terminal stream finalization, lease-expiry evidence, Prometheus metrics, retained logs, and source-labelled dashboard aggregation provide operational evidence. | OIDC is console authentication, not Provider or data-plane credential delegation, and its pending state is lost on restart. URL guards do not pin or revalidate DNS answers. `upstream-returned` identifies usage provenance, not invoice accuracy; `local-estimate` is heuristic, ordinary live streams may lack final Provider usage, and `unreconciled` requires external evidence before any financial adjustment. |
+| Persistence and ledger | A running server requires PostgreSQL. SQLx/rustls, bounded pools, embedded migrations, composite tenant foreign keys, normalized request/attempt/routing-decision rows, hashed idempotency claims, instance leases, heartbeats, and an expired-lease reconciler form the operational ledger. The request and its routing evidence are inserted in one transaction. Terminal request rows plus open usage reservations are the source for logs, Dashboard ranges, API-key/team usage, quota/spend admission, and price snapshots. Audit events are append-only relational rows. | Low-frequency auth, API-key/team definitions, Provider overrides, and credential-pool configuration still use control documents. Routing feedback has a normalized storage foundation but is not allowed to mutate production weights online. Response replay is not implemented, and reconciled rows remain explicitly unbilled. |
+| Security and observability | Browser writes require a ModelPort session and CSRF token, with Origin/Referer checks when present. The OIDC preview validates discovery metadata, signed ID-token claims, state, nonce, and PKCE before issuing that session. Trusted-proxy parsing, remote-Provider HTTPS defaults, URL and resolved-address guards, per-request DNS pinning, disabled redirects/proxies, bounded bodies/SSE, request/attempt IDs, terminal stream finalization, lease-expiry evidence, Prometheus metrics, retained logs, and source-labelled dashboard aggregation provide operational evidence. | OIDC is console authentication, not Provider or data-plane credential delegation, and its pending state is lost on restart. Private Provider URLs remain an explicit operator trust decision and outbound filtering remains defense in depth. `upstream-returned` identifies usage provenance, not invoice accuracy; `local-estimate` is heuristic, ordinary live streams may lack final Provider usage, and `unreconciled` requires external evidence before any financial adjustment. |
 
 The detailed lifecycle and failure semantics below are normative. Provider and
 Tool Use verification evidence is maintained separately in the
@@ -272,9 +272,11 @@ authentication checks that the owner still exists and is active. Disabling or
 suspending a user revokes that user's keys and removes the user's quota rows.
 
 Console roles intentionally differ: administrators manage all key policy and
-lifecycle fields; normal users can read owned keys and change only their name
-and group, revoke them, or delete them; viewers are read-only. A user cannot
-create or restore keys or edit team/model/provider/IP/expiry/spend policy.
+lifecycle fields. Normal users can create up to five active personal keys with
+a maximum 30-day lifetime, narrow model/Provider scope during creation, rotate
+their user keys, and rename, group, revoke, or delete owned keys. They cannot
+create service-account/team keys, restore keys, or edit administrator-controlled
+team/model/provider/IP/expiry/spend policy after creation. Viewers are read-only.
 
 User quota records use UTC calendar periods: a day begins at 00:00 UTC, a week
 at Monday 00:00 UTC, and a month on its first day at 00:00 UTC. API-key and team
@@ -282,9 +284,12 @@ spend policy is separate and uses rolling 5-hour, 24-hour, 7-day, and 30-day
 windows. The `rateLimited` name enables periodic spend limits rather than
 request-rate limiting.
 
-Rolling spend is summed from terminal relational request rows. User quota
-checks and spend checks are preflight guards rather than transactional
-reservations; concurrent requests can still overshoot a tight cap.
+Rolling-spend and user-quota admission sums settled relational usage plus open
+usage reservations. PostgreSQL takes stable scope locks and creates or extends
+the usage reservation in the same transaction as the Provider attempt. One
+logical request reserves its request unit only once; retries add token/cost
+estimates. Terminal completion settles actual usage, while non-chargeable or
+expired work releases the reservation.
 
 A team cannot be deleted while any API key references it. This dependency
 check prevents deletion from silently broadening access by removing team
@@ -339,11 +344,10 @@ protocol error rather than a successful partial response. Once local HTTP 200
 headers exist, this is represented by SSE `event: error` and cannot restart on
 another Provider.
 
-The general request timeout covers the entire non-stream exchange but only the
-SSE `send()`/response-header handshake. Once the live response body starts,
-there is no fixed total-duration timer. The parser instead applies a resettable
-per-chunk idle timeout plus line, event, and total raw-stream byte ceilings. An
-active stream can therefore remain open beyond the request-timeout duration.
+The general request timeout covers the entire non-stream exchange and the total
+upstream SSE lifecycle. After response headers, each body read is bounded by
+both the remaining total time and a resettable per-chunk idle timeout. Line,
+event, and total raw-stream byte ceilings apply independently.
 
 The stream permit count comes from `MODELPORT_MAX_CONCURRENT_STREAMS`, defaulting
 to the effective general request-concurrency limit. Unlike the normal handler
@@ -391,10 +395,14 @@ upstream outcome.
   address. It never trusts an attacker-supplied leftmost value merely because
   the nearest peer is a proxy.
 - Provider URLs reject userinfo, query strings, fragments, disallowed schemes,
-  and literal private/link-local/metadata IPs by default. Credentials are sent
-  from environment-backed header configuration rather than embedded in the
-  URL. Hostname DNS resolution is not pinned or revalidated against private
-  addresses, so this is not a complete DNS-rebinding defense.
+  and private/link-local/metadata destinations by default. Immediately before
+  each request, hostname answers are validated and pinned into the HTTP client
+  while the original hostname remains available for Host and TLS SNI.
+  Redirects and environment proxies are disabled to prevent a second resolver
+  from changing the destination. Credentials are sent from environment-backed
+  header configuration rather than embedded in the URL. Explicitly allowing a
+  private Provider remains an operator trust decision and should be paired with
+  outbound network policy.
 - Non-local/non-custom Providers require HTTPS by default. The explicit
   `MODELPORT_ALLOW_INSECURE_PROVIDER_HTTP=1` escape hatch is only for a trusted
   internal network because HTTP exposes Provider API keys and prompt/response

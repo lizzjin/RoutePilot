@@ -1,8 +1,9 @@
 # Production
 
-This document combines the go-live and release-acceptance requirements for the
-supported single-host/small-team profile. It is not a certification, warranty,
-SLA, or substitute for the operator's threat model and compliance review.
+This document combines go-live and release acceptance for the free v0.1.x
+Small-Team Beta: one Linux x86_64 instance serving an internal team of roughly
+20–50 people. It is not an enterprise/HA claim, certification, warranty, SLA,
+or substitute for the operator's threat model and compliance review.
 
 ## Supported Boundary
 
@@ -16,6 +17,9 @@ SLA, or substitute for the operator's threat model and compliance review.
 Public multi-tenant isolation, active-active operation, distributed
 sessions/rate limits, SCIM, and a maintainer-hosted service are not currently
 supported.
+
+The project has no paid or hosted tier. “Enterprise mode” is the historical
+name of a fail-closed configuration switch, not an enterprise-readiness claim.
 
 The accepted forty-user hybrid-routing target is defined in
 [ADR-0005](adr/0005-forty-user-hybrid-routing-baseline.md). Its first phase
@@ -33,6 +37,8 @@ individual implementation and acceptance gates pass.
 - [ ] Configure secure cookies, exact HTTPS origins, exact trusted proxy CIDRs,
       enabled CSRF protection, and private backend/database ports.
 - [ ] Set `MODELPORT_REQUIRE_CONTROL_API_KEYS=1`.
+- [ ] Issue a dedicated scoped `MODELPORT_HEALTHCHECK_API_KEY`; never place it
+      in Compose, Prometheus rules, Grafana variables, or alert annotations.
 - [ ] Verify backup creation, restore drill, encryption, off-host replication,
       retention, and deletion ownership.
 - [ ] Alert on readiness, rejection phases, request failures, ledger

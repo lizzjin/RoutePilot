@@ -1,13 +1,13 @@
 # Getting Started
 
-This is the shortest supported path from a clean clone to a working ModelPort
-request. It uses Docker Compose, PostgreSQL, the dashboard, and the repository's
-DeepSeek example. Use [Providers](PROVIDERS.md) when you want a local runtime or
-another hosted Provider.
+This is the shortest Tier 1 path from a published Small-Team Beta to a governed
+request. It uses prebuilt Linux x86_64 images, Docker Compose, PostgreSQL, the
+Dashboard, and the DeepSeek example; it does not compile source. Use
+[Providers](PROVIDERS.md) for a local runtime or another hosted Provider.
 
 ## 1. Prerequisites
 
-- Git.
+- Linux x86_64 and Git.
 - Docker Engine or Docker Desktop with Compose v2.
 - A Provider account and API key.
 - Free local ports `33002` and `38082`.
@@ -18,7 +18,7 @@ you do not need to install PostgreSQL on the host.
 ## 2. Create Local Configuration
 
 ```bash
-git clone https://github.com/tiammomo/ModelPort.git
+git clone --branch v0.1.0 --depth 1 https://github.com/tiammomo/ModelPort.git
 cd ModelPort
 cp deploy/docker/modelport.env.example .env
 cp config.example.toml config.toml
@@ -48,28 +48,46 @@ the request examples together.
 
 ## 3. Check The Setup
 
-Run the read-only Linux and Compose preflight before a potentially long image
-build:
+Run the read-only Linux and Compose preflight before pulling images:
 
 ```bash
+export MODELPORT_COMPOSE_FILE="$PWD/deploy/release/compose.yml"
 scripts/doctor.sh --setup
 ```
 
 Fix the first `[fail]` and rerun it. This mode does not start services or make a
 Provider request.
 
-## 4. Build And Start
+## 4. Pull And Start
 
 ```bash
-docker compose config --quiet
-scripts/build-container.sh
+export MODELPORT_COMPOSE_FILE="$PWD/deploy/release/compose.yml"
+docker compose -f "$MODELPORT_COMPOSE_FILE" config --quiet
+docker compose -f "$MODELPORT_COMPOSE_FILE" pull
 scripts/compose-up.sh
-docker compose ps
+docker compose -f "$MODELPORT_COMPOSE_FILE" ps
 ```
 
-The first image build compiles Rust and installs dashboard dependencies, so it
-takes longer than subsequent builds. The build helper refuses a dirty worktree
-for release provenance; use `--allow-dirty` only for local development.
+The images are published by the tagged release. Initial evaluation may use the
+version tag in Compose; shared/production deployments must use the two immutable
+digests listed in the GitHub Release. Verify checksums, signatures,
+attestations, and SBOMs through
+[Upgrading and Rollback](UPGRADING.md#release-inputs).
+
+Do not run this release path until the `v0.1.0` tag and both GHCR images
+actually exist. A repository change cannot publish them. Before the first
+Release, current-main testing is a contributor path:
+
+```bash
+git clone https://github.com/tiammomo/ModelPort.git
+cd ModelPort
+cp deploy/docker/modelport.env.example .env
+cp config.example.toml config.toml
+# replace required placeholders
+export MODELPORT_COMPOSE_FILE="$PWD/docker-compose.yml"
+scripts/build-container.sh
+MODELPORT_LOCAL_BUILD=1 scripts/compose-up.sh
+```
 
 Expected services:
 
@@ -79,12 +97,18 @@ Expected services:
 | `modelport` | healthy |
 | `dashboard` | running |
 
+The backend's Compose healthcheck uses authenticated `/readyz`, so `healthy`
+means required persistence is usable. The image-level `/livez` check proves only
+that the process answers. Dashboard has no backend startup dependency: its
+static page remains available and API routes return 502 when the backend is
+unavailable.
+
 If a service does not start:
 
 ```bash
-docker compose logs --tail=100 postgres
-docker compose logs --tail=100 modelport
-docker compose logs --tail=100 dashboard
+docker compose -f "$MODELPORT_COMPOSE_FILE" logs --tail=100 postgres
+docker compose -f "$MODELPORT_COMPOSE_FILE" logs --tail=100 modelport
+docker compose -f "$MODELPORT_COMPOSE_FILE" logs --tail=100 dashboard
 ```
 
 ## 5. Verify The Gateway
@@ -100,7 +124,44 @@ Open `http://127.0.0.1:33002` and sign in with the configured administrator
 username and password. The backend API remains at
 `http://127.0.0.1:38082`.
 
-## 6. Send The First Request
+## 6. Authorize The First Governed Request
+
+ModelPort fails closed for cloud egress when a project has no policy. Before
+calling the DeepSeek example, open **Governance (治理与变更审批)** in the
+Dashboard, choose `project_policy.upsert`, and use:
+
+- Target: `org_local/prj_default/env_default`
+- Reason: a concrete explanation such as `Allow the documented public synthetic DeepSeek test`
+- Payload:
+
+```json
+{
+  "organizationId": "org_local",
+  "projectId": "prj_default",
+  "environmentId": "env_default",
+  "maximumMode": "cloud_first",
+  "defaultClassification": "unknown",
+  "allowedProviders": ["deepseek"],
+  "allowedModels": ["deepseek-v4-flash"],
+  "allowedRegions": ["global"],
+  "allowedApiVersions": ["anthropic-v1"],
+  "cloudEnabled": true
+}
+```
+
+Submit the recorded change. In default Small-Team mode, choose
+**Direct apply (直接应用)**; the write still requires CSRF protection and is
+audited. Enterprise mode or `MODELPORT_REQUIRE_DUAL_APPROVAL=1` requires a
+different administrator to approve the change before **Apply change (应用变更)**
+becomes available.
+
+This example authorizes only the exact DeepSeek Provider, model, global region,
+and Anthropic v1 path for `org_local/prj_default/env_default`. Its default
+classification stays `unknown`, so unclassified or sensitive input remains
+`local_strict`. Do not paste private source code or other sensitive data into
+the public synthetic test.
+
+## 7. Send The First Request
 
 This request can consume Provider quota:
 
@@ -110,6 +171,8 @@ source .env
 curl -fsS \
   -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
   -H 'content-type: application/json' \
+  -H 'x-modelport-data-classification: public' \
+  -H 'x-modelport-hybrid-mode: cloud_first' \
   http://127.0.0.1:38082/v1/messages \
   -d '{
     "model":"deepseek-v4-flash",
@@ -128,7 +191,7 @@ Open **Request Logs** in the dashboard and confirm the selected Provider/model,
 status, latency, token provenance, and estimated cost. A Provider-returned usage
 value is still not an authoritative invoice.
 
-## 7. Connect A Client
+## 8. Connect A Client
 
 Claude Code or another Anthropic-compatible client:
 
@@ -150,21 +213,22 @@ For shared use, create a real user and a scoped client API key in the dashboard,
 then set `MODELPORT_REQUIRE_CONTROL_API_KEYS=1` during production hardening.
 Never give a client the upstream Provider key.
 
-## 8. Stop, Restart, Or Upgrade
+## 9. Stop, Restart, Or Upgrade
 
 ```bash
-docker compose stop
-docker compose start
-docker compose logs -f modelport
-docker compose down
+docker compose -f "$MODELPORT_COMPOSE_FILE" stop
+docker compose -f "$MODELPORT_COMPOSE_FILE" start
+docker compose -f "$MODELPORT_COMPOSE_FILE" logs -f modelport
+docker compose -f "$MODELPORT_COMPOSE_FILE" down
 ```
 
-`docker compose down` preserves named volumes. Do not use
-`docker compose down -v` unless permanent database deletion is intentional and
-a verified backup exists.
+`docker compose -f "$MODELPORT_COMPOSE_FILE" down` preserves named volumes. Do
+not add `-v` unless permanent database deletion is intentional and a verified
+backup exists.
 
-Before an upgrade, follow [Operations: Backup And Restore](OPERATIONS.md#backup-and-restore)
-and [Production](PRODUCTION.md).
+Before an upgrade, follow [Upgrading and Rollback](UPGRADING.md),
+[Operations: Backup And Restore](OPERATIONS.md#backup-and-restore), and
+[Production](PRODUCTION.md).
 
 ## Common First-Run Problems
 
@@ -173,6 +237,7 @@ and [Production](PRODUCTION.md).
 | Compose reports missing `config.toml` | Copy `config.example.toml` to `config.toml`. |
 | Startup rejects a placeholder | Replace every required `replace-with-...` value in `.env`. |
 | Dashboard opens but login fails | Use the admin username/password, not the router token. |
+| Dashboard opens but API calls return 502 | Static Nginx is healthy but the backend is absent/unreachable; check `/livez`, `/readyz`, and backend logs. |
 | `/v1/*` returns 401 | Send `x-api-key: <MODELPORT_AUTH_TOKEN>` or `Authorization: Bearer <key>`. |
 | Model is not listed | Align the Provider's configured model ID with the account/runtime catalog. |
 | Local runtime is unreachable from Docker | Use `host.docker.internal`, not container loopback. |

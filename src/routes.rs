@@ -51,6 +51,7 @@ use crate::{
     governance::{GovernanceStore, LocalScheduler},
     http::{Header, HttpTransport},
     metrics::Metrics,
+    model_catalog::{ModelProfileOverride, ModelProfileSource},
     oidc::{OIDC_FLOW_COOKIE, OidcService},
     smart_router::SmartRouter,
 };
@@ -2502,6 +2503,10 @@ fn apply_provider_credentials(
 }
 
 fn provider_record_to_config(record: &ProviderOverrideRecord) -> Result<ProviderConfig, AppError> {
+    let mut model_profiles = record.model_profiles.clone();
+    for profile in model_profiles.values_mut() {
+        profile.source = Some(ModelProfileSource::Control);
+    }
     Ok(ProviderConfig {
         display_name: record.display_name.clone(),
         protocol: parse_provider_protocol(&record.protocol)?,
@@ -2521,9 +2526,15 @@ fn provider_record_to_config(record: &ProviderOverrideRecord) -> Result<Provider
         buffer_stream_text: record.buffer_stream_text,
         fidelity_mode: parse_fidelity_mode(&record.fidelity_mode)?,
         tool_use: record.tool_use,
-        reasoning: Default::default(),
-        sampling: Default::default(),
-        token_counting: Default::default(),
+        model_profile_defaults: record.model_profile_defaults.clone(),
+        model_profiles,
+        reasoning: record.reasoning.clone(),
+        sampling: record.sampling.clone(),
+        token_counting: record.token_counting.clone(),
+        static_headers: record.static_headers.clone(),
+        request_timeout_ms: record.request_timeout_ms,
+        stream_idle_timeout_ms: record.stream_idle_timeout_ms,
+        retry: record.retry.clone(),
         pricing: record.pricing,
     })
 }
@@ -2552,6 +2563,18 @@ fn apply_provider_model_overrides(
             if !provider.models.contains(&record.model) {
                 provider.models.push(record.model.clone());
             }
+            let mut model_profile = ModelProfileOverride {
+                display_name: record.display_name.clone(),
+                family: record.family.clone(),
+                context_window: record.context_window,
+                source: Some(ModelProfileSource::Control),
+                ..ModelProfileOverride::default()
+            };
+            model_profile.merge(&record.profile);
+            model_profile.source = Some(ModelProfileSource::Control);
+            provider
+                .model_profiles
+                .insert(record.model.clone(), model_profile);
         }
     }
 }
@@ -2916,9 +2939,15 @@ mod tests {
                 ProviderProtocol::OpenaiCompat,
                 true,
             ),
+            model_profile_defaults: Default::default(),
+            model_profiles: Default::default(),
             reasoning: Default::default(),
             sampling: Default::default(),
             token_counting: Default::default(),
+            static_headers: Default::default(),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            retry: Default::default(),
             pricing: None,
         };
         let inactive = ProviderConfig {
@@ -2941,9 +2970,15 @@ mod tests {
                 ProviderProtocol::Anthropic,
                 false,
             ),
+            model_profile_defaults: Default::default(),
+            model_profiles: Default::default(),
             reasoning: Default::default(),
             sampling: Default::default(),
             token_counting: Default::default(),
+            static_headers: Default::default(),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            retry: Default::default(),
             pricing: None,
         };
         let config = AppConfig {
@@ -3003,9 +3038,15 @@ mod tests {
                 ProviderProtocol::OpenaiCompat,
                 true,
             ),
+            model_profile_defaults: Default::default(),
+            model_profiles: Default::default(),
             reasoning: Default::default(),
             sampling: Default::default(),
             token_counting: Default::default(),
+            static_headers: Default::default(),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            retry: Default::default(),
             pricing: None,
         };
         let config = AppConfig {
@@ -6823,6 +6864,15 @@ data: [DONE]
                     ProviderProtocol::OpenaiCompat,
                     false,
                 ),
+                model_profile_defaults: Default::default(),
+                model_profiles: Default::default(),
+                reasoning: Default::default(),
+                sampling: Default::default(),
+                token_counting: Default::default(),
+                static_headers: Default::default(),
+                request_timeout_ms: None,
+                stream_idle_timeout_ms: None,
+                retry: Default::default(),
                 pricing: None,
                 created_at_ms: 0,
                 updated_at_ms: 0,
@@ -6872,6 +6922,7 @@ data: [DONE]
                 display_name: None,
                 family: Some("小米 MiMo".to_owned()),
                 context_window: Some(128_000),
+                profile: Default::default(),
                 created_at_ms: 0,
                 updated_at_ms: 0,
             })
@@ -7014,9 +7065,15 @@ data: [DONE]
                 ProviderProtocol::Anthropic,
                 false,
             ),
+            model_profile_defaults: Default::default(),
+            model_profiles: Default::default(),
             reasoning: Default::default(),
             sampling: Default::default(),
             token_counting: Default::default(),
+            static_headers: Default::default(),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            retry: Default::default(),
             pricing: None,
         };
 
@@ -7072,9 +7129,15 @@ data: [DONE]
                 ProviderProtocol::Anthropic,
                 false,
             ),
+            model_profile_defaults: Default::default(),
+            model_profiles: Default::default(),
             reasoning: Default::default(),
             sampling: Default::default(),
             token_counting: Default::default(),
+            static_headers: Default::default(),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            retry: Default::default(),
             pricing: None,
         };
 
@@ -7142,9 +7205,15 @@ data: [DONE]
                 ProviderProtocol::Anthropic,
                 false,
             ),
+            model_profile_defaults: Default::default(),
+            model_profiles: Default::default(),
             reasoning: Default::default(),
             sampling: Default::default(),
             token_counting: Default::default(),
+            static_headers: Default::default(),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            retry: Default::default(),
             pricing: None,
         };
 
@@ -8277,10 +8346,14 @@ data: {"type":"message_stop"}
                 ProviderProtocol::OpenaiCompat,
                 deduplicate_stream_text,
             ),
+            model_profile_defaults: Default::default(),
+            model_profiles: Default::default(),
             reasoning: ReasoningConfig {
                 mode: ReasoningMode::LlamaCpp,
                 default_enabled: None,
                 model_enabled: Default::default(),
+                default_effort: None,
+                model_effort: Default::default(),
                 default_budget_tokens: None,
                 model_budget_tokens: Default::default(),
             },
@@ -8293,6 +8366,10 @@ data: {"type":"message_stop"}
                 max_output_tokens: None,
                 model_max_output_tokens: Default::default(),
             },
+            static_headers: Default::default(),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            retry: Default::default(),
             pricing: None,
         };
 
@@ -8380,6 +8457,8 @@ data: {"type":"message_stop"}
                 ProviderProtocol::Anthropic,
                 false,
             ),
+            model_profile_defaults: Default::default(),
+            model_profiles: Default::default(),
             reasoning: Default::default(),
             sampling: Default::default(),
             token_counting: TokenCountingConfig {
@@ -8390,6 +8469,10 @@ data: {"type":"message_stop"}
                 max_output_tokens: None,
                 model_max_output_tokens: Default::default(),
             },
+            static_headers: Default::default(),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            retry: Default::default(),
             pricing: None,
         };
 

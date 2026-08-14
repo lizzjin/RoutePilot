@@ -1,19 +1,29 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     env, fmt, fs,
     net::{IpAddr, SocketAddr},
     path::PathBuf,
     sync::{Arc, RwLock},
+    time::Duration,
 };
 
 use axum::http::HeaderMap;
 use reqwest::Url;
+use reqwest::header::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 
-use crate::{error::AppError, pricing::ModelPricing};
+use crate::{
+    error::AppError,
+    model_catalog::{
+        ModelProfile, ModelProfileOverride, ReasoningEffort, resolve_model_profile,
+        validate_model_profile_override,
+    },
+    pricing::ModelPricing,
+};
 
 const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 32 * 1024 * 1024;
 const DEFAULT_MAX_CONCURRENT_REQUESTS: usize = 64;
+const MAX_PROVIDER_TIMER_MS: u64 = 2_147_483_647;
 
 #[derive(Clone)]
 pub struct AppConfig {
@@ -50,9 +60,15 @@ pub struct ProviderConfig {
     pub buffer_stream_text: bool,
     pub fidelity_mode: FidelityMode,
     pub tool_use: ToolUseConfig,
+    pub model_profile_defaults: ModelProfileOverride,
+    pub model_profiles: HashMap<String, ModelProfileOverride>,
     pub reasoning: ReasoningConfig,
     pub sampling: SamplingConfig,
     pub token_counting: TokenCountingConfig,
+    pub static_headers: BTreeMap<String, String>,
+    pub request_timeout_ms: Option<u64>,
+    pub stream_idle_timeout_ms: Option<u64>,
+    pub retry: ProviderRetryConfig,
     pub pricing: Option<ModelPricing>,
 }
 
@@ -412,9 +428,52 @@ pub struct ReasoningConfig {
     /// thinking policies. An explicit client control still wins.
     #[serde(default)]
     pub model_enabled: HashMap<String, bool>,
+    pub default_effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    pub model_effort: HashMap<String, ReasoningEffort>,
     pub default_budget_tokens: Option<u64>,
     #[serde(default)]
     pub model_budget_tokens: HashMap<String, u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct ProviderRetryConfig {
+    /// Total attempts for one provider candidate, including the first request.
+    #[serde(default = "default_retry_max_attempts")]
+    pub max_attempts: u32,
+    #[serde(default = "default_retry_initial_delay_ms")]
+    pub initial_delay_ms: u64,
+    #[serde(default = "default_retry_max_delay_ms")]
+    pub max_delay_ms: u64,
+    #[serde(default = "default_retry_jitter_ratio")]
+    pub jitter_ratio: f64,
+}
+
+impl Default for ProviderRetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: default_retry_max_attempts(),
+            initial_delay_ms: default_retry_initial_delay_ms(),
+            max_delay_ms: default_retry_max_delay_ms(),
+            jitter_ratio: default_retry_jitter_ratio(),
+        }
+    }
+}
+
+const fn default_retry_max_attempts() -> u32 {
+    1
+}
+
+const fn default_retry_initial_delay_ms() -> u64 {
+    250
+}
+
+const fn default_retry_max_delay_ms() -> u64 {
+    5_000
+}
+
+const fn default_retry_jitter_ratio() -> f64 {
+    0.1
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -575,9 +634,18 @@ impl fmt::Debug for ProviderConfig {
             .field("buffer_stream_text", &self.buffer_stream_text)
             .field("fidelity_mode", &self.fidelity_mode)
             .field("tool_use", &self.tool_use)
+            .field("model_profile_defaults", &self.model_profile_defaults)
+            .field("model_profiles", &self.model_profiles)
             .field("reasoning", &self.reasoning)
             .field("sampling", &self.sampling)
             .field("token_counting", &self.token_counting)
+            .field(
+                "static_header_names",
+                &self.static_headers.keys().collect::<Vec<_>>(),
+            )
+            .field("request_timeout_ms", &self.request_timeout_ms)
+            .field("stream_idle_timeout_ms", &self.stream_idle_timeout_ms)
+            .field("retry", &self.retry)
             .field("pricing", &self.pricing)
             .finish()
     }
@@ -746,9 +814,15 @@ struct ProviderSection {
     buffer_stream_text: Option<bool>,
     fidelity_mode: Option<FidelityMode>,
     tool_use: Option<ToolUseConfig>,
+    model_profile_defaults: Option<ModelProfileOverride>,
+    model_profiles: Option<HashMap<String, ModelProfileOverride>>,
     reasoning: Option<ReasoningConfig>,
     sampling: Option<SamplingConfig>,
     token_counting: Option<TokenCountingConfig>,
+    static_headers: Option<BTreeMap<String, String>>,
+    request_timeout_ms: Option<u64>,
+    stream_idle_timeout_ms: Option<u64>,
+    retry: Option<ProviderRetryConfig>,
     pricing: Option<ModelPricing>,
 }
 
@@ -1273,9 +1347,15 @@ impl AppConfig {
                         default_fidelity_mode(&id, deduplicate_stream_text, buffer_stream_text)
                     }),
                     tool_use,
+                    model_profile_defaults: section.model_profile_defaults.unwrap_or_default(),
+                    model_profiles: section.model_profiles.unwrap_or_default(),
                     reasoning: section.reasoning.unwrap_or_default(),
                     sampling: section.sampling.unwrap_or_default(),
                     token_counting: section.token_counting.unwrap_or_default(),
+                    static_headers: section.static_headers.unwrap_or_default(),
+                    request_timeout_ms: section.request_timeout_ms,
+                    stream_idle_timeout_ms: section.stream_idle_timeout_ms,
+                    retry: section.retry.unwrap_or_default(),
                     pricing: section.pricing,
                 },
             );
@@ -1418,6 +1498,34 @@ impl ConfigIssue {
 }
 
 impl ProviderConfig {
+    pub(crate) fn model_profile(&self, provider_id: &str, model: &str) -> ModelProfile {
+        resolve_model_profile(
+            provider_id,
+            self.protocol,
+            model,
+            &self.tool_use,
+            &self.model_profile_defaults,
+            self.model_profiles.get(model),
+        )
+    }
+
+    pub(crate) fn tool_use_for_model(&self, provider_id: &str, model: &str) -> ToolUseConfig {
+        let profile = self.model_profile(provider_id, model);
+        let mut tool_use = self.tool_use;
+        tool_use.supported = profile.tool_use.is_supported();
+        tool_use.tool_choice = profile.tool_choice.is_supported();
+        tool_use.parallel_tool_calls = profile.parallel_tool_calls.is_supported();
+        tool_use
+    }
+
+    pub(crate) fn request_timeout(&self) -> Option<Duration> {
+        self.request_timeout_ms.map(Duration::from_millis)
+    }
+
+    pub(crate) fn stream_idle_timeout(&self) -> Option<Duration> {
+        self.stream_idle_timeout_ms.map(Duration::from_millis)
+    }
+
     pub fn api_key(&self) -> Result<Option<&str>, AppError> {
         if let Some(api_key) = self.api_key.as_deref() {
             return Ok(Some(api_key));
@@ -1978,9 +2086,15 @@ fn insert_spec(
                 buffer_stream_text,
             ),
             tool_use: default_tool_use_config(spec.id, spec.protocol, spec.deduplicate_stream_text),
+            model_profile_defaults: ModelProfileOverride::default(),
+            model_profiles: HashMap::new(),
             reasoning: ReasoningConfig::default(),
             sampling: SamplingConfig::default(),
             token_counting: TokenCountingConfig::default(),
+            static_headers: BTreeMap::new(),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            retry: ProviderRetryConfig::default(),
             pricing: None,
         },
     );
@@ -2583,13 +2697,119 @@ fn validate_provider(
         )));
     }
     if provider.reasoning.mode == ReasoningMode::None
-        && (provider.reasoning.default_enabled.is_some()
-            || !provider.reasoning.model_enabled.is_empty()
-            || provider.reasoning.default_budget_tokens.is_some()
+        && (provider.reasoning.default_budget_tokens.is_some()
             || !provider.reasoning.model_budget_tokens.is_empty())
     {
         issues.push(ConfigIssue::error(format!(
             "provider `{id}` reasoning defaults require a non-none reasoning.mode"
+        )));
+    }
+    for model in provider.reasoning.model_effort.keys() {
+        if model.trim().is_empty() {
+            issues.push(ConfigIssue::error(format!(
+                "provider `{id}` reasoning.model_effort requires non-empty model names"
+            )));
+        }
+    }
+
+    if let Err(reason) = validate_model_profile_override(&provider.model_profile_defaults) {
+        issues.push(ConfigIssue::error(format!(
+            "provider `{id}` model_profile_defaults is invalid: {reason}"
+        )));
+    }
+
+    for (model, profile_override) in &provider.model_profiles {
+        if model.trim().is_empty() {
+            issues.push(ConfigIssue::error(format!(
+                "provider `{id}` model_profiles cannot contain an empty model name"
+            )));
+            continue;
+        }
+        if !provider.models.contains(model) {
+            issues.push(ConfigIssue::error(format!(
+                "provider `{id}` model profile `{model}` is not present in models"
+            )));
+        }
+        if let Err(reason) = validate_model_profile_override(profile_override) {
+            issues.push(ConfigIssue::error(format!(
+                "provider `{id}` model profile `{model}` is invalid: {reason}"
+            )));
+        }
+    }
+
+    for model in &provider.models {
+        let effective = provider.model_profile(id, model);
+        if effective
+            .max_output_tokens
+            .zip(effective.context_window)
+            .is_some_and(|(output, context)| output > context)
+        {
+            issues.push(ConfigIssue::error(format!(
+                "provider `{id}` model profile `{model}` max_output_tokens exceeds context_window after merging"
+            )));
+        }
+        if let Some(default_effort) = effective.default_reasoning_effort
+            && !effective.reasoning_efforts.is_empty()
+            && !effective.reasoning_efforts.contains(&default_effort)
+        {
+            issues.push(ConfigIssue::error(format!(
+                "provider `{id}` model profile `{model}` default reasoning effort is not listed in reasoning_efforts"
+            )));
+        }
+        if !effective.tool_use.is_supported()
+            && (effective.tool_choice.is_supported()
+                || effective.parallel_tool_calls.is_supported()
+                || effective.strict_tool_schema.is_supported())
+        {
+            issues.push(ConfigIssue::error(format!(
+                "provider `{id}` model profile `{model}` cannot support advanced tool features while tool_use is not supported"
+            )));
+        }
+        if effective.reasoning.is_supported()
+            && effective.reasoning_dialect == crate::model_catalog::ReasoningDialect::None
+        {
+            issues.push(ConfigIssue::error(format!(
+                "provider `{id}` model profile `{model}` supports reasoning but has no reasoning_dialect"
+            )));
+        }
+    }
+
+    for (name, value) in &provider.static_headers {
+        if let Err(reason) = validate_provider_static_header(name, value) {
+            issues.push(ConfigIssue::error(format!(
+                "provider `{id}` static header `{name}` is invalid: {reason}"
+            )));
+        }
+    }
+    for (field, value) in [
+        ("request_timeout_ms", provider.request_timeout_ms),
+        ("stream_idle_timeout_ms", provider.stream_idle_timeout_ms),
+    ] {
+        if value.is_some_and(|value| value == 0 || value > MAX_PROVIDER_TIMER_MS) {
+            issues.push(ConfigIssue::error(format!(
+                "provider `{id}` {field} must be between 1 and {MAX_PROVIDER_TIMER_MS}"
+            )));
+        }
+    }
+    if !(1..=5).contains(&provider.retry.max_attempts) {
+        issues.push(ConfigIssue::error(format!(
+            "provider `{id}` retry.max_attempts must be between 1 and 5"
+        )));
+    }
+    if provider.retry.initial_delay_ms == 0
+        || provider.retry.max_delay_ms == 0
+        || provider.retry.initial_delay_ms > provider.retry.max_delay_ms
+        || provider.retry.max_delay_ms > 60_000
+    {
+        issues.push(ConfigIssue::error(format!(
+            "provider `{id}` retry delays must be positive, initial_delay_ms <= max_delay_ms, and max_delay_ms <= 60000"
+        )));
+    }
+    if !provider.retry.jitter_ratio.is_finite()
+        || !(0.0..=1.0).contains(&provider.retry.jitter_ratio)
+    {
+        issues.push(ConfigIssue::error(format!(
+            "provider `{id}` retry.jitter_ratio must be between 0 and 1"
         )));
     }
     if provider.reasoning.default_budget_tokens == Some(0) {
@@ -2767,6 +2987,76 @@ fn validate_provider(
             }
         }
     }
+}
+
+pub(crate) fn validate_provider_static_header(name: &str, value: &str) -> Result<(), &'static str> {
+    let normalized = name.trim().to_ascii_lowercase();
+    if normalized.is_empty() || HeaderName::from_bytes(normalized.as_bytes()).is_err() {
+        return Err("header name is not a valid HTTP field name");
+    }
+    if HeaderValue::from_str(value).is_err() {
+        return Err("header value contains invalid bytes");
+    }
+    let has_sensitive_segment = normalized.split(['-', '_']).any(|segment| {
+        matches!(
+            segment,
+            "auth" | "authorization" | "token" | "secret" | "credential" | "cookie" | "signature"
+        )
+    });
+    if has_sensitive_segment
+        || normalized.contains("api-key")
+        || normalized.contains("api_key")
+        || matches!(
+            normalized.as_str(),
+            "authorization"
+                | "proxy-authorization"
+                | "proxy-authenticate"
+                | "www-authenticate"
+                | "x-api-key"
+                | "cookie"
+                | "set-cookie"
+                | "host"
+                | "accept"
+                | "accept-encoding"
+                | "content-encoding"
+                | "content-type"
+                | "content-length"
+                | "transfer-encoding"
+                | "connection"
+                | "keep-alive"
+                | "proxy-connection"
+                | "te"
+                | "trailer"
+                | "upgrade"
+                | "forwarded"
+                | "via"
+                | "cf-connecting-ip"
+                | "true-client-ip"
+                | "x-real-ip"
+                | "request-id"
+                | "x-request-id"
+                | "correlation-id"
+                | "x-correlation-id"
+                | "traceparent"
+                | "tracestate"
+                | "baggage"
+                | "b3"
+                | "sentry-trace"
+                | "x-cloud-trace-context"
+                | "grpc-trace-bin"
+                | "user-agent"
+                | "anthropic-version"
+                | "anthropic-beta"
+                | "openai-organization"
+                | "openai-project"
+        )
+        || ["x-forwarded-", "x-b3-", "sec-", "x-modelport-"]
+            .iter()
+            .any(|prefix| normalized.starts_with(prefix))
+    {
+        return Err("security, framing, authentication, and tracing headers are reserved");
+    }
+    Ok(())
 }
 
 fn validate_cpa_provider(
@@ -3084,9 +3374,15 @@ mod tests {
                 ProviderProtocol::OpenaiCompat,
                 true,
             ),
+            model_profile_defaults: Default::default(),
+            model_profiles: Default::default(),
             reasoning: ReasoningConfig::default(),
             sampling: SamplingConfig::default(),
             token_counting: TokenCountingConfig::default(),
+            static_headers: Default::default(),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            retry: Default::default(),
             pricing: None,
         };
         let openrouter = ProviderConfig {
@@ -3109,9 +3405,15 @@ mod tests {
                 ProviderProtocol::OpenaiCompat,
                 false,
             ),
+            model_profile_defaults: Default::default(),
+            model_profiles: Default::default(),
             reasoning: ReasoningConfig::default(),
             sampling: SamplingConfig::default(),
             token_counting: TokenCountingConfig::default(),
+            static_headers: Default::default(),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            retry: Default::default(),
             pricing: None,
         };
 
@@ -3172,9 +3474,15 @@ mod tests {
             buffer_stream_text: false,
             fidelity_mode: FidelityMode::BestEffort,
             tool_use: ToolUseConfig::default_for_provider(provider_id, protocol, false),
+            model_profile_defaults: Default::default(),
+            model_profiles: Default::default(),
             reasoning: ReasoningConfig::default(),
             sampling: SamplingConfig::default(),
             token_counting: TokenCountingConfig::default(),
+            static_headers: Default::default(),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            retry: Default::default(),
             pricing: None,
         }
     }
@@ -3297,6 +3605,8 @@ mod tests {
                     ("qwen-fast".to_owned(), false),
                     ("qwen-deep".to_owned(), true),
                 ]),
+                default_effort: None,
+                model_effort: HashMap::new(),
                 default_budget_tokens: Some(4096),
                 model_budget_tokens: HashMap::from([
                     ("qwen-fast".to_owned(), 512),
@@ -3877,5 +4187,27 @@ mod tests {
             issue.severity == ConfigIssueSeverity::Error
                 && issue.message.contains("alias `a` cannot resolve")
         }));
+    }
+
+    #[test]
+    fn static_provider_headers_reject_sensitive_and_transport_authority() {
+        for name in [
+            "Authorization",
+            "X-Auth-Token",
+            "X-Vendor-Signature",
+            "Content-Type",
+            "X-Forwarded-For",
+            "Baggage",
+            "X-ModelPort-Request-ID",
+        ] {
+            assert!(
+                validate_provider_static_header(name, "unsafe").is_err(),
+                "{name} must remain adapter-owned"
+            );
+        }
+        validate_provider_static_header("HTTP-Referer", "https://modelport.example")
+            .expect("non-sensitive attribution header should be accepted");
+        validate_provider_static_header("X-Title", "ModelPort")
+            .expect("non-sensitive attribution header should be accepted");
     }
 }

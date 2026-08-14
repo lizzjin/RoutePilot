@@ -144,6 +144,22 @@ describe('operator form validation', () => {
     expect(result.warnings.join(' ')).toContain('明文')
   })
 
+  it('rejects reserved static headers and unbounded retry settings', () => {
+    const result = validateProviderForm({
+      ...DEFAULT_PROVIDER_FORM,
+      id: 'proxy',
+      baseUrl: 'https://proxy.example.com/v1',
+      defaultModel: 'model-a',
+      models: 'model-a',
+      staticHeaders: 'X-Auth-Token: unsafe',
+      retryMaxAttempts: '6',
+    })
+
+    expect(result.errors.staticHeaders).toContain('保留头')
+    expect(result.errors.retryMaxAttempts).toContain('1 到 5')
+    expect(result.valid).toBe(false)
+  })
+
   it('validates credential identifiers and environment variable names', () => {
     const result = validateCredentialForm({
       ...DEFAULT_CREDENTIAL_FORM,

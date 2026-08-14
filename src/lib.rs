@@ -16,6 +16,7 @@ mod finalization;
 mod governance;
 mod http;
 mod metrics;
+mod model_catalog;
 mod oidc;
 mod policy;
 mod pricing;

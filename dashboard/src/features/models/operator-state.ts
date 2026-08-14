@@ -178,7 +178,63 @@ export function validateProviderForm(
     warnings.push('原生 Anthropic Provider 通常应使用 native 工具参数流；请确认上游协议确实需要转换。')
   }
 
+  const staticHeaderError = validateStaticHeaders(form.staticHeaders)
+  if (staticHeaderError) errors.staticHeaders = staticHeaderError
+  for (const [field, label] of [
+    ['requestTimeoutMs', '请求超时'],
+    ['streamIdleTimeoutMs', '流空闲超时'],
+    ['retryInitialDelayMs', '重试初始延迟'],
+    ['retryMaxDelayMs', '重试最大延迟'],
+  ] as const) {
+    const raw = form[field].trim()
+    if (raw && (!Number.isSafeInteger(Number(raw)) || Number(raw) <= 0)) {
+      errors[field] = `${label}必须是正整数毫秒数。`
+    }
+  }
+  const retryMaxAttempts = Number(form.retryMaxAttempts)
+  if (!Number.isInteger(retryMaxAttempts) || retryMaxAttempts < 1 || retryMaxAttempts > 5) {
+    errors.retryMaxAttempts = '总尝试次数必须是 1 到 5。'
+  }
+  if (Number(form.retryInitialDelayMs) > Number(form.retryMaxDelayMs)) {
+    errors.retryInitialDelayMs = '初始延迟不能大于最大延迟。'
+  }
+  const jitter = Number(form.retryJitterRatio)
+  if (!Number.isFinite(jitter) || jitter < 0 || jitter > 1) {
+    errors.retryJitterRatio = '抖动比例必须在 0 到 1 之间。'
+  }
+
   return { errors, warnings, valid: Object.keys(errors).length === 0 }
+}
+
+function validateStaticHeaders(value: string): string | undefined {
+  const reserved = new Set([
+    'authorization', 'proxy-authorization', 'proxy-authenticate', 'www-authenticate', 'x-api-key',
+    'cookie', 'set-cookie', 'host', 'accept', 'accept-encoding', 'content-encoding', 'content-type',
+    'content-length', 'transfer-encoding', 'connection', 'keep-alive', 'proxy-connection', 'te',
+    'trailer', 'upgrade', 'forwarded', 'via', 'cf-connecting-ip', 'true-client-ip', 'x-real-ip',
+    'request-id', 'x-request-id', 'correlation-id', 'x-correlation-id', 'traceparent', 'tracestate',
+    'baggage', 'b3', 'sentry-trace', 'x-cloud-trace-context', 'grpc-trace-bin', 'user-agent',
+    'anthropic-version', 'anthropic-beta', 'openai-organization', 'openai-project',
+  ])
+  for (const rawLine of value.split('\n')) {
+    const line = rawLine.trim()
+    if (!line) continue
+    const separator = line.indexOf(':')
+    if (separator <= 0 || !line.slice(separator + 1).trim()) {
+      return '每行使用 Header-Name: value，名称和值都不能为空。'
+    }
+    const name = line.slice(0, separator).trim().toLowerCase()
+    if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/.test(name)) return `Header 名称 ${name} 无效。`
+    const sensitiveSegment = name.split(/[-_]/).some((segment) => (
+      ['auth', 'authorization', 'token', 'secret', 'credential', 'cookie', 'signature'].includes(segment)
+    ))
+    const reservedPrefix = ['x-forwarded-', 'x-b3-', 'sec-', 'x-modelport-']
+      .some((prefix) => name.startsWith(prefix))
+    if (reserved.has(name) || sensitiveSegment || name.includes('api-key') || name.includes('api_key') || reservedPrefix) {
+      return `${name} 属于认证、链路或 HTTP 帧保留头，不能静态覆盖。`
+    }
+  }
+  return undefined
 }
 
 export function validateCredentialForm(

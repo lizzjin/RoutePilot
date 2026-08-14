@@ -31,9 +31,9 @@ pub async fn input_tokens(
             super::anthropic::headers(&resolved.provider, client_headers)?,
         ),
         ProviderProtocol::OpenaiCompat => {
-            super::openai_compat::apply_reasoning_config(
+            super::openai_compat::apply_resolved_reasoning_config(
                 &request.as_message_request(),
-                &resolved.provider.reasoning,
+                &resolved,
                 &mut body,
             )?;
             (
@@ -44,12 +44,13 @@ pub async fn input_tokens(
     };
     let upstream = state
         .transport
-        .post_json(
+        .post_json_with_timeout(
             &resolved.provider_id,
             state.security.allow_private_provider_urls(),
             &url,
             &headers,
             &body,
+            resolved.provider.request_timeout(),
         )
         .await?;
     let input_tokens = upstream

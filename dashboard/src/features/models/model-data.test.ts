@@ -92,6 +92,29 @@ describe('model feature data', () => {
     expect(payload.clearApiKeyEnv).toBe(true)
   })
 
+  it('serializes safe headers, provider timeouts, and bounded retry policy', () => {
+    const form = providerToForm(provider())
+    form.staticHeaders = 'HTTP-Referer: https://modelport.example\nX-Title: ModelPort'
+    form.requestTimeoutMs = '120000'
+    form.streamIdleTimeoutMs = '30000'
+    form.retryMaxAttempts = '2'
+
+    expect(providerPayloadFromForm(form, false)).toMatchObject({
+      staticHeaders: {
+        'HTTP-Referer': 'https://modelport.example',
+        'X-Title': 'ModelPort',
+      },
+      requestTimeoutMs: 120000,
+      streamIdleTimeoutMs: 30000,
+      retry: {
+        max_attempts: 2,
+        initial_delay_ms: 250,
+        max_delay_ms: 5000,
+        jitter_ratio: 0.1,
+      },
+    })
+  })
+
   it('chooses stream argument defaults from protocol and adapter behavior', () => {
     expect(defaultToolStreamingArguments('anthropic', false, 'anthropic')).toBe('native')
     expect(defaultToolStreamingArguments('openai-compat', true, 'proxy')).toBe('cumulative')

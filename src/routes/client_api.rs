@@ -51,7 +51,7 @@ pub(super) async fn models(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let started = Instant::now();
     let result = (|| {
-        let identity = authenticate_client(&state, &headers)?;
+        let identity = authenticate_inference_client(&state, &headers)?;
         let request_client_ip = client_ip(&headers, Some(peer_addr), &state.trusted_proxies);
         identity
             .api_key_policy
@@ -109,7 +109,7 @@ pub(super) async fn effective_policy(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
-    let identity = authenticate_client(&state, &headers)?;
+    let identity = authenticate_inference_client(&state, &headers)?;
     let tenant = state.control.tenant_scope(&identity)?;
     Ok(Json(json!({
         "principalType": identity.principal_type,
@@ -355,7 +355,7 @@ async fn count_tokens_inner(
     request: AnthropicCountTokensRequest,
 ) -> Result<Json<Value>, AppError> {
     ensure_accepting_inference(&state)?;
-    let identity = authenticate_client(&state, headers)?;
+    let identity = authenticate_inference_client(&state, headers)?;
     validate_count_tokens_request(&request)?;
     let requested_model = request.model.clone();
     let config = effective_config(&state);
@@ -477,7 +477,7 @@ async fn handle_inference(
             &state, route_name, "draining", error, started,
         ));
     }
-    let identity = match authenticate_client(&state, &headers) {
+    let identity = match authenticate_inference_client(&state, &headers) {
         Ok(identity) => identity,
         Err(err) => {
             return Err(record_inference_rejection(

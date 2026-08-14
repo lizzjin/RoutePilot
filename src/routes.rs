@@ -65,6 +65,7 @@ mod dashboard_view;
 mod governance_routes;
 mod logs_view;
 mod ops;
+mod ops_agent;
 mod provider_view;
 mod settings_view;
 
@@ -586,6 +587,12 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/messages/count_tokens", post(client_api::count_tokens))
         .route("/v1/chat/completions", post(client_api::chat_completions))
         .route("/v1/effective-policy", get(client_api::effective_policy))
+        .route("/internal/ops/v1/snapshot", get(ops_agent::snapshot))
+        .route(
+            "/internal/ops/v1/observations",
+            post(ops_agent::submit_observation),
+        )
+        .route("/internal/ops/v1/heartbeats", post(ops_agent::heartbeat))
         .route(
             "/admin/auth/login",
             post(admin_login)
@@ -628,6 +635,23 @@ pub fn router(state: AppState) -> Router {
             post(governance_routes::admin_apply_change_request),
         )
         .route("/admin/dashboard", get(admin_dashboard))
+        .route("/admin/ops/incidents", get(ops_agent::admin_incidents))
+        .route(
+            "/admin/ops/configuration",
+            get(ops_agent::admin_configuration).put(ops_agent::admin_update_configuration),
+        )
+        .route(
+            "/admin/ops/incidents/{incident_id}",
+            get(ops_agent::admin_incident_detail),
+        )
+        .route(
+            "/admin/ops/incidents/{incident_id}/status",
+            post(ops_agent::admin_update_incident_status),
+        )
+        .route(
+            "/admin/ops/incidents/{incident_id}/feedback",
+            post(ops_agent::admin_record_incident_feedback),
+        )
         .route(
             "/admin/providers",
             get(admin_providers::admin_providers).post(admin_providers::admin_create_provider),
@@ -1269,6 +1293,24 @@ fn authenticate_client(state: &AppState, headers: &HeaderMap) -> Result<ClientId
     }
     state.config.snapshot().validate_client_auth(headers)?;
     Ok(ControlStore::legacy_identity())
+}
+
+fn authenticate_inference_client(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<ClientIdentity, AppError> {
+    let identity = authenticate_client(state, headers)?;
+    ensure_inference_identity(&identity)?;
+    Ok(identity)
+}
+
+fn ensure_inference_identity(identity: &ClientIdentity) -> Result<(), AppError> {
+    if identity.purpose.as_deref() == Some("modelport_ops_agent") {
+        return Err(AppError::Forbidden(
+            "operations-agent credentials cannot access the inference data plane".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn client_ip(
@@ -5429,6 +5471,87 @@ data: [DONE]
 
         let (audit, _) = ledger.audit_events(20).await.unwrap();
         assert!(audit.iter().any(|event| event["type"] == "data_retention"));
+    }
+
+    #[tokio::test]
+    async fn operations_agent_configuration_is_opt_in_csrf_protected_and_local_first() {
+        let mut state = test_state_with_admin("http://127.0.0.1:9".to_owned(), 1024 * 1024);
+        let mut config = state.config.snapshot();
+        let mut local = config.providers.remove("mimo").unwrap();
+        local.display_name = "Local vLLM".to_owned();
+        local.default_model = "qwen3".to_owned();
+        local.models = vec!["qwen3".to_owned()];
+        config.default_provider = "local_vllm".to_owned();
+        config.provider_order = vec!["local_vllm".to_owned()];
+        config.providers.insert("local_vllm".to_owned(), local);
+        state.config = Arc::new(RuntimeConfig::new(config));
+        let app = router(state);
+        let cookie = login_cookie(app.clone(), "admin", "strong-password-123").await;
+
+        let initial = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/ops/configuration")
+                    .header(COOKIE, cookie.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(initial.status(), StatusCode::OK);
+        let initial: Value =
+            serde_json::from_slice(&to_bytes(initial.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(initial["enabled"], false);
+        assert_eq!(initial["analysisEnabled"], false);
+        assert_eq!(initial["preferLocal"], true);
+        assert_eq!(initial["recommendedModel"], "local_vllm:qwen3");
+        assert_eq!(initial["candidates"][0]["local"], true);
+
+        let body = json!({
+            "enabled": true,
+            "analysisEnabled": true,
+            "selectedModel": "local_vllm:qwen3",
+            "preferLocal": true,
+        })
+        .to_string();
+        let without_csrf = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/admin/ops/configuration")
+                    .header(COOKIE, cookie.clone())
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(without_csrf.status(), StatusCode::FORBIDDEN);
+
+        let updated = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/admin/ops/configuration")
+                    .header(COOKIE, cookie)
+                    .header("x-modelport-csrf", "1")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.status(), StatusCode::OK);
+        let updated: Value =
+            serde_json::from_slice(&to_bytes(updated.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(updated["enabled"], true);
+        assert_eq!(updated["analysisEnabled"], true);
+        assert_eq!(updated["selectedModelLocal"], true);
+        assert_eq!(updated["modelReady"], true);
     }
 
     #[tokio::test]

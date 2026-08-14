@@ -19,7 +19,7 @@ COPY migrations ./migrations
 COPY crates ./crates
 COPY ops-agent ./ops-agent
 
-RUN cargo build --release --locked -p model-port
+RUN cargo build --release --locked -p modelport-ops-agent
 
 FROM debian:bookworm-slim AS runtime
 
@@ -27,20 +27,18 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
 
-RUN useradd --system --home /nonexistent --shell /usr/sbin/nologin modelport
-RUN mkdir -p /data /config \
-  && chown -R modelport:modelport /data /config
+RUN useradd --system --home /nonexistent --shell /usr/sbin/nologin modelport-ops \
+  && mkdir -p /var/lib/modelport-ops \
+  && chown -R modelport-ops:modelport-ops /var/lib/modelport-ops
 
-COPY --from=builder /app/target/release/model-port /usr/local/bin/model-port
+COPY --from=builder /app/target/release/modelport-ops-agent /usr/local/bin/modelport-ops-agent
 
-# Keep source metadata after dependency and binary layers so a new commit label
-# does not invalidate the slow apt or Rust build cache.
 ARG MODELPORT_SOURCE_REVISION
 ARG MODELPORT_SOURCE_STATE
 ARG MODELPORT_VERSION
 ARG MODELPORT_BUILD_DATE
-LABEL org.opencontainers.image.title="ModelPort" \
-      org.opencontainers.image.description="Self-hosted multi-protocol model gateway" \
+LABEL org.opencontainers.image.title="ModelPort Operations Agent" \
+      org.opencontainers.image.description="Deterministic read-only operations agent for ModelPort" \
       org.opencontainers.image.source="https://github.com/tiammomo/ModelPort" \
       org.opencontainers.image.revision="$MODELPORT_SOURCE_REVISION" \
       org.opencontainers.image.version="$MODELPORT_VERSION" \
@@ -48,16 +46,17 @@ LABEL org.opencontainers.image.title="ModelPort" \
       org.opencontainers.image.licenses="MIT" \
       io.modelport.source-state="$MODELPORT_SOURCE_STATE"
 
-USER modelport
+USER modelport-ops
 
-ENV MODELPORT_BIND=0.0.0.0:38082
-ENV MODELPORT_STATE_DIR=/data
-ENV MODELPORT_CONFIG=/config/config.toml
-ENV RUST_LOG=model_port=info,tower_http=info
+ENV MODELPORT_OPS_BIND=0.0.0.0:38083
+ENV MODELPORT_OPS_BASE_URL=http://modelport:38082
+ENV MODELPORT_OPS_MODE=disabled
+ENV MODELPORT_OPS_SPOOL_PATH=/var/lib/modelport-ops/spool.sqlite
+ENV RUST_LOG=modelport_ops_agent=info
 
-EXPOSE 38082
-VOLUME ["/data"]
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:38082/livez >/dev/null || exit 1
+EXPOSE 38083
+VOLUME ["/var/lib/modelport-ops"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:38083/readyz >/dev/null || exit 1
 
-ENTRYPOINT ["/usr/local/bin/model-port"]
+ENTRYPOINT ["/usr/local/bin/modelport-ops-agent"]

@@ -139,6 +139,7 @@ struct ControlInner {
     active_provider_credentials: BTreeMap<String, String>,
     provider_credential_pool_modes: BTreeMap<String, String>,
     provider_credential_health: BTreeMap<String, BTreeMap<String, ProviderCredentialHealthRecord>>,
+    ops_agent_config: OpsAgentConfigRecord,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -172,6 +173,8 @@ struct ControlFile {
     provider_credential_pool_modes: BTreeMap<String, String>,
     #[serde(default)]
     provider_credential_health: Vec<ProviderCredentialHealthRecord>,
+    #[serde(default)]
+    ops_agent_config: OpsAgentConfigRecord,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -183,6 +186,30 @@ struct RouteConfigRecord {
     deleted_aliases: BTreeSet<String>,
     default_provider: Option<String>,
     provider_order: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpsAgentConfigRecord {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub analysis_enabled: bool,
+    #[serde(default)]
+    pub selected_model: Option<String>,
+    #[serde(default = "default_true")]
+    pub prefer_local: bool,
+}
+
+impl Default for OpsAgentConfigRecord {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            analysis_enabled: false,
+            selected_model: None,
+            prefer_local: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -930,6 +957,7 @@ pub struct ClientIdentity {
     pub user_id: String,
     pub username: String,
     pub principal_type: String,
+    pub purpose: Option<String>,
     pub api_key_id: Option<String>,
     pub(crate) quota_subject_id: Option<String>,
     pub(crate) quota_subject_aliases: Vec<String>,
@@ -1122,6 +1150,7 @@ impl ControlStore {
                 "activeProviderCredentials": {},
                 "providerCredentialPoolModes": {},
                 "providerCredentialHealth": [],
+                "opsAgentConfig": {},
             }))?;
         let redacted_historical_errors = redact_historical_control_errors(&mut file);
         let repaired_api_key_rotations = repair_api_key_rotation_invariants(&mut file);
@@ -1204,6 +1233,7 @@ impl ControlStore {
                 active_provider_credentials: file.active_provider_credentials,
                 provider_credential_pool_modes: file.provider_credential_pool_modes,
                 provider_credential_health,
+                ops_agent_config: file.ops_agent_config,
             }),
             revision: AtomicU64::new(revision),
             persistence_degraded: AtomicBool::new(false),
@@ -1239,6 +1269,34 @@ impl ControlStore {
             active_provider_credentials: inner.active_provider_credentials.clone(),
             provider_credential_pool_modes: inner.provider_credential_pool_modes.clone(),
         }
+    }
+
+    pub fn ops_agent_config(&self) -> OpsAgentConfigRecord {
+        self.inner
+            .lock()
+            .expect("control lock poisoned")
+            .ops_agent_config
+            .clone()
+    }
+
+    pub fn set_ops_agent_config(
+        &self,
+        mut config: OpsAgentConfigRecord,
+    ) -> Result<OpsAgentConfigRecord, AppError> {
+        config.selected_model = config
+            .selected_model
+            .map(|value| validate_non_empty("selectedModel", &value, 320))
+            .transpose()?;
+        if config.analysis_enabled && config.selected_model.is_none() {
+            return Err(AppError::InvalidRequest(
+                "selectedModel is required when model analysis is enabled".to_owned(),
+            ));
+        }
+        let mut inner = self.inner.lock().expect("control lock poisoned");
+        let previous = inner.clone();
+        inner.ops_agent_config = config.clone();
+        self.save_or_restore_locked(&mut inner, previous)?;
+        Ok(config)
     }
 
     pub fn effective_aliases(
@@ -1785,6 +1843,7 @@ impl ControlStore {
                 .flat_map(|credentials| credentials.values())
                 .collect::<Vec<_>>(),
             "activeProviderCredentials": &inner.active_provider_credentials,
+            "opsAgentConfig": &inner.ops_agent_config,
         })
     }
 
@@ -2221,6 +2280,7 @@ impl ControlStore {
             user_id: record_snapshot.user_id.clone(),
             username: record_snapshot.username.clone(),
             principal_type: record_snapshot.principal_type.clone(),
+            purpose: record_snapshot.purpose.clone(),
             api_key_id: Some(record_snapshot.id.clone()),
             quota_subject_id: Some(record_snapshot.effective_quota_subject_id().to_owned()),
             quota_subject_aliases: record_snapshot.effective_quota_subject_aliases(),
@@ -2243,6 +2303,7 @@ impl ControlStore {
             user_id: "usr_local_admin".to_owned(),
             username: "local-admin".to_owned(),
             principal_type: "legacy".to_owned(),
+            purpose: None,
             api_key_id: None,
             quota_subject_id: None,
             quota_subject_aliases: Vec::new(),
@@ -3242,6 +3303,7 @@ impl ControlStore {
                 .values()
                 .flat_map(|health| health.values().cloned())
                 .collect(),
+            ops_agent_config: inner.ops_agent_config.clone(),
         };
         store.compare_and_swap_json(expected_revision, &file)
     }
@@ -4018,6 +4080,30 @@ mod tests {
     use axum::http::HeaderValue;
 
     use super::*;
+
+    #[test]
+    fn operations_agent_is_off_by_default_and_configuration_is_persisted_atomically() {
+        let store = ControlStore::for_tests();
+        let initial = store.ops_agent_config();
+        assert!(!initial.enabled);
+        assert!(!initial.analysis_enabled);
+        assert!(initial.prefer_local);
+        assert!(initial.selected_model.is_none());
+
+        let updated = store
+            .set_ops_agent_config(OpsAgentConfigRecord {
+                enabled: true,
+                analysis_enabled: true,
+                selected_model: Some("local_vllm:qwen3".to_owned()),
+                prefer_local: true,
+            })
+            .unwrap();
+        assert!(updated.enabled);
+        assert_eq!(
+            store.ops_agent_config().selected_model.as_deref(),
+            Some("local_vllm:qwen3")
+        );
+    }
 
     fn failing_store_path(label: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -4874,6 +4960,13 @@ mod tests {
             .unwrap();
         assert_eq!(created.public.principal_type, "service_account");
         assert!(created.public.expires_at.is_some());
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_str(&created.key).unwrap());
+        let authenticated = store.authenticate_headers(&headers).unwrap().unwrap();
+        assert_eq!(
+            authenticated.purpose.as_deref(),
+            Some("nightly approved document indexing")
+        );
     }
 
     #[test]
@@ -5004,6 +5097,7 @@ mod tests {
             user_id: "usr_test".to_owned(),
             username: "test-user".to_owned(),
             principal_type: "user".to_owned(),
+            purpose: None,
             api_key_id: Some("key_test".to_owned()),
             quota_subject_id: Some("key_test".to_owned()),
             quota_subject_aliases: vec!["key_test".to_owned()],

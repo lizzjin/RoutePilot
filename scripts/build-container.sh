@@ -48,8 +48,13 @@ docker build \
   --file "$ROOT_DIR/dashboard/Dockerfile" \
   --tag modelport-dashboard:local \
   "$ROOT_DIR"
+docker build \
+  "${common_args[@]}" \
+  --file "$ROOT_DIR/ops-agent/Dockerfile" \
+  --tag modelport-ops-agent:local \
+  "$ROOT_DIR"
 
-for image in modelport:local modelport-dashboard:local; do
+for image in modelport:local modelport-dashboard:local modelport-ops-agent:local; do
   image_id="$(docker image inspect "$image" --format '{{.Id}}')"
   image_revision="$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
   image_state="$(docker image inspect "$image" --format '{{index .Config.Labels "io.modelport.source-state"}}')"

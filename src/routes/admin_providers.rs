@@ -34,6 +34,16 @@ pub(super) struct ProviderWriteBody {
     buffer_stream_text: Option<bool>,
     fidelity_mode: Option<String>,
     tool_use: Option<ToolUseConfig>,
+    model_profile_defaults: Option<crate::model_catalog::ModelProfileOverride>,
+    model_profiles:
+        Option<std::collections::HashMap<String, crate::model_catalog::ModelProfileOverride>>,
+    reasoning: Option<crate::config::ReasoningConfig>,
+    sampling: Option<crate::config::SamplingConfig>,
+    token_counting: Option<crate::config::TokenCountingConfig>,
+    static_headers: Option<std::collections::BTreeMap<String, String>>,
+    request_timeout_ms: Option<u64>,
+    stream_idle_timeout_ms: Option<u64>,
+    retry: Option<crate::config::ProviderRetryConfig>,
     pricing: Option<crate::pricing::ModelPricing>,
     disabled: Option<bool>,
 }
@@ -52,6 +62,7 @@ pub(super) struct ProviderModelWriteBody {
     display_name: Option<String>,
     family: Option<String>,
     context_window: Option<u64>,
+    profile: Option<crate::model_catalog::ModelProfileOverride>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -410,6 +421,7 @@ pub(super) async fn admin_upsert_provider_model(
             display_name: body.display_name,
             family: body.family,
             context_window: body.context_window,
+            profile: body.profile.unwrap_or_default(),
             created_at_ms: 0,
             updated_at_ms: 0,
         })?;
@@ -829,6 +841,40 @@ fn provider_body_to_record(
         buffer_stream_text,
         fidelity_mode,
         tool_use,
+        model_profile_defaults: body
+            .model_profile_defaults
+            .or_else(|| current_provider.map(|provider| provider.model_profile_defaults.clone()))
+            .unwrap_or_default(),
+        model_profiles: body
+            .model_profiles
+            .or_else(|| current_provider.map(|provider| provider.model_profiles.clone()))
+            .unwrap_or_default(),
+        reasoning: body
+            .reasoning
+            .or_else(|| current_provider.map(|provider| provider.reasoning.clone()))
+            .unwrap_or_default(),
+        sampling: body
+            .sampling
+            .or_else(|| current_provider.map(|provider| provider.sampling.clone()))
+            .unwrap_or_default(),
+        token_counting: body
+            .token_counting
+            .or_else(|| current_provider.map(|provider| provider.token_counting.clone()))
+            .unwrap_or_default(),
+        static_headers: body
+            .static_headers
+            .or_else(|| current_provider.map(|provider| provider.static_headers.clone()))
+            .unwrap_or_default(),
+        request_timeout_ms: body
+            .request_timeout_ms
+            .or_else(|| current_provider.and_then(|provider| provider.request_timeout_ms)),
+        stream_idle_timeout_ms: body
+            .stream_idle_timeout_ms
+            .or_else(|| current_provider.and_then(|provider| provider.stream_idle_timeout_ms)),
+        retry: body
+            .retry
+            .or_else(|| current_provider.map(|provider| provider.retry.clone()))
+            .unwrap_or_default(),
         pricing: body
             .pricing
             .or_else(|| current_provider.and_then(|provider| provider.pricing)),

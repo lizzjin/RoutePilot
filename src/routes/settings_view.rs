@@ -253,9 +253,15 @@ mod tests {
             buffer_stream_text: false,
             fidelity_mode: FidelityMode::BestEffort,
             tool_use: Default::default(),
+            model_profile_defaults: Default::default(),
+            model_profiles: Default::default(),
             reasoning: Default::default(),
             sampling: Default::default(),
             token_counting: Default::default(),
+            static_headers: Default::default(),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            retry: Default::default(),
             pricing: None,
         };
         AppConfig {

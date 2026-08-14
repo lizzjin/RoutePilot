@@ -18,7 +18,10 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    config::{ProviderConfig, ToolUseConfig},
+    config::{
+        ProviderConfig, ProviderRetryConfig, ReasoningConfig, SamplingConfig, TokenCountingConfig,
+        ToolUseConfig,
+    },
     control_view::{
         ApiKeyViewRecord, ProviderCredentialHealthViewRecord, ProviderCredentialViewRecord,
         ProviderHealthViewRecord, QuotaViewRecord, TeamViewRecord, provider_credential_health_row,
@@ -26,6 +29,7 @@ use crate::{
     },
     domain::{TenantScope, valid_tenant_identifier},
     error::{AppError, audit_safe_persisted_error},
+    model_catalog::ModelProfileOverride,
     policy::{
         enforce_ip_policy, enforce_model_policy, enforce_provider_policy, normalize_ip_rules,
         normalize_policy_list, policy_references_provider,
@@ -222,6 +226,24 @@ pub struct ProviderOverrideRecord {
     #[serde(default)]
     pub tool_use: ToolUseConfig,
     #[serde(default)]
+    pub model_profile_defaults: ModelProfileOverride,
+    #[serde(default)]
+    pub model_profiles: HashMap<String, ModelProfileOverride>,
+    #[serde(default)]
+    pub reasoning: ReasoningConfig,
+    #[serde(default)]
+    pub sampling: SamplingConfig,
+    #[serde(default)]
+    pub token_counting: TokenCountingConfig,
+    #[serde(default)]
+    pub static_headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub request_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub stream_idle_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub retry: ProviderRetryConfig,
+    #[serde(default)]
     pub pricing: Option<pricing::ModelPricing>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
@@ -240,6 +262,8 @@ pub struct ProviderModelOverrideRecord {
     pub family: Option<String>,
     #[serde(default)]
     pub context_window: Option<u64>,
+    #[serde(default)]
+    pub profile: ModelProfileOverride,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -1315,6 +1339,59 @@ impl ControlStore {
             record.models.insert(0, record.default_model.clone());
         }
         record.model_prefixes = normalize_policy_list(record.model_prefixes)?;
+        if record
+            .model_profiles
+            .keys()
+            .any(|model| !record.models.contains(model))
+        {
+            return Err(AppError::InvalidRequest(
+                "modelProfiles keys must also be present in models".to_owned(),
+            ));
+        }
+        crate::model_catalog::validate_model_profile_override(&record.model_profile_defaults)
+            .map_err(|reason| {
+                AppError::InvalidRequest(format!("modelProfileDefaults is invalid: {reason}"))
+            })?;
+        for (model, profile) in &record.model_profiles {
+            crate::model_catalog::validate_model_profile_override(profile).map_err(|reason| {
+                AppError::InvalidRequest(format!("model profile `{model}` is invalid: {reason}"))
+            })?;
+            let mut merged = record.model_profile_defaults.clone();
+            merged.merge(profile);
+            crate::model_catalog::validate_model_profile_override(&merged).map_err(|reason| {
+                AppError::InvalidRequest(format!(
+                    "model profile `{model}` is invalid after merging provider defaults: {reason}"
+                ))
+            })?;
+        }
+        for (name, value) in &record.static_headers {
+            crate::config::validate_provider_static_header(name, value).map_err(|reason| {
+                AppError::InvalidRequest(format!("static header `{name}` is invalid: {reason}"))
+            })?;
+        }
+        for (field, value) in [
+            ("requestTimeoutMs", record.request_timeout_ms),
+            ("streamIdleTimeoutMs", record.stream_idle_timeout_ms),
+        ] {
+            if value.is_some_and(|value| value == 0 || value > 2_147_483_647) {
+                return Err(AppError::InvalidRequest(format!(
+                    "{field} must be between 1 and 2147483647"
+                )));
+            }
+        }
+        if !(1..=5).contains(&record.retry.max_attempts)
+            || record.retry.initial_delay_ms == 0
+            || record.retry.max_delay_ms == 0
+            || record.retry.initial_delay_ms > record.retry.max_delay_ms
+            || record.retry.max_delay_ms > 60_000
+            || !record.retry.jitter_ratio.is_finite()
+            || !(0.0..=1.0).contains(&record.retry.jitter_ratio)
+        {
+            return Err(AppError::InvalidRequest(
+                "retry requires maxAttempts 1..5, positive ordered delays up to 60000ms, and jitterRatio 0..1"
+                    .to_owned(),
+            ));
+        }
         record.api_key_env = record
             .api_key_env
             .map(|value| validate_env_name(&value))
@@ -1397,6 +1474,16 @@ impl ControlStore {
             .family
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty());
+        let mut effective_profile = ModelProfileOverride {
+            display_name: record.display_name.clone(),
+            family: record.family.clone(),
+            context_window: record.context_window,
+            ..ModelProfileOverride::default()
+        };
+        effective_profile.merge(&record.profile);
+        crate::model_catalog::validate_model_profile_override(&effective_profile).map_err(
+            |reason| AppError::InvalidRequest(format!("model profile is invalid: {reason}")),
+        )?;
         let now = now_millis();
 
         let mut inner = self.inner.lock().expect("control lock poisoned");
@@ -1442,6 +1529,7 @@ impl ControlStore {
             display_name: None,
             family: None,
             context_window: None,
+            profile: ModelProfileOverride::default(),
             created_at_ms,
             updated_at_ms: now,
         };
@@ -4083,6 +4171,15 @@ mod tests {
             buffer_stream_text: false,
             fidelity_mode: "strict".to_owned(),
             tool_use: ToolUseConfig::default(),
+            model_profile_defaults: Default::default(),
+            model_profiles: Default::default(),
+            reasoning: Default::default(),
+            sampling: Default::default(),
+            token_counting: Default::default(),
+            static_headers: Default::default(),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            retry: Default::default(),
             pricing: None,
             created_at_ms: 0,
             updated_at_ms: 0,
@@ -4149,6 +4246,7 @@ mod tests {
                 display_name: None,
                 family: None,
                 context_window: None,
+                profile: Default::default(),
                 created_at_ms: 0,
                 updated_at_ms: 0,
             })
@@ -4164,6 +4262,7 @@ mod tests {
                 display_name: None,
                 family: None,
                 context_window: None,
+                profile: Default::default(),
                 created_at_ms: 0,
                 updated_at_ms: 0,
             })
@@ -5219,6 +5318,7 @@ mod tests {
             display_name: Some("Test Model".to_owned()),
             family: Some("test".to_owned()),
             context_window: Some(8_192),
+            profile: Default::default(),
             created_at_ms: 0,
             updated_at_ms: 0,
         })
@@ -5275,6 +5375,7 @@ mod tests {
                 display_name: None,
                 family: None,
                 context_window: None,
+                profile: Default::default(),
                 created_at_ms: 0,
                 updated_at_ms: 0,
             }

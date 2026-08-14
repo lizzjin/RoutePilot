@@ -411,10 +411,10 @@ fn content_to_text(content: &Value) -> String {
                 Some("tool_result") => Some(content_to_text(
                     block.get("content").unwrap_or(&Value::Null),
                 )),
-                Some("thinking") => block
-                    .get("thinking")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
+                // Thinking blocks are protocol state, not assistant-visible text.
+                // A cross-protocol adapter must never expose hidden reasoning by
+                // flattening it into ordinary message content.
+                Some("thinking" | "redacted_thinking") => None,
                 _ => None,
             })
             .collect::<Vec<_>>()

@@ -16,6 +16,7 @@ use crate::{
     error::AppError,
     exchange::ExchangeRequest,
     http::Header,
+    model_catalog::{ReasoningDialect, ReasoningEffort},
     pricing::{self, USAGE_HEADER},
     providers::{
         openai_client_stream::{openai_complete_to_stream, openai_stream_passthrough},
@@ -50,21 +51,23 @@ pub async fn chat_completions(
                 false,
                 resolved.provider.max_tokens_field,
             )?;
-            apply_default_reasoning_config(
-                &request.requested_model,
-                &resolved.provider.reasoning,
+            apply_exchange_reasoning_config(&request, &resolved, &mut body)?;
+            apply_tool_use_capabilities(
                 &mut body,
+                &resolved
+                    .provider
+                    .tool_use_for_model(&resolved.provider_id, &resolved.model),
             )?;
-            apply_tool_use_capabilities(&mut body, &resolved.provider.tool_use)?;
             apply_buffered_generation_defaults(&mut body);
             let upstream = state
                 .transport
-                .post_json(
+                .post_json_with_timeout(
                     &resolved.provider_id,
                     state.security.allow_private_provider_urls(),
                     &url,
                     &headers,
                     &body,
+                    resolved.provider.request_timeout(),
                 )
                 .await?;
             let usage = pricing::openai_usage_if_present(&upstream);
@@ -97,20 +100,23 @@ pub async fn chat_completions(
 
         let mut body =
             request.to_openai_request(&resolved.model, true, resolved.provider.max_tokens_field)?;
-        apply_default_reasoning_config(
-            &request.requested_model,
-            &resolved.provider.reasoning,
+        apply_exchange_reasoning_config(&request, &resolved, &mut body)?;
+        apply_tool_use_capabilities(
             &mut body,
+            &resolved
+                .provider
+                .tool_use_for_model(&resolved.provider_id, &resolved.model),
         )?;
-        apply_tool_use_capabilities(&mut body, &resolved.provider.tool_use)?;
         let frames = state
             .transport
-            .post_json_sse(
+            .post_json_sse_with_timeouts(
                 &resolved.provider_id,
                 state.security.allow_private_provider_urls(),
                 url,
                 headers,
                 body,
+                resolved.provider.request_timeout(),
+                resolved.provider.stream_idle_timeout(),
             )
             .await?;
         let events =
@@ -124,20 +130,22 @@ pub async fn chat_completions(
             false,
             resolved.provider.max_tokens_field,
         )?;
-        apply_default_reasoning_config(
-            &request.requested_model,
-            &resolved.provider.reasoning,
+        apply_exchange_reasoning_config(&request, &resolved, &mut body)?;
+        apply_tool_use_capabilities(
             &mut body,
+            &resolved
+                .provider
+                .tool_use_for_model(&resolved.provider_id, &resolved.model),
         )?;
-        apply_tool_use_capabilities(&mut body, &resolved.provider.tool_use)?;
         let mut upstream = state
             .transport
-            .post_json(
+            .post_json_with_timeout(
                 &resolved.provider_id,
                 state.security.allow_private_provider_urls(),
                 &url,
                 &headers,
                 &body,
+                resolved.provider.request_timeout(),
             )
             .await?;
         let usage = pricing::openai_usage_if_present(&upstream);
@@ -189,12 +197,13 @@ pub async fn messages(
             apply_buffered_generation_defaults(&mut body);
             let upstream = state
                 .transport
-                .post_json(
+                .post_json_with_timeout(
                     &resolved.provider_id,
                     state.security.allow_private_provider_urls(),
                     &url,
                     &headers,
                     &body,
+                    resolved.provider.request_timeout(),
                 )
                 .await?;
             let usage = pricing::openai_usage_if_present(&upstream);
@@ -227,12 +236,14 @@ pub async fn messages(
         let body = anthropic_request_body(&request, &resolved, true)?;
         let frames = state
             .transport
-            .post_json_sse(
+            .post_json_sse_with_timeouts(
                 &resolved.provider_id,
                 state.security.allow_private_provider_urls(),
                 url,
                 headers,
                 body,
+                resolved.provider.request_timeout(),
+                resolved.provider.stream_idle_timeout(),
             )
             .await?;
         let events = openai_stream_to_anthropic(
@@ -253,12 +264,13 @@ pub async fn messages(
         }
         let response = state
             .transport
-            .post_json(
+            .post_json_with_timeout(
                 &resolved.provider_id,
                 state.security.allow_private_provider_urls(),
                 &url,
                 &headers,
                 &body,
+                resolved.provider.request_timeout(),
             )
             .await?;
         let usage = pricing::openai_usage_if_present(&response);
@@ -306,9 +318,14 @@ fn anthropic_request_body(
         stream,
         resolved.provider.max_tokens_field,
     )?;
-    apply_reasoning_config(request, &resolved.provider.reasoning, &mut body)?;
+    apply_resolved_reasoning_config(request, resolved, &mut body)?;
     apply_sampling_config(request, &resolved.provider.sampling, &mut body)?;
-    apply_tool_use_capabilities(&mut body, &resolved.provider.tool_use)?;
+    apply_tool_use_capabilities(
+        &mut body,
+        &resolved
+            .provider
+            .tool_use_for_model(&resolved.provider_id, &resolved.model),
+    )?;
     Ok(body)
 }
 
@@ -329,16 +346,13 @@ fn apply_tool_use_capabilities(
     Ok(())
 }
 
-pub(crate) fn apply_reasoning_config(
+pub(crate) fn apply_resolved_reasoning_config(
     request: &AnthropicRequest,
-    config: &ReasoningConfig,
+    resolved: &ResolvedProvider,
     body: &mut Value,
 ) -> Result<(), AppError> {
-    if config.mode == ReasoningMode::None {
-        return Ok(());
-    }
-
-    let mut enabled_override = config
+    let config = &resolved.provider.reasoning;
+    let mut enabled = config
         .model_enabled
         .get(&request.model)
         .copied()
@@ -353,9 +367,9 @@ pub(crate) fn apply_reasoning_config(
             .and_then(Value::as_str)
             .ok_or_else(|| AppError::InvalidRequest("thinking.type is required".to_owned()))?;
         match mode {
-            "disabled" => enabled_override = Some(false),
+            "disabled" => enabled = Some(false),
             "enabled" | "adaptive" => {
-                enabled_override = Some(true);
+                enabled = Some(true);
                 if let Some(value) = object.get("budget_tokens") {
                     let budget = value.as_u64().filter(|budget| *budget > 0).ok_or_else(|| {
                         AppError::InvalidRequest(
@@ -373,15 +387,110 @@ pub(crate) fn apply_reasoning_config(
         }
     }
 
-    apply_llama_cpp_reasoning(
+    let profile = resolved
+        .provider
+        .model_profile(&resolved.provider_id, &resolved.model);
+    let effort = if enabled == Some(false) {
+        Some(ReasoningEffort::Off)
+    } else {
+        config
+            .model_effort
+            .get(&request.model)
+            .copied()
+            .or(config.default_effort)
+            .or(profile.default_reasoning_effort)
+            .or(enabled.map(|_| ReasoningEffort::High))
+    };
+    let dialect = if config.mode == ReasoningMode::LlamaCpp {
+        ReasoningDialect::LlamaCpp
+    } else {
+        profile.reasoning_dialect
+    };
+    apply_reasoning_dialect(
         &request.model,
-        enabled_override,
+        effort,
+        enabled,
         explicit_budget,
         config,
+        dialect,
+        &profile.reasoning_effort_map,
         body,
     )
 }
 
+#[cfg(test)]
+fn apply_reasoning_config(
+    request: &AnthropicRequest,
+    config: &ReasoningConfig,
+    body: &mut Value,
+) -> Result<(), AppError> {
+    let mut enabled = config
+        .model_enabled
+        .get(&request.model)
+        .copied()
+        .or(config.default_enabled);
+    let mut explicit_budget = None;
+    if let Some(thinking) = request.extra.get("thinking") {
+        let object = thinking
+            .as_object()
+            .ok_or_else(|| AppError::InvalidRequest("thinking must be an object".to_owned()))?;
+        match object.get("type").and_then(Value::as_str) {
+            Some("disabled") => enabled = Some(false),
+            Some("enabled" | "adaptive") => {
+                enabled = Some(true);
+                explicit_budget = object.get("budget_tokens").and_then(Value::as_u64);
+            }
+            Some(mode) => {
+                return Err(AppError::InvalidRequest(format!(
+                    "unsupported thinking.type `{mode}`"
+                )));
+            }
+            None => {
+                return Err(AppError::InvalidRequest(
+                    "thinking.type is required".to_owned(),
+                ));
+            }
+        }
+    }
+    apply_llama_cpp_reasoning(&request.model, enabled, explicit_budget, config, body)
+}
+
+fn apply_exchange_reasoning_config(
+    request: &ExchangeRequest,
+    resolved: &ResolvedProvider,
+    body: &mut Value,
+) -> Result<(), AppError> {
+    let config = &resolved.provider.reasoning;
+    let profile = resolved
+        .provider
+        .model_profile(&resolved.provider_id, &resolved.model);
+    let explicit = request.reasoning_effort();
+    let effort = explicit
+        .or_else(|| config.model_effort.get(&request.requested_model).copied())
+        .or(config.default_effort)
+        .or(profile.default_reasoning_effort);
+    let enabled = explicit
+        .map(|effort| effort != ReasoningEffort::Off)
+        .or_else(|| config.model_enabled.get(&request.requested_model).copied())
+        .or(config.default_enabled);
+    let dialect = if config.mode == ReasoningMode::LlamaCpp {
+        ReasoningDialect::LlamaCpp
+    } else {
+        profile.reasoning_dialect
+    };
+    apply_reasoning_dialect(
+        &request.requested_model,
+        effort,
+        enabled,
+        None,
+        config,
+        dialect,
+        &profile.reasoning_effort_map,
+        body,
+    )
+}
+
+#[cfg(test)]
 fn apply_default_reasoning_config(
     requested_model: &str,
     config: &ReasoningConfig,
@@ -396,6 +505,103 @@ fn apply_default_reasoning_config(
         .copied()
         .or(config.default_enabled);
     apply_llama_cpp_reasoning(requested_model, enabled, None, config, body)
+}
+
+fn apply_reasoning_dialect(
+    requested_model: &str,
+    effort: Option<ReasoningEffort>,
+    enabled: Option<bool>,
+    explicit_budget: Option<u64>,
+    config: &ReasoningConfig,
+    dialect: ReasoningDialect,
+    effort_map: &std::collections::BTreeMap<ReasoningEffort, String>,
+    body: &mut Value,
+) -> Result<(), AppError> {
+    if dialect == ReasoningDialect::None {
+        if config.mode == ReasoningMode::LlamaCpp {
+            return apply_llama_cpp_reasoning(
+                requested_model,
+                enabled,
+                explicit_budget,
+                config,
+                body,
+            );
+        }
+        return Ok(());
+    }
+    if dialect == ReasoningDialect::LlamaCpp {
+        return apply_llama_cpp_reasoning(requested_model, enabled, explicit_budget, config, body);
+    }
+    if explicit_budget.is_some() && dialect != ReasoningDialect::LlamaCpp {
+        return Err(AppError::InvalidRequest(format!(
+            "thinking.budget_tokens cannot be represented by the selected {:?} reasoning dialect",
+            dialect
+        )));
+    }
+    let body = body.as_object_mut().ok_or_else(|| {
+        AppError::InvalidRequest("upstream request body must be an object".to_owned())
+    })?;
+    body.remove("reasoning_effort");
+    let selected = effort.or_else(|| {
+        enabled.map(|enabled| {
+            if enabled {
+                ReasoningEffort::High
+            } else {
+                ReasoningEffort::Off
+            }
+        })
+    });
+    let Some(selected) = selected else {
+        return Ok(());
+    };
+    let rendered = effort_map
+        .get(&selected)
+        .cloned()
+        .unwrap_or_else(|| selected.as_str().to_owned());
+    let enabled = selected != ReasoningEffort::Off;
+    match dialect {
+        ReasoningDialect::None => {}
+        ReasoningDialect::NativeAnthropic => {
+            return Err(AppError::Config(
+                "native Anthropic reasoning cannot be rendered on an OpenAI-compatible endpoint"
+                    .to_owned(),
+            ));
+        }
+        ReasoningDialect::Openai => {
+            body.insert("reasoning_effort".to_owned(), Value::String(rendered));
+        }
+        ReasoningDialect::Deepseek => {
+            body.insert(
+                "thinking".to_owned(),
+                json!({"type": if enabled { "enabled" } else { "disabled" }}),
+            );
+            body.insert("reasoning_effort".to_owned(), Value::String(rendered));
+        }
+        ReasoningDialect::Openrouter => {
+            body.insert("reasoning".to_owned(), json!({"effort": rendered}));
+        }
+        ReasoningDialect::Qwen => {
+            body.insert("enable_thinking".to_owned(), Value::Bool(enabled));
+        }
+        ReasoningDialect::Zai => {
+            body.insert(
+                "thinking".to_owned(),
+                if enabled {
+                    json!({"type": "enabled", "clear_thinking": false})
+                } else {
+                    json!({"type": "disabled"})
+                },
+            );
+            if enabled {
+                body.insert("reasoning_effort".to_owned(), Value::String(rendered));
+            }
+        }
+        ReasoningDialect::StringThinking => {
+            body.insert("thinking".to_owned(), Value::String(rendered));
+        }
+        ReasoningDialect::LlamaCpp => unreachable!("handled before borrowing the body object"),
+    }
+    Ok(())
 }
 
 fn apply_llama_cpp_reasoning(
@@ -472,17 +678,21 @@ pub(crate) fn headers(
     provider: &crate::config::ProviderConfig,
     client_headers: &HeaderMap,
 ) -> Result<Vec<Header>, AppError> {
-    let mut headers = Vec::new();
+    let mut headers = provider
+        .static_headers
+        .iter()
+        .map(|(name, value)| (name.to_ascii_lowercase(), value.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>();
     if let Some(api_key) = provider.api_key()? {
-        headers.push(("Authorization".to_owned(), format!("Bearer {api_key}")));
+        headers.insert("authorization".to_owned(), format!("Bearer {api_key}"));
     }
     if let Some(request_id) = client_headers
         .get("x-request-id")
         .and_then(|value| value.to_str().ok())
     {
-        headers.push(("x-request-id".to_owned(), request_id.to_owned()));
+        headers.insert("x-request-id".to_owned(), request_id.to_owned());
     }
-    Ok(headers)
+    Ok(headers.into_iter().collect())
 }
 
 #[cfg(test)]
@@ -501,6 +711,8 @@ mod tests {
             mode: ReasoningMode::LlamaCpp,
             default_enabled: None,
             model_enabled: HashMap::new(),
+            default_effort: None,
+            model_effort: HashMap::new(),
             default_budget_tokens: Some(4096),
             model_budget_tokens: HashMap::from([
                 ("qwen3.5-fast".to_owned(), 512),
@@ -695,5 +907,93 @@ mod tests {
         apply_tool_use_capabilities(&mut body, &config).unwrap();
 
         assert_eq!(body["parallel_tool_calls"], false);
+    }
+
+    #[test]
+    fn renders_reasoning_controls_for_supported_provider_dialects() {
+        let config = ReasoningConfig::default();
+        for (dialect, expected) in [
+            (
+                ReasoningDialect::Openai,
+                json!({"reasoning_effort": "high"}),
+            ),
+            (
+                ReasoningDialect::Deepseek,
+                json!({"thinking": {"type": "enabled"}, "reasoning_effort": "high"}),
+            ),
+            (
+                ReasoningDialect::Openrouter,
+                json!({"reasoning": {"effort": "high"}}),
+            ),
+            (ReasoningDialect::Qwen, json!({"enable_thinking": true})),
+            (
+                ReasoningDialect::Zai,
+                json!({"thinking": {"type": "enabled", "clear_thinking": false}, "reasoning_effort": "high"}),
+            ),
+            (
+                ReasoningDialect::StringThinking,
+                json!({"thinking": "high"}),
+            ),
+        ] {
+            let mut body = json!({});
+            apply_reasoning_dialect(
+                "logical-model",
+                Some(ReasoningEffort::High),
+                Some(true),
+                None,
+                &config,
+                dialect,
+                &Default::default(),
+                &mut body,
+            )
+            .unwrap();
+            assert_eq!(body, expected, "dialect {dialect:?}");
+        }
+    }
+
+    #[test]
+    fn provider_static_headers_cannot_override_adapter_authority() {
+        let mut provider = crate::config::ProviderConfig {
+            display_name: "OpenRouter".to_owned(),
+            protocol: crate::config::ProviderProtocol::OpenaiCompat,
+            base_url: "https://openrouter.ai/api/v1".to_owned(),
+            api_key_env: None,
+            api_key: Some("secret".to_owned()),
+            api_key_required: true,
+            default_model: "openrouter/auto".to_owned(),
+            models: vec!["openrouter/auto".to_owned()],
+            model_prefixes: Vec::new(),
+            passthrough_unknown_models: false,
+            max_tokens_field: crate::config::MaxTokensField::MaxCompletionTokens,
+            deduplicate_stream_text: false,
+            buffer_stream_text: false,
+            fidelity_mode: crate::config::FidelityMode::BestEffort,
+            tool_use: Default::default(),
+            model_profile_defaults: Default::default(),
+            model_profiles: Default::default(),
+            reasoning: Default::default(),
+            sampling: Default::default(),
+            token_counting: Default::default(),
+            static_headers: std::collections::BTreeMap::from([
+                (
+                    "HTTP-Referer".to_owned(),
+                    "https://modelport.example".to_owned(),
+                ),
+                ("authorization".to_owned(), "unsafe".to_owned()),
+            ]),
+            request_timeout_ms: None,
+            stream_idle_timeout_ms: None,
+            retry: Default::default(),
+            pricing: None,
+        };
+        // Runtime configuration validation rejects the reserved value. Even if
+        // an already-loaded record is mutated, the adapter's credential wins.
+        let rendered = headers(&provider, &HeaderMap::new()).unwrap();
+        assert!(rendered.contains(&(
+            "http-referer".to_owned(),
+            "https://modelport.example".to_owned()
+        )));
+        assert!(rendered.contains(&("authorization".to_owned(), "Bearer secret".to_owned())));
+        provider.static_headers.clear();
     }
 }

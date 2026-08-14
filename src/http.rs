@@ -28,6 +28,7 @@ const DEFAULT_MAX_SSE_LINE_BYTES: usize = 1024 * 1024;
 const DEFAULT_MAX_SSE_EVENT_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_MAX_SSE_STREAM_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PINNED_CLIENTS: usize = 128;
+const MAX_UPSTREAM_RETRY_AFTER_SECS: u64 = 60;
 
 #[derive(Debug, Clone)]
 pub struct HttpTransport {
@@ -109,7 +110,28 @@ impl HttpTransport {
         headers: &[Header],
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, AppError> {
+        self.post_json_with_timeout(
+            provider_id,
+            allow_private_provider_urls,
+            url,
+            headers,
+            body,
+            None,
+        )
+        .await
+    }
+
+    pub async fn post_json_with_timeout(
+        &self,
+        provider_id: &str,
+        allow_private_provider_urls: bool,
+        url: &str,
+        headers: &[Header],
+        body: &serde_json::Value,
+        request_timeout: Option<Duration>,
+    ) -> Result<serde_json::Value, AppError> {
         let started = Instant::now();
+        let request_timeout = request_timeout.unwrap_or(self.request_timeout);
         let client = self
             .client_for_provider(provider_id, url, allow_private_provider_urls)
             .await?;
@@ -117,11 +139,12 @@ impl HttpTransport {
             .post(url)
             .headers(header_map(headers)?)
             .json(body)
-            .timeout(self.request_timeout)
+            .timeout(request_timeout)
             .send()
             .await
             .map_err(request_error)?;
         let status = response.status();
+        let retry_after_secs = upstream_retry_after_secs(response.headers());
         let body = response_body(response, self.max_response_bytes).await?;
 
         debug!(
@@ -135,6 +158,7 @@ impl HttpTransport {
             return Err(AppError::Upstream {
                 status: status.as_u16(),
                 body: sanitize_error_body(&body),
+                retry_after_secs,
             });
         }
 
@@ -162,6 +186,7 @@ impl HttpTransport {
             .await
             .map_err(request_error)?;
         let status = response.status();
+        let retry_after_secs = upstream_retry_after_secs(response.headers());
         let body = response_body(response, self.max_response_bytes).await?;
 
         debug!(
@@ -175,6 +200,7 @@ impl HttpTransport {
             return Err(AppError::Upstream {
                 status: status.as_u16(),
                 body: sanitize_error_body(&body),
+                retry_after_secs,
             });
         }
 
@@ -183,6 +209,7 @@ impl HttpTransport {
         })
     }
 
+    #[cfg(test)]
     pub async fn post_json_sse(
         &self,
         provider_id: &str,
@@ -191,7 +218,32 @@ impl HttpTransport {
         headers: Vec<Header>,
         body: serde_json::Value,
     ) -> Result<SseFrameStream, AppError> {
-        let transport = self.clone();
+        self.post_json_sse_with_timeouts(
+            provider_id,
+            allow_private_provider_urls,
+            url,
+            headers,
+            body,
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn post_json_sse_with_timeouts(
+        &self,
+        provider_id: &str,
+        allow_private_provider_urls: bool,
+        url: String,
+        headers: Vec<Header>,
+        body: serde_json::Value,
+        request_timeout: Option<Duration>,
+        stream_idle_timeout: Option<Duration>,
+    ) -> Result<SseFrameStream, AppError> {
+        let mut transport = self.clone();
+        transport.request_timeout = request_timeout.unwrap_or(transport.request_timeout);
+        transport.stream_idle_timeout =
+            stream_idle_timeout.unwrap_or(transport.stream_idle_timeout);
         let started = Instant::now();
         let client = transport
             .client_for_provider(provider_id, &url, allow_private_provider_urls)
@@ -214,6 +266,7 @@ impl HttpTransport {
         })?
         .map_err(request_error)?;
         let status = response.status();
+        let retry_after_secs = upstream_retry_after_secs(response.headers());
 
         if !status.is_success() {
             let body = response_body_with_timeouts(
@@ -226,6 +279,7 @@ impl HttpTransport {
             return Err(AppError::Upstream {
                 status: status.as_u16(),
                 body: sanitize_error_body(&body),
+                retry_after_secs,
             });
         }
         if status == reqwest::StatusCode::NO_CONTENT {
@@ -647,6 +701,22 @@ fn header_map(headers: &[Header]) -> Result<HeaderMap, AppError> {
     Ok(map)
 }
 
+fn upstream_retry_after_secs(headers: &HeaderMap) -> Option<u64> {
+    let value = headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim();
+    let seconds = value.parse::<u64>().ok().or_else(|| {
+        let deadline = httpdate::parse_http_date(value).ok()?;
+        deadline
+            .duration_since(std::time::SystemTime::now())
+            .ok()
+            .map(|duration| duration.as_secs())
+    })?;
+    Some(seconds.min(MAX_UPSTREAM_RETRY_AFTER_SECS))
+}
+
 fn request_error(err: reqwest::Error) -> AppError {
     if err.is_timeout() {
         AppError::Transport(format!("upstream request timed out: {err}"))
@@ -783,6 +853,23 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
+
+    #[test]
+    fn retry_after_supports_seconds_and_caps_http_dates() {
+        let mut headers = HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, HeaderValue::from_static("7"));
+        assert_eq!(upstream_retry_after_secs(&headers), Some(7));
+
+        let future = std::time::SystemTime::now() + Duration::from_secs(600);
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            HeaderValue::from_str(&httpdate::fmt_http_date(future)).unwrap(),
+        );
+        assert_eq!(
+            upstream_retry_after_secs(&headers),
+            Some(MAX_UPSTREAM_RETRY_AFTER_SECS)
+        );
+    }
 
     #[test]
     fn parses_sse_frame() {
@@ -1086,7 +1173,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            AppError::Upstream { status: 429, body } if body.contains("provider busy")
+            AppError::Upstream { status: 429, body, .. } if body.contains("provider busy")
         ));
     }
 

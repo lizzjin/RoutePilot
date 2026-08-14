@@ -701,6 +701,21 @@ max_tokens_field = "max_completion_tokens" # max_tokens | both
 deduplicate_stream_text = false
 buffer_stream_text = false
 fidelity_mode = "best_effort" # strict | best_effort | stability
+request_timeout_ms = 600000       # optional; non-stream and SSE handshake/total timeout
+stream_idle_timeout_ms = 300000   # optional; resets after each SSE data chunk
+
+# Only non-sensitive, static attribution headers are allowed. Authentication,
+# cookies, Host/framing, forwarding, request-ID, trace, and User-Agent headers
+# are reserved and rejected during validation.
+[providers.example.static_headers]
+HTTP-Referer = "https://modelport.example"
+X-Title = "ModelPort"
+
+[providers.example.retry]
+max_attempts = 2       # includes the first request; 1 disables same-Provider retry
+initial_delay_ms = 250
+max_delay_ms = 5000    # also caps an upstream Retry-After; absolute maximum 60000
+jitter_ratio = 0.1
 
 [providers.example.tool_use]
 supported = true
@@ -716,8 +731,31 @@ repair_invalid_arguments = false
 mode = "llama_cpp"
 default_enabled = false
 model_enabled = { "example-fast" = false, "example-code" = true, "example-deep" = true }
+default_effort = "high"
+model_effort = { "example-fast" = "off", "example-deep" = "max" }
 default_budget_tokens = 4096
 model_budget_tokens = { "example-fast" = 512, "example-deep" = 16384 }
+
+# Optional per-Provider and exact-model adaptation metadata. `models` remains
+# the route allowlist and order; profiles do not authorize a model by themselves.
+[providers.example.model_profile_defaults]
+input_modalities = ["text"]
+tool_use = "supported"          # supported | unsupported | unknown
+tool_choice = "supported"
+parallel_tool_calls = "supported"
+strict_tool_schema = "unknown"
+reasoning = "unknown"
+reasoning_dialect = "openai"    # see the reasoning dialect list below
+reasoning_replay = "same_protocol"
+
+[providers.example.model_profiles."example-model"]
+display_name = "Example Model"
+family = "example"
+context_window = 131072
+max_output_tokens = 32768
+reasoning = "supported"
+reasoning_efforts = ["off", "low", "medium", "high", "max"]
+default_reasoning_effort = "medium"
 
 [providers.example.sampling]
 mode = "llama_cpp"
@@ -761,6 +799,41 @@ Provider invoices and should be versioned in deployment documentation.
 `fidelity_mode="stability"` is a label for a provider configured with stream
 rewriting; it does not enable deduplication by itself. Set
 `deduplicate_stream_text` or `buffer_stream_text` explicitly.
+
+The embedded, versioned adaptation catalog is the first layer for known
+Provider/model combinations. Effective model metadata is merged in this order:
+catalog, Provider `model_profile_defaults`, TOML `model_profiles`, then an
+administrator control-plane override. `/models` discovery may add a reviewed
+candidate to inventory but never authorizes routing and never changes a
+capability to verified. Capability values are tri-state. Advanced behavior such
+as explicit reasoning, strict tool schemas, or parallel tool calls is used only
+when the effective model profile says `supported`; `unknown` fails closed for
+that behavior while ordinary text requests remain compatible.
+
+Reasoning effort values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`,
+and `max`. An explicit client control wins over logical-model defaults, exact
+model defaults, and Provider defaults. OpenAI clients send `reasoning_effort`;
+Anthropic clients keep native `thinking`. Known OpenAI-compatible dialects are
+`openai`, `deepseek`, `openrouter`, `qwen`, `zai`, `string_thinking`, and
+`llama_cpp`; native Anthropic providers use `native_anthropic`. ModelPort does
+not silently choose a nearby effort when the requested level is absent.
+`reasoning_effort_map` can map a portable effort to an exact upstream string.
+Budget and effort remain separate: a `thinking.budget_tokens` value is rejected
+when the selected dialect cannot represent it.
+
+Reasoning replay is protocol state. Native Anthropic thinking signatures and
+OpenAI-compatible `reasoning_content` are preserved only on a lossless path.
+They are never flattened into ordinary assistant text or fabricated. A
+cross-protocol tool continuation is rejected before egress when its effective
+profile requires `same_protocol` replay; use the Provider's native protocol for
+that agent workflow.
+
+The Provider retry loop owns each billable attempt and ledger row. Only
+transport failures, HTTP 429, and HTTP 5xx are retried. Authentication, quota,
+ordinary invalid requests, and protocol/schema failures are not automatically
+retried. A numeric or HTTP-date `Retry-After` is honored within
+`retry.max_delay_ms` and the global 60-second bound. Once a streaming response
+has crossed the downstream header boundary, ModelPort never starts a fallback.
 
 `tool_use.streaming_arguments` is a runtime Tool Use argument strategy. For an
 OpenAI-compatible provider, `delta` preserves incremental argument fragments,

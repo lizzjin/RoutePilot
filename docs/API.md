@@ -130,9 +130,15 @@ This compatibility surface currently accepts text-only `system`, `developer`,
 `user`, `assistant`, and `tool` messages; OpenAI function tools and tool calls;
 `temperature`, `top_p`, penalties, `seed`, `stop`, `tool_choice`,
 `parallel_tool_calls`, text `response_format`, `stream_options.include_usage`,
-and `n=1`. `max_completion_tokens` or legacy `max_tokens` is optional; when
-neither is supplied, ModelPort uses 4096 only for local estimation and for an
-Anthropic Provider that requires an explicit output limit.
+`store=false` or `null`, and `n=1`. ModelPort removes `store` before Provider
+egress because it does not persist Chat Completions. `store=true` is rejected.
+Assistant messages may carry string or null `reasoning_content` when the
+selected Provider is OpenAI-compatible; ModelPort validates and forwards it so
+reasoning-model conversations can continue across turns. Anthropic Provider
+routes reject that extension because they cannot preserve it faithfully.
+`max_completion_tokens` or legacy `max_tokens` is optional; when neither is
+supplied, ModelPort uses 4096 only for local estimation and for an Anthropic
+Provider that requires an explicit output limit.
 
 The endpoint deliberately rejects fields outside this documented slice,
 including current image/audio content, rather than silently dropping semantics.
@@ -538,6 +544,16 @@ Provider update bodies use camelCase. Omitting `apiKeyEnv` preserves the
 current environment-variable name. Send `clearApiKeyEnv: true` to clear it;
 do not combine that flag with a non-empty `apiKeyEnv`, which returns HTTP 400.
 An empty dashboard field is serialized as the explicit clear flag.
+
+Administrator Provider rows also expose `adaptationCatalogVersion`,
+`modelProfileDefaults`, `modelProfiles`, safe `staticHeaders`, Provider timeout
+overrides, and the bounded `retry` policy. Each `modelInventory` item includes
+its effective context/output limits, modalities, tri-state tool/reasoning
+capabilities, reasoning efforts/dialect/replay requirement, profile `source`,
+and `verification`. `verification="unverified"` is intentionally independent
+from discovery and configured support. Ordinary-user catalog rows expose the
+same safe effective model capability metadata but omit Provider topology,
+credentials, pricing, and diagnostics.
 
 `POST /admin/providers/deepseek/balance` performs an administrator-only,
 CSRF-protected live read against DeepSeek's official `GET /user/balance`

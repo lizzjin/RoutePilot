@@ -1,0 +1,367 @@
+{
+  "version": 1,
+  "providers": {
+    "anthropic": {
+      "defaults": {
+        "input_modalities": ["text", "image"],
+        "tool_use": "supported",
+        "tool_choice": "supported",
+        "parallel_tool_calls": "supported",
+        "strict_tool_schema": "supported",
+        "reasoning": "supported",
+        "reasoning_dialect": "native_anthropic",
+        "reasoning_replay": "same_protocol"
+      },
+      "models": {
+        "claude-opus-4-7": {
+          "display_name": "Claude Opus 4.7",
+          "family": "claude-opus",
+          "context_window": 1000000,
+          "max_output_tokens": 128000,
+          "reasoning_efforts": ["xhigh", "max"]
+        },
+        "claude-sonnet-4-6": {
+          "display_name": "Claude Sonnet 4.6",
+          "family": "claude-sonnet",
+          "context_window": 1000000,
+          "max_output_tokens": 128000,
+          "reasoning_efforts": ["max"]
+        },
+        "claude-sonnet-4-5": {
+          "display_name": "Claude Sonnet 4.5",
+          "family": "claude-sonnet",
+          "context_window": 1000000,
+          "max_output_tokens": 64000
+        },
+        "claude-haiku-4-5": {
+          "display_name": "Claude Haiku 4.5",
+          "family": "claude-haiku",
+          "context_window": 200000,
+          "max_output_tokens": 64000
+        }
+      }
+    },
+    "cpa_claude": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "tool_use": "supported",
+        "tool_choice": "supported",
+        "parallel_tool_calls": "supported",
+        "strict_tool_schema": "unknown",
+        "reasoning": "supported",
+        "reasoning_dialect": "native_anthropic",
+        "reasoning_replay": "same_protocol"
+      }
+    },
+    "deepseek": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "tool_use": "supported",
+        "tool_choice": "supported",
+        "parallel_tool_calls": "supported",
+        "strict_tool_schema": "unknown",
+        "reasoning": "supported",
+        "reasoning_efforts": ["off", "high", "max"],
+        "reasoning_effort_map": {"off": "none", "high": "high", "max": "max"},
+        "default_reasoning_effort": "high",
+        "reasoning_dialect": "native_anthropic",
+        "reasoning_replay": "same_protocol"
+      },
+      "models": {
+        "deepseek-v4-flash": {
+          "display_name": "DeepSeek V4 Flash",
+          "family": "deepseek-v4",
+          "context_window": 1000000,
+          "max_output_tokens": 384000
+        },
+        "deepseek-v4-pro": {
+          "display_name": "DeepSeek V4 Pro",
+          "family": "deepseek-v4",
+          "context_window": 1000000,
+          "max_output_tokens": 384000
+        }
+      }
+    },
+    "deepseek_openai": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "tool_use": "supported",
+        "tool_choice": "supported",
+        "parallel_tool_calls": "supported",
+        "strict_tool_schema": "unknown",
+        "reasoning": "supported",
+        "reasoning_efforts": ["off", "high", "max"],
+        "reasoning_effort_map": {"off": "none", "high": "high", "max": "max"},
+        "default_reasoning_effort": "high",
+        "reasoning_dialect": "deepseek",
+        "reasoning_replay": "same_protocol"
+      },
+      "models": {
+        "deepseek-v4-flash": {
+          "display_name": "DeepSeek V4 Flash",
+          "family": "deepseek-v4",
+          "context_window": 1000000,
+          "max_output_tokens": 384000
+        },
+        "deepseek-v4-pro": {
+          "display_name": "DeepSeek V4 Pro",
+          "family": "deepseek-v4",
+          "context_window": 1000000,
+          "max_output_tokens": 384000
+        }
+      }
+    },
+    "openai": {
+      "defaults": {
+        "input_modalities": ["text", "image"],
+        "tool_use": "supported",
+        "tool_choice": "supported",
+        "parallel_tool_calls": "supported",
+        "strict_tool_schema": "supported",
+        "reasoning_dialect": "openai",
+        "reasoning_replay": "none"
+      },
+      "models": {
+        "gpt-5.3-codex": {
+          "display_name": "GPT-5.3 Codex",
+          "family": "gpt-5-codex",
+          "context_window": 400000,
+          "max_output_tokens": 128000,
+          "reasoning": "supported",
+          "reasoning_efforts": ["off", "low", "medium", "high", "xhigh"],
+          "reasoning_effort_map": {"off": "none", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh"}
+        },
+        "gpt-5.2": {
+          "display_name": "GPT-5.2",
+          "family": "gpt-5",
+          "context_window": 400000,
+          "max_output_tokens": 128000,
+          "reasoning": "supported",
+          "reasoning_efforts": ["off", "low", "medium", "high", "xhigh"],
+          "reasoning_effort_map": {"off": "none", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh"}
+        },
+        "gpt-5": {
+          "display_name": "GPT-5",
+          "family": "gpt-5",
+          "context_window": 400000,
+          "max_output_tokens": 128000,
+          "reasoning": "supported",
+          "reasoning_efforts": ["minimal", "low", "medium", "high"]
+        },
+        "gpt-5-mini": {
+          "display_name": "GPT-5 Mini",
+          "family": "gpt-5",
+          "context_window": 400000,
+          "max_output_tokens": 128000,
+          "reasoning": "supported",
+          "reasoning_efforts": ["minimal", "low", "medium", "high"]
+        },
+        "gpt-4.1": {
+          "display_name": "GPT-4.1",
+          "family": "gpt-4.1",
+          "context_window": 1047576,
+          "max_output_tokens": 32768,
+          "reasoning": "unsupported"
+        },
+        "gpt-4.1-mini": {
+          "display_name": "GPT-4.1 Mini",
+          "family": "gpt-4.1",
+          "context_window": 1047576,
+          "max_output_tokens": 32768,
+          "reasoning": "unsupported"
+        }
+      }
+    },
+    "cpa_codex": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "tool_use": "supported",
+        "tool_choice": "supported",
+        "parallel_tool_calls": "supported",
+        "strict_tool_schema": "unknown",
+        "reasoning": "supported",
+        "reasoning_efforts": ["off", "low", "medium", "high", "xhigh"],
+        "reasoning_effort_map": {"off": "none", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh"},
+        "reasoning_dialect": "openai",
+        "reasoning_replay": "none"
+      }
+    },
+    "openrouter": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "tool_use": "supported",
+        "tool_choice": "supported",
+        "parallel_tool_calls": "supported",
+        "strict_tool_schema": "unknown",
+        "reasoning": "unknown",
+        "reasoning_dialect": "openrouter",
+        "reasoning_replay": "same_protocol"
+      },
+      "models": {
+        "openrouter/auto": {
+          "display_name": "OpenRouter Auto",
+          "family": "router",
+          "context_window": 2000000,
+          "max_output_tokens": 4096
+        }
+      }
+    },
+    "gemini": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "tool_use": "supported",
+        "tool_choice": "supported",
+        "parallel_tool_calls": "supported",
+        "strict_tool_schema": "unknown",
+        "reasoning": "unknown",
+        "reasoning_dialect": "openai",
+        "reasoning_replay": "none"
+      },
+      "models": {
+        "gemini-2.5-pro": {"display_name": "Gemini 2.5 Pro", "family": "gemini-2.5", "context_window": 1048576, "max_output_tokens": 65536},
+        "gemini-2.5-flash": {"display_name": "Gemini 2.5 Flash", "family": "gemini-2.5", "context_window": 1048576, "max_output_tokens": 65536},
+        "gemini-2.5-flash-lite": {"display_name": "Gemini 2.5 Flash Lite", "family": "gemini-2.5", "context_window": 1048576, "max_output_tokens": 65536}
+      }
+    },
+    "dashscope": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "tool_use": "supported",
+        "tool_choice": "supported",
+        "parallel_tool_calls": "supported",
+        "strict_tool_schema": "unknown",
+        "reasoning": "unknown",
+        "reasoning_efforts": ["off", "high"],
+        "reasoning_dialect": "qwen",
+        "reasoning_replay": "same_protocol"
+      }
+    },
+    "zhipu": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "tool_use": "supported",
+        "tool_choice": "supported",
+        "parallel_tool_calls": "supported",
+        "strict_tool_schema": "unknown",
+        "reasoning": "unknown",
+        "reasoning_efforts": ["off", "high"],
+        "reasoning_dialect": "zai",
+        "reasoning_replay": "same_protocol"
+      },
+      "models": {
+        "glm-4.7": {"display_name": "GLM-4.7", "family": "glm-4", "context_window": 204800, "max_output_tokens": 131072, "reasoning": "supported"},
+        "glm-z1-flash": {"display_name": "GLM-Z1 Flash", "family": "glm-z1", "reasoning": "supported"}
+      }
+    },
+    "kimi": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "tool_use": "supported",
+        "tool_choice": "supported",
+        "parallel_tool_calls": "supported",
+        "strict_tool_schema": "unknown",
+        "reasoning": "unknown",
+        "reasoning_dialect": "string_thinking",
+        "reasoning_replay": "same_protocol"
+      }
+    },
+    "groq": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "tool_use": "supported",
+        "tool_choice": "supported",
+        "parallel_tool_calls": "supported",
+        "strict_tool_schema": "unknown",
+        "reasoning": "unsupported"
+      },
+      "models": {
+        "llama-3.3-70b-versatile": {"display_name": "Llama 3.3 70B", "family": "llama-3.3", "context_window": 131072, "max_output_tokens": 32768},
+        "llama-3.1-8b-instant": {"display_name": "Llama 3.1 8B", "family": "llama-3.1", "context_window": 131072, "max_output_tokens": 131072}
+      }
+    },
+    "mistral": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "tool_use": "supported",
+        "tool_choice": "supported",
+        "parallel_tool_calls": "supported",
+        "strict_tool_schema": "unknown",
+        "reasoning": "unsupported"
+      },
+      "models": {
+        "mistral-large-latest": {"display_name": "Mistral Large", "family": "mistral-large", "context_window": 262144, "max_output_tokens": 262144},
+        "codestral-latest": {"display_name": "Codestral", "family": "codestral", "context_window": 256000, "max_output_tokens": 4096}
+      }
+    },
+    "xai": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "reasoning": "unknown",
+        "reasoning_dialect": "openai",
+        "reasoning_replay": "none"
+      }
+    },
+    "ark": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "reasoning": "unknown",
+        "reasoning_dialect": "openai",
+        "reasoning_replay": "none"
+      }
+    },
+    "mimo": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "reasoning": "unknown",
+        "reasoning_dialect": "openai",
+        "reasoning_replay": "same_protocol"
+      }
+    },
+    "ollama": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "reasoning": "unknown",
+        "reasoning_dialect": "openai",
+        "reasoning_replay": "same_protocol"
+      }
+    },
+    "local_sglang": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "reasoning": "unknown",
+        "reasoning_replay": "same_protocol"
+      }
+    },
+    "local_vllm": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "reasoning": "unknown",
+        "reasoning_replay": "same_protocol"
+      }
+    },
+    "local_llamacpp": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "reasoning": "unknown",
+        "reasoning_dialect": "llama_cpp",
+        "reasoning_replay": "same_protocol"
+      }
+    },
+    "custom": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "reasoning": "unknown",
+        "reasoning_dialect": "openai",
+        "reasoning_replay": "same_protocol"
+      }
+    },
+    "generic_anthropic": {
+      "defaults": {
+        "input_modalities": ["text"],
+        "reasoning": "unknown",
+        "reasoning_dialect": "native_anthropic",
+        "reasoning_replay": "same_protocol"
+      }
+    }
+  }
+}

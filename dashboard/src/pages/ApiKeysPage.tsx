@@ -852,19 +852,19 @@ export function ApiKeysPage() {
           </DialogHeader>
 
           {newKey ? (
-            <div className="space-y-4">
+            <div className="min-w-0 space-y-4">
               <div role="status" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
                 <p className="font-semibold">立即复制并安全保存</p>
                 <p className="mt-1">完整密钥只显示这一次。不要通过聊天、邮件或工单发送。</p>
               </div>
               <Label htmlFor="new-api-key">新 API 密钥</Label>
-              <div className="flex gap-2">
-                <Input id="new-api-key" value={newKey} readOnly className="font-mono text-xs" onFocus={(event) => event.currentTarget.select()} />
-                <Button variant="outline" size="icon" onClick={() => void copyText(newKey, 'API 密钥')} aria-label="复制新 API 密钥">
+              <div className="flex min-w-0 gap-2">
+                <Input id="new-api-key" value={newKey} readOnly className="min-w-0 flex-1 font-mono text-xs" onFocus={(event) => event.currentTarget.select()} />
+                <Button variant="outline" size="icon" className="shrink-0" onClick={() => void copyText(newKey, 'API 密钥')} aria-label="复制新 API 密钥">
                   <Copy className="h-4 w-4" />
                 </Button>
               </div>
-              <div className="space-y-3 rounded-md border bg-muted/20 p-3">
+              <div className="min-w-0 space-y-3 rounded-md border bg-muted/20 p-3">
                 <div>
                   <p className="text-sm font-medium">接入配置</p>
                   <p className="mt-1 text-xs text-muted-foreground">同一把密钥可访问 Anthropic Messages 与 OpenAI Chat Completions；把 YOUR_MODEL 替换为模型列表返回的 ID 或稳定路由别名。</p>
@@ -1288,7 +1288,7 @@ function EndpointPill({
 
 function CopySnippet({ title, value, onCopy }: { title: string; value: string; onCopy: (value: string) => void }) {
   return (
-    <div className="overflow-hidden rounded-md border bg-background">
+    <div className="min-w-0 overflow-hidden rounded-md border bg-background">
       <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
         <p className="text-xs font-medium">{title}</p>
         <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => onCopy(value)}>

@@ -18,3 +18,4 @@ superseded so migrations and compatibility choices have an audit trail.
 - [ADR-0003: Relational state and transaction boundaries](0003-relational-state-and-transactions.md)
 - [ADR-0004: ModelPort gateway and CPA Provider boundary](0004-modelport-gateway-and-cpa-provider-boundary.md)
 - [ADR-0005: Forty-user hybrid routing production baseline](0005-forty-user-hybrid-routing-baseline.md)
+- [ADR-0006: Read-only operations agent](0006-read-only-operations-agent.md)

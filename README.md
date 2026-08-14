@@ -30,6 +30,9 @@ the API and maintained operator documentation remain available in English.
   credential pools, cooldown, and bounded fallback.
 - A React operations dashboard and a PostgreSQL request, usage, budget, and
   audit ledger.
+- An off-by-default deterministic, read-only operations Agent with a durable
+  incident center, bounded offline spool, recovery evidence, and optional
+  local-first, operator-selected model diagnosis.
 - Docker Compose and systemd deployment paths, backup/restore tooling,
   Prometheus metrics, and acceptance scripts.
 
@@ -88,6 +91,8 @@ Open `http://127.0.0.1:33002` and sign in with
 
 For local Qwen, another Provider, production hardening, digest pinning, or
 troubleshooting, follow the tested [Getting Started guide](docs/GETTING_STARTED.md).
+The optional Agent has its own [safe rollout guide](docs/OPS_AGENT.md); it is
+free and open source with the rest of ModelPort and starts in shadow mode.
 After the first Release exists, building images from source is a contributor
 workflow documented in [Development](docs/DEVELOPMENT.md), not a normal user
 installation step.

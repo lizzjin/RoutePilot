@@ -339,6 +339,10 @@ Route groups include:
   current session.
 - `/admin/dashboard`, `/admin/logs`, `/admin/logs/{id}`, `/admin/latency`:
   operational views.
+- `/admin/ops/incidents`, `/admin/ops/incidents/{id}` and its `status` and
+  `feedback` subresources: administrator-only operations incident ledger.
+- `GET/PUT /admin/ops/configuration`: opt-in Agent gate, local-first model
+  recommendation, explicit model selection, and advisory-analysis setting.
 - `/admin/enterprise/overview`, `/admin/enterprise/requests`,
   `/admin/enterprise/requests/{ledger_id}`, and `/admin/enterprise/budget*`:
   administrator-only normalized request/attempt and transactional-budget
@@ -359,7 +363,20 @@ Route groups include:
   non-restorable diagnostic snapshot.
 - `POST /admin/retention/run`: administrator-only metadata-retention preview or
   apply. It requires the console session, `X-ModelPort-CSRF: 1`, and normal
-  same-origin checks; omission of `dryRun` defaults to preview.
+same-origin checks; omission of `dryRun` defaults to preview.
+
+The optional operations Agent uses three versioned internal endpoints:
+
+- `GET /internal/ops/v1/snapshot` returns only bounded dependency, Provider,
+  request-window, budget, ledger facts, and the persisted opt-in configuration;
+- `POST /internal/ops/v1/observations` submits one deterministic observation;
+- `POST /internal/ops/v1/heartbeats` records Agent version, mode, rule set, and
+  spool depth.
+
+These endpoints reject human sessions, legacy tokens, personal keys, and
+general service accounts. They require a service-account API key whose exact
+purpose is `modelport_ops_agent`. The response and evidence contract excludes
+request content and secrets. See [Operations Agent](OPS_AGENT.md).
 
 Send `{"dryRun":true}` first. A successful preview returns a random,
 single-use `previewToken` and `previewExpiresAtMs`; apply must send

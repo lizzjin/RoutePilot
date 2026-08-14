@@ -60,3 +60,18 @@ export type {
   GovernanceOverview,
   GovernanceChangeInput,
 } from './governance.types'
+export type {
+  OpsSeverity,
+  OpsIncidentStatus,
+  OpsIncidentSummary,
+  OpsIncidentEvidence,
+  OpsIncidentTimelineEntry,
+  OpsIncidentDetail,
+  OpsIncidentList,
+  OpsIncidentStatusInput,
+  OpsIncidentFeedbackInput,
+  OpsAgentSummary,
+  OpsAgentConfiguration,
+  OpsAgentConfigurationInput,
+  OpsModelCandidate,
+} from './ops.types'

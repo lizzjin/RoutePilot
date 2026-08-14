@@ -104,9 +104,46 @@ services:
         max-size: ${MODELPORT_LOG_MAX_SIZE:-10m}
         max-file: "${MODELPORT_LOG_MAX_FILES:-5}"
 
+  ops-agent:
+    profiles: ["ops-agent"]
+    image: ${MODELPORT_OPS_AGENT_IMAGE:-ghcr.io/tiammomo/modelport-ops-agent:0.1.0}
+    pull_policy: ${MODELPORT_PULL_POLICY:-missing}
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: ${MODELPORT_OPS_CPU_LIMIT:-0.50}
+    mem_limit: ${MODELPORT_OPS_MEMORY_LIMIT:-256m}
+    pids_limit: ${MODELPORT_OPS_PIDS_LIMIT:-128}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    environment:
+      MODELPORT_OPS_BASE_URL: http://modelport:38082
+      MODELPORT_OPS_API_KEY: ${MODELPORT_OPS_API_KEY:-}
+      MODELPORT_OPS_MODEL_API_KEY: ${MODELPORT_OPS_MODEL_API_KEY:-}
+      MODELPORT_OPS_MODE: ${MODELPORT_OPS_MODE:-shadow}
+      MODELPORT_OPS_INTERVAL_SECONDS: ${MODELPORT_OPS_INTERVAL_SECONDS:-300}
+      MODELPORT_OPS_WEBHOOK_URL: ${MODELPORT_OPS_WEBHOOK_URL:-}
+      RUST_LOG: ${MODELPORT_OPS_RUST_LOG:-modelport_ops_agent=info}
+    volumes:
+      - modelport-ops-spool:/var/lib/modelport-ops
+    depends_on:
+      modelport:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: ${MODELPORT_LOG_MAX_SIZE:-10m}
+        max-file: "${MODELPORT_LOG_MAX_FILES:-5}"
+
 volumes:
   modelport-data:
   modelport-postgres-18:
+  modelport-ops-spool:
 
 networks:
   default:

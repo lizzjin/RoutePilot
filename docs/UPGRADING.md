@@ -33,7 +33,8 @@ cosign verify \
   ghcr.io/tiammomo/modelport@sha256:<backend-digest>
 ```
 
-Repeat the image verification for `modelport-dashboard`. Verification proves
+Repeat the image verification for `modelport-dashboard` and, when enabled,
+`modelport-ops-agent`. Verification proves
 release provenance; it does not prove that a Provider account or model remains
 compatible.
 
@@ -85,6 +86,8 @@ operator-owned deployment environment:
 ```bash
 export MODELPORT_IMAGE='ghcr.io/tiammomo/modelport@sha256:<backend-digest>'
 export MODELPORT_DASHBOARD_IMAGE='ghcr.io/tiammomo/modelport-dashboard@sha256:<dashboard-digest>'
+# Required only when the optional Compose profile is enabled.
+export MODELPORT_OPS_AGENT_IMAGE='ghcr.io/tiammomo/modelport-ops-agent@sha256:<agent-digest>'
 export MODELPORT_PULL_POLICY=always
 ```
 

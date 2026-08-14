@@ -68,18 +68,30 @@ Set MODELPORT_COMPOSE_FILE to select a manifest; it defaults to the root
 source-build profile.
 
 Set MODELPORT_LOCAL_BUILD=1 after scripts/build-container.sh to use the local
-modelport:local and modelport-dashboard:local images without pulling GHCR.
+backend, dashboard, and optional operations-agent images without pulling GHCR.
 USAGE
   exit 0
 fi
 
 if [[ "${MODELPORT_LOCAL_BUILD:-0}" == "1" ]]; then
-  for local_image in modelport:local modelport-dashboard:local; do
+  local_images=(modelport:local modelport-dashboard:local)
+  if [[ ",${COMPOSE_PROFILES:-}," == *,ops-agent,* ]]; then
+    local_images+=(modelport-ops-agent:local)
+  else
+    for requested_service in "$@"; do
+      if [[ "$requested_service" == "ops-agent" ]]; then
+        local_images+=(modelport-ops-agent:local)
+        break
+      fi
+    done
+  fi
+  for local_image in "${local_images[@]}"; do
     docker image inspect "$local_image" >/dev/null 2>&1 \
       || die "missing $local_image; run scripts/build-container.sh first"
   done
   export MODELPORT_IMAGE=modelport:local
   export MODELPORT_DASHBOARD_IMAGE=modelport-dashboard:local
+  export MODELPORT_OPS_AGENT_IMAGE=modelport-ops-agent:local
   export MODELPORT_PULL_POLICY=never
 fi
 

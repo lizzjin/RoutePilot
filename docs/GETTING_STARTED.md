@@ -69,12 +69,13 @@ docker compose -f "$MODELPORT_COMPOSE_FILE" ps
 ```
 
 The images are published by the tagged release. Initial evaluation may use the
-version tag in Compose; shared/production deployments must use the two immutable
-digests listed in the GitHub Release. Verify checksums, signatures,
+version tag in Compose; shared/production deployments must use the two main
+image digests (plus the optional Agent digest when enabled) listed in the
+GitHub Release. Verify checksums, signatures,
 attestations, and SBOMs through
 [Upgrading and Rollback](UPGRADING.md#release-inputs).
 
-Do not run this release path until the `v0.1.0` tag and both GHCR images
+Do not run this release path until the `v0.1.0` tag and required GHCR images
 actually exist. A repository change cannot publish them. Before the first
 Release, current-main testing is a contributor path:
 
@@ -96,6 +97,13 @@ Expected services:
 | `postgres` | healthy |
 | `modelport` | healthy |
 | `dashboard` | running |
+
+The optional operations Agent is not started by the default profile. After the
+gateway is configured, follow [Operations Agent](OPS_AGENT.md) to create its
+dedicated, non-inference service account. Starting the optional container and
+enabling it in **运维事件** are separate confirmations; both default off. Local
+models are recommended first for optional diagnosis. Roll out `shadow` before
+`read_only` mode.
 
 The backend's Compose healthcheck uses authenticated `/readyz`, so `healthy`
 means required persistence is usable. The image-level `/livez` check proves only

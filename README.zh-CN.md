@@ -27,6 +27,9 @@ ModelPort v0.1.x 是面向 20–50 人内部研发团队的免费 MIT 开源、�
 - 有作用域的客户端 API Key、用户、团队、配额、消费控制、Provider 凭证池、
   冷却和受限回退。
 - React 运维控制台和 PostgreSQL 请求、用量、预算与审计账本。
+- 默认关闭的确定性只读运维 Agent：提供持久化事件中心、受限离线队列、恢复证据
+  和通用 Webhook；可由管理员选择基础模型并优先推荐本地模型，但不执行 Shell、
+  SQL 或自动改配置。
 - Docker Compose、systemd、备份恢复、Prometheus 指标和验收脚本。
 
 ModelPort 当前只正式支持 Linux x86_64 单实例、可信主机或小型可信网络。它
@@ -81,6 +84,8 @@ MODELPORT_LOCAL_BUILD=1 scripts/compose-up.sh
 
 使用本地 Qwen、其他 Provider、生产加固或排障时，继续阅读经过验证的
 [上手指南](docs/GETTING_STARTED.md)。
+可选 Agent 请按[安全上线指南](docs/OPS_AGENT.md)先运行 Shadow，再切换只读事件
+写入；它与 ModelPort 一样免费开源。
 首个 Release 发布后，从源码构建镜像属于
 [贡献者开发流程](docs/DEVELOPMENT.md)，不是普通安装步骤。
 

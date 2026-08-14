@@ -19,6 +19,7 @@ const ModelsPage = lazy(() => import('@/pages/ModelsPage').then((module) => ({ d
 const LogsPage = lazy(() => import('@/pages/LogsPage').then((module) => ({ default: module.LogsPage })))
 const EnterprisePage = lazy(() => import('@/pages/EnterprisePage').then((module) => ({ default: module.EnterprisePage })))
 const GovernancePage = lazy(() => import('@/pages/GovernancePage').then((module) => ({ default: module.GovernancePage })))
+const OperationsPage = lazy(() => import('@/pages/OperationsPage').then((module) => ({ default: module.OperationsPage })))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((module) => ({ default: module.SettingsPage })))
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage').then((module) => ({ default: module.NotFoundPage })))
 
@@ -94,6 +95,7 @@ const router = createBrowserRouter([
       { path: 'logs', element: lazyPage(<LogsPage />) },
       { path: 'enterprise', element: <RoleRoute roles={['admin']}>{lazyPage(<EnterprisePage />)}</RoleRoute> },
       { path: 'governance', element: <RoleRoute roles={['admin']}>{lazyPage(<GovernancePage />)}</RoleRoute> },
+      { path: 'operations', element: <RoleRoute roles={['admin']}>{lazyPage(<OperationsPage />)}</RoleRoute> },
       { path: 'settings', element: <RoleRoute roles={['admin']}>{lazyPage(<SettingsPage />)}</RoleRoute> },
     ],
   },

@@ -241,6 +241,9 @@ jobs:
           cargo test --locked \
             enterprise_ledger::tests::postgres_usage_admission_is_atomic_across_concurrent_transactions \
             -- --exact
+          cargo test --locked \
+            enterprise_ledger::tests::postgres_operations_incident_queries_round_trip \
+            -- --exact
 
       - name: Build and start PostgreSQL-backed ModelPort
         run: |

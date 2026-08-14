@@ -33,6 +33,16 @@ models = [
 model_prefixes = ["deepseek-"]
 passthrough_unknown_models = false
 deduplicate_stream_text = true
+# Optional Provider-specific transport policy. One attempt preserves historical
+# behavior; raise only after reviewing combined Provider/CPA retry ownership.
+request_timeout_ms = 600000
+stream_idle_timeout_ms = 300000
+
+[providers.deepseek.retry]
+max_attempts = 1
+initial_delay_ms = 250
+max_delay_ms = 5000
+jitter_ratio = 0.1
 
 [providers.deepseek.tool_use]
 supported = true

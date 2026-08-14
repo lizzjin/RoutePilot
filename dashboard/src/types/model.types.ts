@@ -6,6 +6,35 @@ export type ToolResponseValidation = 'best_effort' | 'strict'
 export type ProviderStatus = 'active' | 'inactive' | 'disabled' | 'error'
 export type ProviderModelStatus = 'active' | 'disabled'
 export type ProviderCredentialPoolMode = 'manual' | 'failover' | 'round_robin'
+export type CapabilitySupport = 'supported' | 'unsupported' | 'unknown'
+export type ReasoningEffort = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type ReasoningDialect = 'none' | 'native_anthropic' | 'openai' | 'deepseek' | 'openrouter' | 'qwen' | 'zai' | 'string_thinking' | 'llama_cpp'
+export type ReasoningReplay = 'none' | 'same_protocol'
+
+export interface ModelProfileOverride {
+  display_name?: string
+  family?: string
+  context_window?: number
+  max_output_tokens?: number
+  input_modalities?: Array<'text' | 'image'>
+  tool_use?: CapabilitySupport
+  tool_choice?: CapabilitySupport
+  parallel_tool_calls?: CapabilitySupport
+  strict_tool_schema?: CapabilitySupport
+  reasoning?: CapabilitySupport
+  reasoning_efforts?: ReasoningEffort[]
+  reasoning_effort_map?: Partial<Record<ReasoningEffort, string>>
+  default_reasoning_effort?: ReasoningEffort
+  reasoning_dialect?: ReasoningDialect
+  reasoning_replay?: ReasoningReplay
+}
+
+export interface ProviderRetryPolicy {
+  max_attempts: number
+  initial_delay_ms: number
+  max_delay_ms: number
+  jitter_ratio: number
+}
 
 export interface ToolUseCapabilities {
   supported: boolean
@@ -51,6 +80,21 @@ export interface ProviderModelInventory {
   displayName?: string | null
   family?: string | null
   contextWindow?: number | null
+  maxOutputTokens?: number | null
+  inputModalities?: Array<'text' | 'image'>
+  toolUse?: CapabilitySupport
+  toolChoice?: CapabilitySupport
+  parallelToolCalls?: CapabilitySupport
+  strictToolSchema?: CapabilitySupport
+  reasoning?: CapabilitySupport
+  reasoningEfforts?: ReasoningEffort[]
+  defaultReasoningEffort?: ReasoningEffort | null
+  reasoningDialect?: ReasoningDialect
+  reasoningReplay?: ReasoningReplay
+  verification?: 'verified' | 'unverified'
+  source?: 'catalog' | 'config' | 'control' | 'discovery' | 'provider_default'
+  catalogVersion?: number
+  override?: ModelProfileOverride
   default?: boolean
   createdAt?: string
   updatedAt?: string
@@ -87,6 +131,13 @@ export interface Provider {
   bufferStreamText: boolean
   fidelityMode?: FidelityMode
   toolUse?: ToolUseCapabilities
+  modelProfileDefaults?: ModelProfileOverride
+  modelProfiles?: Record<string, ModelProfileOverride>
+  staticHeaders?: Record<string, string>
+  requestTimeoutMs?: number | null
+  streamIdleTimeoutMs?: number | null
+  retry?: ProviderRetryPolicy
+  adaptationCatalogVersion?: number
   pricing?: ModelPricing | null
   status: ProviderStatus
   credentials?: ProviderCredential[]
@@ -123,6 +174,12 @@ export interface ProviderWritePayload {
   bufferStreamText?: boolean
   fidelityMode?: FidelityMode
   toolUse?: ToolUseCapabilities
+  modelProfileDefaults?: ModelProfileOverride
+  modelProfiles?: Record<string, ModelProfileOverride>
+  staticHeaders?: Record<string, string>
+  requestTimeoutMs?: number
+  streamIdleTimeoutMs?: number
+  retry?: ProviderRetryPolicy
   pricing?: ModelPricing | null
   disabled?: boolean
 }
@@ -133,6 +190,7 @@ export interface ProviderModelWritePayload {
   displayName?: string | null
   family?: string | null
   contextWindow?: number | null
+  profile?: ModelProfileOverride
 }
 
 export interface ProviderCredentialWritePayload {

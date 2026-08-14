@@ -35,6 +35,13 @@ export interface ProviderFormState {
   parallelToolCalls: boolean
   toolStreamingArguments: ToolStreamingArguments
   toolResponseValidation: ToolResponseValidation
+  staticHeaders: string
+  requestTimeoutMs: string
+  streamIdleTimeoutMs: string
+  retryMaxAttempts: string
+  retryInitialDelayMs: string
+  retryMaxDelayMs: string
+  retryJitterRatio: string
   disabled: boolean
 }
 
@@ -85,6 +92,13 @@ export const DEFAULT_PROVIDER_FORM: ProviderFormState = {
   parallelToolCalls: true,
   toolStreamingArguments: 'delta',
   toolResponseValidation: 'best_effort',
+  staticHeaders: '',
+  requestTimeoutMs: '',
+  streamIdleTimeoutMs: '',
+  retryMaxAttempts: '1',
+  retryInitialDelayMs: '250',
+  retryMaxDelayMs: '5000',
+  retryJitterRatio: '0.1',
   disabled: false,
 }
 
@@ -306,6 +320,15 @@ export function providerToForm(provider: Provider): ProviderFormState {
     parallelToolCalls: toolUse.parallelToolCalls,
     toolStreamingArguments: toolUse.streamingArguments,
     toolResponseValidation: toolUse.responseValidation ?? 'best_effort',
+    staticHeaders: Object.entries(provider.staticHeaders ?? {})
+      .map(([name, value]) => `${name}: ${value}`)
+      .join('\n'),
+    requestTimeoutMs: provider.requestTimeoutMs?.toString() ?? '',
+    streamIdleTimeoutMs: provider.streamIdleTimeoutMs?.toString() ?? '',
+    retryMaxAttempts: (provider.retry?.max_attempts ?? 1).toString(),
+    retryInitialDelayMs: (provider.retry?.initial_delay_ms ?? 250).toString(),
+    retryMaxDelayMs: (provider.retry?.max_delay_ms ?? 5000).toString(),
+    retryJitterRatio: (provider.retry?.jitter_ratio ?? 0.1).toString(),
     disabled: provider.status === 'disabled',
   }
 }
@@ -356,6 +379,15 @@ export function providerPayloadFromForm(
       streamingArguments: form.toolStreamingArguments,
       responseValidation: form.toolResponseValidation,
     },
+    staticHeaders: parseStaticHeaders(form.staticHeaders),
+    ...(positiveIntegerOrUndefined(form.requestTimeoutMs) ? { requestTimeoutMs: positiveIntegerOrUndefined(form.requestTimeoutMs) } : {}),
+    ...(positiveIntegerOrUndefined(form.streamIdleTimeoutMs) ? { streamIdleTimeoutMs: positiveIntegerOrUndefined(form.streamIdleTimeoutMs) } : {}),
+    retry: {
+      max_attempts: Number(form.retryMaxAttempts),
+      initial_delay_ms: Number(form.retryInitialDelayMs),
+      max_delay_ms: Number(form.retryMaxDelayMs),
+      jitter_ratio: Number(form.retryJitterRatio),
+    },
     disabled: form.disabled,
   }
 }
@@ -380,6 +412,22 @@ export function parseList(value: string): string[] {
       .map((item) => item.trim())
       .filter(Boolean),
   ))
+}
+
+function positiveIntegerOrUndefined(value: string): number | undefined {
+  const parsed = Number(value.trim())
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined
+}
+
+function parseStaticHeaders(value: string): Record<string, string> {
+  return Object.fromEntries(value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const separator = line.indexOf(':')
+      return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()]
+    }))
 }
 
 export function defaultToolUseForProviderForm(

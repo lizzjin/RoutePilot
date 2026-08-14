@@ -1406,6 +1406,7 @@ dependencies = [
  "async-stream",
  "axum",
  "futures-util",
+ "httpdate",
  "jsonschema",
  "openidconnect",
  "rand_core 0.6.4",

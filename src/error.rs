@@ -44,7 +44,11 @@ pub enum AppError {
     #[error("transport error: {0}")]
     Transport(String),
     #[error("upstream returned HTTP {status}: {body}")]
-    Upstream { status: u16, body: String },
+    Upstream {
+        status: u16,
+        body: String,
+        retry_after_secs: Option<u64>,
+    },
     #[error("upstream protocol error: {0}")]
     UpstreamProtocol(String),
     #[error(
@@ -117,6 +121,15 @@ impl AppError {
         }
     }
 
+    pub(crate) fn upstream_retry_after_secs(&self) -> Option<u64> {
+        match self {
+            Self::Upstream {
+                retry_after_secs, ..
+            } => *retry_after_secs,
+            _ => None,
+        }
+    }
+
     /// Returns a bounded-detail message suitable for persistent usage, ledger,
     /// and provider-health records. The HTTP response can retain actionable
     /// detail for the authenticated caller, but durable telemetry must not
@@ -146,7 +159,7 @@ impl AppError {
                 "upstream transport timed out [details redacted]".to_owned()
             }
             Self::Transport(_) => "upstream transport error [details redacted]".to_owned(),
-            Self::Upstream { status, body } => {
+            Self::Upstream { status, body, .. } => {
                 format!(
                     "upstream returned HTTP {status}: {}",
                     upstream_audit_category(*status, body)
@@ -260,6 +273,9 @@ impl IntoResponse for AppError {
             AppError::RateLimited {
                 retry_after_secs, ..
             } => Some(*retry_after_secs),
+            AppError::Upstream {
+                retry_after_secs, ..
+            } => *retry_after_secs,
             _ => None,
         };
         let message = client_safe_message(&self);
@@ -342,7 +358,7 @@ fn client_safe_message(error: &AppError) -> String {
         AppError::Transport(_) | AppError::Io(_) => {
             "upstream provider connection failed".to_owned()
         }
-        AppError::Upstream { status, body } => format!(
+        AppError::Upstream { status, body, .. } => format!(
             "upstream provider failed: {}",
             upstream_audit_category(*status, body)
         ),
@@ -411,7 +427,7 @@ fn error_code(error: &AppError) -> &'static str {
         AppError::NotFound(_) => "not_found",
         AppError::ProviderNotFound(_) => "provider_not_found",
         AppError::Transport(_) => "transport_error",
-        AppError::Upstream { status, body } => upstream_error_code(*status, body),
+        AppError::Upstream { status, body, .. } => upstream_error_code(*status, body),
         AppError::UpstreamProtocol(_) => "upstream_protocol_error",
         AppError::ToolArgumentsInvalid { .. } => "tool_arguments_invalid",
         AppError::Io(_) => "io_error",
@@ -510,6 +526,7 @@ mod tests {
             AppError::Upstream {
                 status: 500,
                 body: "secret provider body".to_owned(),
+                retry_after_secs: None,
             }
             .telemetry_code(),
             "upstream_http"
@@ -565,6 +582,7 @@ mod tests {
         let response = AppError::Upstream {
             status: 402,
             body: "Insufficient Balance".to_owned(),
+            retry_after_secs: None,
         }
         .into_response();
 
@@ -587,6 +605,7 @@ mod tests {
         let response = AppError::Upstream {
             status: 302,
             body: "redirects are disabled".to_owned(),
+            retry_after_secs: None,
         }
         .into_response();
 
@@ -598,6 +617,7 @@ mod tests {
         let upstream = AppError::Upstream {
             status: 500,
             body: r#"{"echo":"tenant prompt","authorization":"Bearer secret"}"#.to_owned(),
+            retry_after_secs: None,
         };
         let upstream_audit = upstream.audit_message();
         assert_eq!(
@@ -623,6 +643,7 @@ mod tests {
         let balance = AppError::Upstream {
             status: 402,
             body: "Insufficient Balance for account customer@example.test".to_owned(),
+            retry_after_secs: None,
         }
         .audit_message();
         assert_eq!(

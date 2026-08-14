@@ -10,6 +10,7 @@ use crate::{
     control_view::provider_credential_rows,
     error::AppError,
     governance::ProjectPolicy,
+    model_catalog::MODEL_ADAPTATION_CATALOG_VERSION,
 };
 
 use super::{
@@ -198,11 +199,13 @@ impl EffectiveCatalog {
                 let model_inventory = models
                     .iter()
                     .map(|model| {
-                        json!({
-                            "model": model,
-                            "status": "active",
-                            "default": model == &default_model,
-                        })
+                        model_profile_row(
+                            provider_id,
+                            provider,
+                            model,
+                            "active",
+                            model == &default_model,
+                        )
                     })
                     .collect::<Vec<_>>();
 
@@ -394,6 +397,16 @@ impl ProviderRowAssembler {
             "bufferStreamText": provider.buffer_stream_text,
             "fidelityMode": fidelity_mode_value(provider.fidelity_mode),
             "toolUse": provider.tool_use,
+            "modelProfileDefaults": provider.model_profile_defaults,
+            "modelProfiles": provider.model_profiles,
+            "reasoning": provider.reasoning,
+            "sampling": provider.sampling,
+            "tokenCounting": provider.token_counting,
+            "staticHeaders": provider.static_headers,
+            "requestTimeoutMs": provider.request_timeout_ms,
+            "streamIdleTimeoutMs": provider.stream_idle_timeout_ms,
+            "retry": provider.retry,
+            "adaptationCatalogVersion": MODEL_ADAPTATION_CATALOG_VERSION,
             "pricing": provider.pricing,
             "status": status,
             "runtimeStatus": runtime_status,
@@ -414,14 +427,15 @@ impl ProviderRowAssembler {
         for model in &provider.models {
             seen.insert(model.clone());
             let override_record = overrides.and_then(|models| models.get(model));
-            rows.push(json!({
-                "model": model,
-                "status": override_record.map(|record| record.status.as_str()).unwrap_or("active"),
-                "displayName": override_record.and_then(|record| record.display_name.as_deref()),
-                "family": override_record.and_then(|record| record.family.as_deref()),
-                "contextWindow": override_record.and_then(|record| record.context_window),
-                "default": model == &provider.default_model,
-            }));
+            rows.push(model_profile_row(
+                provider_id,
+                provider,
+                model,
+                override_record
+                    .map(|record| record.status.as_str())
+                    .unwrap_or("active"),
+                model == &provider.default_model,
+            ));
         }
         if let Some(overrides) = overrides {
             for record in overrides.values() {
@@ -442,7 +456,34 @@ pub(super) fn provider_model_row(record: &ProviderModelOverrideRecord) -> Value 
         "displayName": record.display_name,
         "family": record.family,
         "contextWindow": record.context_window,
+        "profile": record.profile,
         "createdAt": record.created_at_ms.to_string(),
         "updatedAt": record.updated_at_ms.to_string(),
     })
+}
+
+fn model_profile_row(
+    provider_id: &str,
+    provider: &ProviderConfig,
+    model: &str,
+    status: &str,
+    is_default: bool,
+) -> Value {
+    let profile = provider.model_profile(provider_id, model);
+    let mut value = serde_json::to_value(profile).unwrap_or_else(|_| json!({"model": model}));
+    if let Some(value) = value.as_object_mut() {
+        value.insert("status".to_owned(), Value::String(status.to_owned()));
+        value.insert("default".to_owned(), Value::Bool(is_default));
+        value.insert(
+            "catalogVersion".to_owned(),
+            Value::from(MODEL_ADAPTATION_CATALOG_VERSION),
+        );
+        if let Some(configured) = provider.model_profiles.get(model) {
+            value.insert(
+                "override".to_owned(),
+                serde_json::to_value(configured).unwrap_or(Value::Null),
+            );
+        }
+    }
+    value
 }

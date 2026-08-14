@@ -12,6 +12,15 @@ Two facts must remain separate:
 A model appearing in `/v1/models` proves neither account entitlement nor
 runtime compatibility.
 
+ModelPort also embeds a versioned adaptation catalog under
+`catalog/provider-adaptations-v1.json`. It records exact-model context/output
+metadata, input modalities, tri-state Tool Use/reasoning capabilities,
+reasoning dialect/efforts, and replay constraints for the Providers ModelPort
+already exposes. This catalog is owned and reviewed in this repository; it is
+not synchronized from another project at runtime. Entries start `unverified`
+until a separate real-provider acceptance process records evidence. Discovery
+is inventory evidence only and cannot promote a capability or route.
+
 ## Built-In Provider Catalog
 
 Defaults come from `src/config.rs`; the smaller `config.example.toml` is the
@@ -54,6 +63,10 @@ The complete field and environment contract is in
 5. Call the exact `provider:model` route before enabling aliases or smart
    routing.
 6. Verify streaming and Tool Use separately when the workload needs them.
+
+The current public client boundary remains Anthropic Messages and OpenAI Chat
+Completions. The adaptation catalog does not imply support for OpenAI Responses,
+Bedrock/Vertex native authentication, OAuth, WebSocket, or image exchange.
 
 Remote Providers require HTTPS by default. URLs with userinfo, query strings,
 or fragments are rejected. The insecure HTTP override exposes Provider keys and

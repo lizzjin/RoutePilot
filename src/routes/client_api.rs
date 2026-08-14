@@ -11,6 +11,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures_util::StreamExt;
+use rand_core::{OsRng, RngCore};
 use serde_json::{Value, json};
 use tracing::{error, info};
 
@@ -856,7 +857,7 @@ async fn handle_inference(
 
     let mut attempts = authorized_attempts
         .into_iter()
-        .map(|resolved| (resolved, None))
+        .map(|resolved| (resolved, None, 0u32))
         .collect::<VecDeque<_>>();
     let mut provider_id = String::new();
     let mut upstream_model = String::new();
@@ -872,7 +873,7 @@ async fn handle_inference(
     let mut prior_attempt_usage = UsageEstimate::default();
     let mut successful_local_lease = None::<LocalLease>;
 
-    while let Some((mut attempt, repair)) = attempts.pop_front() {
+    while let Some((mut attempt, repair, provider_retry_ordinal)) = attempts.pop_front() {
         let attempt_id = AttemptId::new();
         provider_id = attempt.provider_id.clone();
         upstream_model = attempt.model.clone();
@@ -883,7 +884,7 @@ async fn handle_inference(
             && attempt.provider.protocol == ProviderProtocol::OpenaiCompat
             && attempt.provider.tool_use.repair_invalid_arguments;
         let attempt_boundary = ProviderBoundary::for_resolved(&attempt);
-        let cloud_available = attempts.iter().any(|(candidate, _)| {
+        let cloud_available = attempts.iter().any(|(candidate, _, _)| {
             ProviderBoundary::for_resolved(candidate) == ProviderBoundary::Cloud
         });
         let attempt_local_lease = if attempt_boundary == ProviderBoundary::Local {
@@ -1102,17 +1103,37 @@ async fn handle_inference(
                 prior_attempt_usage,
                 finalized_attempt_estimate.unwrap_or(estimate),
             );
-            attempts.push_front((repair_template, Some(repair_candidate)));
+            attempts.push_front((
+                repair_template,
+                Some(repair_candidate),
+                provider_retry_ordinal,
+            ));
             continue;
         }
 
-        if !is_retryable_message_error(result.as_ref().err()) || attempts.is_empty() {
+        if !is_retryable_message_error(result.as_ref().err()) {
             break;
         }
         prior_attempt_usage = merge_usage_estimates(
             prior_attempt_usage,
             finalized_attempt_estimate.unwrap_or(estimate),
         );
+        if provider_retry_ordinal + 1 < repair_template.provider.retry.max_attempts {
+            let delay = provider_retry_delay(
+                &repair_template.provider.retry,
+                provider_retry_ordinal,
+                result
+                    .as_ref()
+                    .err()
+                    .and_then(AppError::upstream_retry_after_secs),
+            );
+            attempts.push_front((repair_template, repair, provider_retry_ordinal + 1));
+            tokio::time::sleep(delay).await;
+            continue;
+        }
+        if attempts.is_empty() {
+            break;
+        }
     }
     let success = result.is_ok();
     let duration = started.elapsed();
@@ -1942,14 +1963,32 @@ async fn validate_inference_attempt(
 
 fn is_retryable_message_error(error: Option<&AppError>) -> bool {
     match error {
-        Some(
-            AppError::Transport(_)
-            | AppError::UpstreamProtocol(_)
-            | AppError::ToolArgumentsInvalid { .. },
-        ) => true,
+        Some(AppError::Transport(_)) => true,
         Some(AppError::Upstream { status, .. }) => *status == 429 || *status >= 500,
         _ => false,
     }
+}
+
+fn provider_retry_delay(
+    retry: &crate::config::ProviderRetryConfig,
+    retry_ordinal: u32,
+    retry_after_secs: Option<u64>,
+) -> std::time::Duration {
+    let multiplier = 1u64.checked_shl(retry_ordinal.min(20)).unwrap_or(u64::MAX);
+    let policy_ms = retry
+        .initial_delay_ms
+        .saturating_mul(multiplier)
+        .min(retry.max_delay_ms);
+    let jitter_span = (policy_ms as f64 * retry.jitter_ratio) as u64;
+    let jittered_ms = if jitter_span == 0 {
+        policy_ms
+    } else {
+        let width = jitter_span.saturating_mul(2).saturating_add(1);
+        let sample = OsRng.next_u64() % width;
+        policy_ms.saturating_sub(jitter_span).saturating_add(sample)
+    };
+    let retry_after_ms = retry_after_secs.unwrap_or(0).saturating_mul(1_000);
+    std::time::Duration::from_millis(jittered_ms.max(retry_after_ms).min(retry.max_delay_ms))
 }
 
 fn request_routing_header(
@@ -2275,7 +2314,7 @@ mod tests {
 
     use super::{
         ENVIRONMENT_ID, ORGANIZATION_ID, PROJECT_ID, ResponseObservation, classify_tool_outcome,
-        recommended_input_limit, request_tenant_scope, request_traffic_class,
+        provider_retry_delay, recommended_input_limit, request_tenant_scope, request_traffic_class,
         validate_context_budget, validate_output_budget,
     };
 
@@ -2335,6 +2374,22 @@ mod tests {
             HeaderValue::from_static("arbitrary-cardinality"),
         );
         assert!(request_traffic_class(&headers).is_err());
+    }
+
+    #[test]
+    fn provider_retry_delay_is_exponential_and_caps_retry_after() {
+        let policy = crate::config::ProviderRetryConfig {
+            max_attempts: 3,
+            initial_delay_ms: 250,
+            max_delay_ms: 5_000,
+            jitter_ratio: 0.0,
+        };
+        assert_eq!(provider_retry_delay(&policy, 0, None).as_millis(), 250);
+        assert_eq!(provider_retry_delay(&policy, 1, None).as_millis(), 500);
+        assert_eq!(
+            provider_retry_delay(&policy, 1, Some(60)).as_millis(),
+            5_000
+        );
     }
 
     #[test]

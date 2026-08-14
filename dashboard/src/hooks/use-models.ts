@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { modelsService } from '@/services/models.service'
 import { withDefaultProvider } from '@/features/models/default-provider'
 import { queryKeys } from './use-dashboard'
-import type { Provider, ProviderCredentialPoolMode, ProviderCredentialWritePayload, ProviderWritePayload, SystemSettings } from '@/types'
+import type { Provider, ProviderCredentialPoolMode, ProviderCredentialWritePayload, ProviderModelWritePayload, ProviderWritePayload, SystemSettings } from '@/types'
 
 export function useProviders(apiKeyId?: string, enabled = true) {
   return useQuery({
@@ -39,6 +39,18 @@ export function useToggleModel() {
   return useMutation({
     mutationFn: ({ providerId, model, enabled }: { providerId: string; model: string; enabled: boolean }) =>
       modelsService.toggleModel(providerId, model, enabled),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.providers })
+      qc.invalidateQueries({ queryKey: queryKeys.dashboard })
+    },
+  })
+}
+
+export function useUpdateProviderModel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ providerId, data }: { providerId: string; data: ProviderModelWritePayload }) =>
+      modelsService.updateProviderModel(providerId, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.providers })
       qc.invalidateQueries({ queryKey: queryKeys.dashboard })

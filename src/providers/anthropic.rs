@@ -17,6 +17,7 @@ use crate::{
     error::AppError,
     exchange::{ExchangeRequest, anthropic_response_to_openai},
     http::{Header, SseFrame, SseFrameStream},
+    model_catalog::{ReasoningDialect, ReasoningEffort},
     pricing::{self, USAGE_HEADER},
     providers::{openai_client_stream::anthropic_stream_to_openai, openai_stream::text_delta},
     routes::AppState,
@@ -32,6 +33,7 @@ pub async fn chat_completions(
     stream_lifecycle: StreamLifecycle,
 ) -> Result<Response, AppError> {
     let mut body = request.to_anthropic_request(&resolved.model, request.stream)?;
+    apply_openai_reasoning_control(&request, &resolved, &mut body)?;
     apply_provider_request_compatibility(&resolved.provider_id, &mut body);
     let headers = headers(&resolved.provider, client_headers)?;
     let url = resolved.provider.endpoint("/v1/messages");
@@ -40,12 +42,14 @@ pub async fn chat_completions(
         let include_usage = request.include_stream_usage();
         let frames = state
             .transport
-            .post_json_sse(
+            .post_json_sse_with_timeouts(
                 &resolved.provider_id,
                 state.security.allow_private_provider_urls(),
                 url,
                 headers,
                 body,
+                resolved.provider.request_timeout(),
+                resolved.provider.stream_idle_timeout(),
             )
             .await?;
         let events = anthropic_stream_to_openai(
@@ -60,12 +64,13 @@ pub async fn chat_completions(
     } else {
         let upstream = state
             .transport
-            .post_json(
+            .post_json_with_timeout(
                 &resolved.provider_id,
                 state.security.allow_private_provider_urls(),
                 &url,
                 &headers,
                 &body,
+                resolved.provider.request_timeout(),
             )
             .await?;
         let usage = pricing::anthropic_usage_if_present(&upstream);
@@ -80,6 +85,54 @@ pub async fn chat_completions(
         }
         Ok(response)
     }
+}
+
+fn apply_openai_reasoning_control(
+    request: &ExchangeRequest,
+    resolved: &ResolvedProvider,
+    body: &mut Value,
+) -> Result<(), AppError> {
+    let profile = resolved
+        .provider
+        .model_profile(&resolved.provider_id, &resolved.model);
+    if profile.reasoning_dialect != ReasoningDialect::NativeAnthropic {
+        return Ok(());
+    }
+    let config = &resolved.provider.reasoning;
+    let effort = request
+        .reasoning_effort()
+        .or_else(|| config.model_effort.get(&request.requested_model).copied())
+        .or(config.default_effort)
+        .or(profile.default_reasoning_effort)
+        .or_else(|| {
+            config
+                .model_enabled
+                .get(&request.requested_model)
+                .copied()
+                .or(config.default_enabled)
+                .map(|enabled| {
+                    if enabled {
+                        ReasoningEffort::High
+                    } else {
+                        ReasoningEffort::Off
+                    }
+                })
+        });
+    let Some(effort) = effort else {
+        return Ok(());
+    };
+    let body = body.as_object_mut().ok_or_else(|| {
+        AppError::InvalidRequest("Anthropic upstream body must be an object".to_owned())
+    })?;
+    body.insert(
+        "thinking".to_owned(),
+        if effort == ReasoningEffort::Off {
+            serde_json::json!({"type": "disabled"})
+        } else {
+            serde_json::json!({"type": "adaptive"})
+        },
+    );
+    Ok(())
 }
 
 fn apply_provider_request_compatibility(provider_id: &str, body: &mut Value) {
@@ -114,12 +167,14 @@ pub async fn messages(
     if request.stream.unwrap_or(false) {
         let frames = state
             .transport
-            .post_json_sse(
+            .post_json_sse_with_timeouts(
                 &resolved.provider_id,
                 state.security.allow_private_provider_urls(),
                 url,
                 headers,
                 body,
+                resolved.provider.request_timeout(),
+                resolved.provider.stream_idle_timeout(),
             )
             .await?;
         let events: Pin<Box<dyn Stream<Item = Result<Event, AppError>> + Send>> =
@@ -134,12 +189,13 @@ pub async fn messages(
     } else {
         let response = state
             .transport
-            .post_json(
+            .post_json_with_timeout(
                 &resolved.provider_id,
                 state.security.allow_private_provider_urls(),
                 &url,
                 &headers,
                 &body,
+                resolved.provider.request_timeout(),
             )
             .await?;
         let usage = pricing::anthropic_usage_if_present(&response);
@@ -159,25 +215,29 @@ pub(crate) fn headers(
     provider: &crate::config::ProviderConfig,
     client_headers: &HeaderMap,
 ) -> Result<Vec<Header>, AppError> {
-    let mut headers = Vec::new();
+    let mut headers = provider
+        .static_headers
+        .iter()
+        .map(|(name, value)| (name.to_ascii_lowercase(), value.clone()))
+        .collect::<BTreeMap<_, _>>();
 
     if let Some(api_key) = provider.api_key()? {
-        headers.push(("x-api-key".to_owned(), api_key.to_owned()));
+        headers.insert("x-api-key".to_owned(), api_key.to_owned());
     }
 
-    headers.push((
+    headers.insert(
         "anthropic-version".to_owned(),
         client_header(client_headers, "anthropic-version")
             .unwrap_or_else(|| "2023-06-01".to_owned()),
-    ));
+    );
 
     for name in ["anthropic-beta", "x-request-id"] {
         if let Some(value) = client_header(client_headers, name) {
-            headers.push((name.to_owned(), value));
+            headers.insert(name.to_owned(), value);
         }
     }
 
-    Ok(headers)
+    Ok(headers.into_iter().collect())
 }
 
 fn client_header(headers: &HeaderMap, name: &str) -> Option<String> {

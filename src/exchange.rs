@@ -8,6 +8,7 @@ use crate::{
     config::{MaxTokensField, ResolvedProvider},
     domain::ClientProtocol,
     error::AppError,
+    model_catalog::{CapabilitySupport, ReasoningEffort, ReasoningReplay},
     pricing::{self, TokenUsageBreakdown},
     tool_use::validate_anthropic_tool_capabilities,
     types::{
@@ -49,6 +50,7 @@ pub(crate) struct ExchangeRequest {
     tools: Vec<ExchangeTool>,
     tool_choice: Option<ExchangeToolChoice>,
     parallel_tool_calls: Option<bool>,
+    reasoning_effort: Option<ReasoningEffort>,
     parameters: Map<String, Value>,
 }
 
@@ -178,6 +180,7 @@ impl ExchangeRequest {
             tools,
             tool_choice,
             parallel_tool_calls,
+            reasoning_effort: None,
             parameters,
         })
     }
@@ -251,6 +254,21 @@ impl ExchangeRequest {
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect();
         let max_output_tokens = request.max_completion_tokens.or(request.max_tokens);
+        let reasoning_effort = request
+            .extra
+            .get("reasoning_effort")
+            .filter(|value| !value.is_null())
+            .map(|value| {
+                let value = value.as_str().ok_or_else(|| {
+                    AppError::InvalidRequest("reasoning_effort must be a string or null".to_owned())
+                })?;
+                ReasoningEffort::parse(value).ok_or_else(|| {
+                    AppError::InvalidRequest(format!(
+                        "unsupported reasoning_effort `{value}`; expected off, minimal, low, medium, high, xhigh, or max"
+                    ))
+                })
+            })
+            .transpose()?;
 
         Ok(Self {
             requested_model: request.model.clone(),
@@ -261,6 +279,7 @@ impl ExchangeRequest {
             tools,
             tool_choice,
             parallel_tool_calls,
+            reasoning_effort,
             parameters,
         })
     }
@@ -328,34 +347,90 @@ impl ExchangeRequest {
     }
 
     pub(crate) fn validate_provider(&self, resolved: &ResolvedProvider) -> Result<(), AppError> {
+        let profile = resolved
+            .provider
+            .model_profile(&resolved.provider_id, &resolved.model);
+        let tool_use = resolved
+            .provider
+            .tool_use_for_model(&resolved.provider_id, &resolved.model);
         match &self.source {
-            ClientRequest::Anthropic(request) => validate_anthropic_tool_capabilities(
-                request,
-                &resolved.provider_id,
-                &resolved.provider.tool_use,
-            )?,
+            ClientRequest::Anthropic(request) => {
+                validate_anthropic_tool_capabilities(request, &resolved.provider_id, &tool_use)?
+            }
             ClientRequest::OpenAiChat(_) => {
-                if self.uses_tools() && !resolved.provider.tool_use.supported {
+                if self.uses_tools() && !tool_use.supported {
                     return Err(AppError::InvalidRequest(format!(
                         "provider `{}` does not support tool use",
                         resolved.provider_id
                     )));
                 }
-                if self.tool_choice.is_some() && !resolved.provider.tool_use.tool_choice {
+                if self.tool_choice.is_some() && !tool_use.tool_choice {
                     return Err(AppError::InvalidRequest(format!(
                         "provider `{}` does not support tool_choice",
                         resolved.provider_id
                     )));
                 }
-                if self.parallel_tool_calls == Some(true)
-                    && !resolved.provider.tool_use.parallel_tool_calls
-                {
+                if self.parallel_tool_calls == Some(true) && !tool_use.parallel_tool_calls {
                     return Err(AppError::InvalidRequest(format!(
                         "provider `{}` does not support parallel tool calls",
                         resolved.provider_id
                     )));
                 }
             }
+        }
+
+        if self.tools.iter().any(|tool| tool.strict == Some(true))
+            && profile.strict_tool_schema != CapabilitySupport::Supported
+        {
+            return Err(AppError::InvalidRequest(format!(
+                "model `{}` does not have verified strict tool schema support",
+                resolved.model
+            )));
+        }
+
+        if self.has_explicit_reasoning() {
+            if profile.reasoning != CapabilitySupport::Supported {
+                return Err(AppError::InvalidRequest(format!(
+                    "model `{}` does not declare reasoning support",
+                    resolved.model
+                )));
+            }
+            if let Some(effort) = self.reasoning_effort
+                && !profile.reasoning_efforts.is_empty()
+                && !profile.reasoning_efforts.contains(&effort)
+            {
+                return Err(AppError::InvalidRequest(format!(
+                    "reasoning_effort `{}` is not supported by model `{}`",
+                    effort.as_str(),
+                    resolved.model
+                )));
+            }
+        }
+
+        let same_protocol = matches!(
+            (self.client_protocol(), resolved.provider.protocol),
+            (
+                ClientProtocol::AnthropicMessages,
+                crate::config::ProviderProtocol::Anthropic
+            ) | (
+                ClientProtocol::OpenAiChatCompletions,
+                crate::config::ProviderProtocol::OpenaiCompat
+            )
+        );
+        if profile.reasoning_replay == ReasoningReplay::SameProtocol
+            && !same_protocol
+            && self.uses_tools()
+            && (self.has_reasoning_history()
+                || self.has_tool_results()
+                || self.has_explicit_reasoning()
+                || profile
+                    .default_reasoning_effort
+                    .is_some_and(|effort| effort != ReasoningEffort::Off))
+        {
+            return Err(AppError::InvalidRequest(format!(
+                "model `{}` requires same-protocol reasoning replay for tool continuations",
+                resolved.model
+            )));
         }
 
         if resolved.provider.protocol == crate::config::ProviderProtocol::Anthropic
@@ -366,7 +441,60 @@ impl ExchangeRequest {
         Ok(())
     }
 
+    pub(crate) fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        self.reasoning_effort
+    }
+
+    pub(crate) fn anthropic_thinking(&self) -> Option<&Value> {
+        let ClientRequest::Anthropic(request) = &self.source else {
+            return None;
+        };
+        request.extra.get("thinking")
+    }
+
+    fn has_explicit_reasoning(&self) -> bool {
+        self.reasoning_effort.is_some() || self.anthropic_thinking().is_some()
+    }
+
+    fn has_reasoning_history(&self) -> bool {
+        match &self.source {
+            ClientRequest::OpenAiChat(request) => request.messages.iter().any(|message| {
+                message
+                    .get("reasoning_content")
+                    .is_some_and(|value| !value.is_null())
+            }),
+            ClientRequest::Anthropic(request) => request.messages.iter().any(|message| {
+                message
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .is_some_and(|blocks| {
+                        blocks.iter().any(|block| {
+                            matches!(
+                                block.get("type").and_then(Value::as_str),
+                                Some("thinking" | "redacted_thinking")
+                            )
+                        })
+                    })
+            }),
+        }
+    }
+
     fn validate_openai_to_anthropic_fidelity(&self) -> Result<(), AppError> {
+        let ClientRequest::OpenAiChat(request) = &self.source else {
+            unreachable!(
+                "OpenAI-to-Anthropic fidelity validation requires a Chat Completions request"
+            )
+        };
+        if request.messages.iter().any(|message| {
+            message
+                .get("reasoning_content")
+                .is_some_and(|value| !value.is_null())
+        }) {
+            return Err(AppError::InvalidRequest(
+                "assistant reasoning_content cannot be preserved by the selected Anthropic provider"
+                    .to_owned(),
+            ));
+        }
         let unsupported_parameters = ["presence_penalty", "frequency_penalty", "seed"]
             .into_iter()
             .filter(|key| {
@@ -455,6 +583,7 @@ impl ExchangeRequest {
                 })?;
                 object.insert("model".to_owned(), Value::String(model.to_owned()));
                 object.insert("stream".to_owned(), Value::Bool(stream));
+                object.remove("store");
                 if !stream {
                     object.remove("stream_options");
                 }
@@ -788,7 +917,9 @@ fn validate_openai_request_shape(request: &OpenAiChatRequest) -> Result<(), AppE
         "parallel_tool_calls",
         "response_format",
         "stream_options",
+        "store",
         "n",
+        "reasoning_effort",
     ];
     let unsupported = request
         .extra
@@ -801,6 +932,16 @@ fn validate_openai_request_shape(request: &OpenAiChatRequest) -> Result<(), AppE
             "unsupported Chat Completions field(s): {}",
             unsupported.join(", ")
         )));
+    }
+    if request
+        .extra
+        .get("store")
+        .is_some_and(|store| !store.is_null() && store.as_bool() != Some(false))
+    {
+        return Err(AppError::InvalidRequest(
+            "store must be false or null because ModelPort does not persist Chat Completions"
+                .to_owned(),
+        ));
     }
     if let Some(n) = request.extra.get("n")
         && n.as_u64() != Some(1)
@@ -900,7 +1041,7 @@ fn parse_openai_message(message: &Value, index: usize) -> Result<ExchangeMessage
         }
     };
     let allowed_keys: &[&str] = match role {
-        ExchangeRole::Assistant => &["role", "content", "tool_calls"],
+        ExchangeRole::Assistant => &["role", "content", "reasoning_content", "tool_calls"],
         ExchangeRole::Tool => &["role", "content", "tool_call_id"],
         _ => &["role", "content"],
     };
@@ -910,6 +1051,15 @@ fn parse_openai_message(message: &Value, index: usize) -> Result<ExchangeMessage
     {
         return Err(AppError::InvalidRequest(format!(
             "messages[{index}].{key} is not supported"
+        )));
+    }
+    if role == ExchangeRole::Assistant
+        && object
+            .get("reasoning_content")
+            .is_some_and(|value| !value.is_null() && !value.is_string())
+    {
+        return Err(AppError::InvalidRequest(format!(
+            "messages[{index}].reasoning_content must be a string or null"
         )));
     }
 
@@ -1059,6 +1209,10 @@ fn parse_anthropic_message(message: &Value, index: usize) -> Result<ExchangeMess
                 )?,
                 content: anthropic_text(block.get("content").unwrap_or(&Value::Null))?,
             }),
+            // Native Anthropic requests are forwarded from the original body, so
+            // retaining the block in this text/tool-only IR is unnecessary. The
+            // raw request is still inspected for replay safety before any bridge.
+            Some("thinking" | "redacted_thinking") if role == ExchangeRole::Assistant => {}
             Some(kind) => {
                 return Err(AppError::InvalidRequest(format!(
                     "messages[{index}].content[{block_index}] type `{kind}` is not in the current Exchange IR"
@@ -1402,6 +1556,92 @@ mod tests {
                 .contains("unsupported Chat Completions field")
         );
         assert!(error.to_string().contains("logprobs"));
+    }
+
+    #[test]
+    fn openai_assistant_reasoning_content_is_validated_and_forwarded() {
+        let request: OpenAiChatRequest = serde_json::from_value(json!({
+            "model": "chat-model",
+            "messages": [
+                { "role": "user", "content": "first" },
+                {
+                    "role": "assistant",
+                    "content": "answer",
+                    "reasoning_content": "private reasoning"
+                },
+                { "role": "user", "content": "second" }
+            ]
+        }))
+        .unwrap();
+
+        let exchange = ExchangeRequest::from_client(ClientRequest::OpenAiChat(request)).unwrap();
+        let rendered = exchange
+            .to_openai_request("upstream-model", false, MaxTokensField::MaxCompletionTokens)
+            .unwrap();
+
+        assert_eq!(
+            rendered["messages"][1]["reasoning_content"],
+            "private reasoning"
+        );
+        let error = exchange
+            .validate_openai_to_anthropic_fidelity()
+            .unwrap_err();
+        assert!(error.to_string().contains(
+            "assistant reasoning_content cannot be preserved by the selected Anthropic provider"
+        ));
+
+        let invalid: OpenAiChatRequest = serde_json::from_value(json!({
+            "model": "chat-model",
+            "messages": [{
+                "role": "assistant",
+                "content": "answer",
+                "reasoning_content": true
+            }]
+        }))
+        .unwrap();
+        let error = ExchangeRequest::from_client(ClientRequest::OpenAiChat(invalid)).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("reasoning_content must be a string or null")
+        );
+    }
+
+    #[test]
+    fn openai_store_false_or_null_is_accepted_and_not_forwarded() {
+        for store in [Value::Bool(false), Value::Null] {
+            let request: OpenAiChatRequest = serde_json::from_value(json!({
+                "model": "chat-model",
+                "messages": [{ "role": "user", "content": "hello" }],
+                "store": store
+            }))
+            .unwrap();
+
+            let exchange =
+                ExchangeRequest::from_client(ClientRequest::OpenAiChat(request)).unwrap();
+            let rendered = exchange
+                .to_openai_request("upstream-model", false, MaxTokensField::MaxCompletionTokens)
+                .unwrap();
+
+            assert!(rendered.get("store").is_none());
+        }
+    }
+
+    #[test]
+    fn openai_store_true_or_invalid_type_is_rejected() {
+        for store in [Value::Bool(true), Value::String("false".to_owned())] {
+            let request: OpenAiChatRequest = serde_json::from_value(json!({
+                "model": "chat-model",
+                "messages": [{ "role": "user", "content": "hello" }],
+                "store": store
+            }))
+            .unwrap();
+
+            let error =
+                ExchangeRequest::from_client(ClientRequest::OpenAiChat(request)).unwrap_err();
+
+            assert!(error.to_string().contains("store must be false or null"));
+        }
     }
 
     #[test]

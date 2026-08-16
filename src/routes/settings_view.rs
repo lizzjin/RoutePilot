@@ -263,6 +263,8 @@ mod tests {
             stream_idle_timeout_ms: None,
             retry: Default::default(),
             pricing: None,
+            model_pricing: Default::default(),
+            trust_upstream_cost: false,
         };
         AppConfig {
             bind_addr: "127.0.0.1:17878".parse().unwrap(),

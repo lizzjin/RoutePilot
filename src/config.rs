@@ -18,7 +18,7 @@ use crate::{
         ModelProfile, ModelProfileOverride, ReasoningEffort, resolve_model_profile,
         validate_model_profile_override,
     },
-    pricing::ModelPricing,
+    pricing::{ModelPricing, ModelPricingCard, PricingServiceTier, PricingSource},
 };
 
 const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 32 * 1024 * 1024;
@@ -69,7 +69,12 @@ pub struct ProviderConfig {
     pub request_timeout_ms: Option<u64>,
     pub stream_idle_timeout_ms: Option<u64>,
     pub retry: ProviderRetryConfig,
+    /// Legacy Provider-wide estimate-only pricing.
     pub pricing: Option<ModelPricing>,
+    /// Exact-model, evidence-bearing rate cards eligible for settlement.
+    pub model_pricing: HashMap<String, ModelPricingCard>,
+    /// Trust a non-negative `usage.cost` value returned by this Provider as USD.
+    pub trust_upstream_cost: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -647,6 +652,8 @@ impl fmt::Debug for ProviderConfig {
             .field("stream_idle_timeout_ms", &self.stream_idle_timeout_ms)
             .field("retry", &self.retry)
             .field("pricing", &self.pricing)
+            .field("model_pricing", &self.model_pricing)
+            .field("trust_upstream_cost", &self.trust_upstream_cost)
             .finish()
     }
 }
@@ -824,6 +831,10 @@ struct ProviderSection {
     stream_idle_timeout_ms: Option<u64>,
     retry: Option<ProviderRetryConfig>,
     pricing: Option<ModelPricing>,
+    #[serde(default)]
+    model_pricing: HashMap<String, ModelPricingCard>,
+    #[serde(default)]
+    trust_upstream_cost: bool,
 }
 
 struct ProviderSpec {
@@ -1357,6 +1368,8 @@ impl AppConfig {
                     stream_idle_timeout_ms: section.stream_idle_timeout_ms,
                     retry: section.retry.unwrap_or_default(),
                     pricing: section.pricing,
+                    model_pricing: section.model_pricing,
+                    trust_upstream_cost: section.trust_upstream_cost,
                 },
             );
         }
@@ -1498,6 +1511,16 @@ impl ConfigIssue {
 }
 
 impl ProviderConfig {
+    pub(crate) fn model_pricing_card(&self, model: &str) -> Option<&ModelPricingCard> {
+        self.model_pricing.get(model)
+    }
+
+    pub(crate) fn effective_pricing(&self, model: &str) -> Option<ModelPricing> {
+        self.model_pricing_card(model)
+            .map(|card| card.rates)
+            .or(self.pricing)
+    }
+
     pub(crate) fn model_profile(&self, provider_id: &str, model: &str) -> ModelProfile {
         resolve_model_profile(
             provider_id,
@@ -1564,12 +1587,7 @@ const DEEPSEEK_SPEC: ProviderSpec = ProviderSpec {
     default_model_env: "DEEPSEEK_MODEL",
     default_model: "deepseek-v4-flash",
     models_env: "DEEPSEEK_MODELS",
-    models: &[
-        "deepseek-v4-pro",
-        "deepseek-v4-flash",
-        "deepseek-chat",
-        "deepseek-reasoner",
-    ],
+    models: &["deepseek-v4-pro", "deepseek-v4-flash"],
     model_prefixes: &["deepseek-"],
     passthrough_unknown_models: false,
     max_tokens_field: MaxTokensField::MaxTokens,
@@ -1648,12 +1666,7 @@ const OPTIONAL_PROVIDER_SPECS: &[ProviderSpec] = &[
         default_model_env: "DEEPSEEK_OPENAI_MODEL",
         default_model: "deepseek-v4-flash",
         models_env: "DEEPSEEK_OPENAI_MODELS",
-        models: &[
-            "deepseek-v4-pro",
-            "deepseek-v4-flash",
-            "deepseek-chat",
-            "deepseek-reasoner",
-        ],
+        models: &["deepseek-v4-pro", "deepseek-v4-flash"],
         model_prefixes: &["deepseek-"],
         passthrough_unknown_models: false,
         max_tokens_field: MaxTokensField::MaxTokens,
@@ -2096,8 +2109,56 @@ fn insert_spec(
             stream_idle_timeout_ms: None,
             retry: ProviderRetryConfig::default(),
             pricing: None,
+            model_pricing: default_model_pricing(spec.id),
+            trust_upstream_cost: spec.id == "openrouter",
         },
     );
+}
+
+fn default_model_pricing(provider_id: &str) -> HashMap<String, ModelPricingCard> {
+    if !matches!(provider_id, "deepseek" | "deepseek_openai") {
+        return HashMap::new();
+    }
+
+    let card = |rates, model: &str| ModelPricingCard {
+        rates,
+        version: "deepseek-public-2026-04-24-v1".to_owned(),
+        effective_at: "2026-04-24T00:00:00Z".to_owned(),
+        currency: "USD".to_owned(),
+        source: PricingSource::ProviderPublished,
+        service_tier: PricingServiceTier::Standard,
+        region: None,
+        evidence: format!(
+            "https://api-docs.deepseek.com/quick_start/pricing#{}",
+            model
+        ),
+    };
+    HashMap::from([
+        (
+            "deepseek-v4-flash".to_owned(),
+            card(
+                ModelPricing {
+                    input_per_million: 0.14,
+                    output_per_million: 0.28,
+                    cache_write_per_million: 0.14,
+                    cache_read_per_million: 0.0028,
+                },
+                "deepseek-v4-flash",
+            ),
+        ),
+        (
+            "deepseek-v4-pro".to_owned(),
+            card(
+                ModelPricing {
+                    input_per_million: 0.435,
+                    output_per_million: 0.87,
+                    cache_write_per_million: 0.435,
+                    cache_read_per_million: 0.003625,
+                },
+                "deepseek-v4-pro",
+            ),
+        ),
+    ])
 }
 
 fn default_fidelity_mode(
@@ -2987,6 +3048,13 @@ fn validate_provider(
             }
         }
     }
+    for (model, card) in &provider.model_pricing {
+        if let Err(message) =
+            crate::pricing::validate_model_pricing_card(model, &provider.models, card)
+        {
+            issues.push(ConfigIssue::error(format!("provider `{id}` {message}")));
+        }
+    }
 }
 
 pub(crate) fn validate_provider_static_header(name: &str, value: &str) -> Result<(), &'static str> {
@@ -3384,6 +3452,8 @@ mod tests {
             stream_idle_timeout_ms: None,
             retry: Default::default(),
             pricing: None,
+            model_pricing: HashMap::new(),
+            trust_upstream_cost: false,
         };
         let openrouter = ProviderConfig {
             display_name: "OpenRouter".to_owned(),
@@ -3415,6 +3485,8 @@ mod tests {
             stream_idle_timeout_ms: None,
             retry: Default::default(),
             pricing: None,
+            model_pricing: HashMap::new(),
+            trust_upstream_cost: true,
         };
 
         AppConfig {
@@ -3484,6 +3556,8 @@ mod tests {
             stream_idle_timeout_ms: None,
             retry: Default::default(),
             pricing: None,
+            model_pricing: HashMap::new(),
+            trust_upstream_cost: false,
         }
     }
 
@@ -3921,6 +3995,104 @@ mod tests {
                 .iter()
                 .all(|issue| issue.severity != ConfigIssueSeverity::Error),
             "{issues:?}"
+        );
+    }
+
+    #[test]
+    fn validation_accepts_only_governed_exact_model_rate_cards() {
+        let mut config = test_config();
+        config.auth_token = Some("long-local-client-token".to_owned());
+        let provider = config.providers.get_mut("mimo").unwrap();
+        provider.model_pricing.insert(
+            "mimo-v2.5-pro".to_owned(),
+            ModelPricingCard {
+                rates: ModelPricing {
+                    input_per_million: 0.14,
+                    output_per_million: 0.28,
+                    cache_write_per_million: 0.14,
+                    cache_read_per_million: 0.0028,
+                },
+                version: "contract-v1".to_owned(),
+                effective_at: "2026-08-01T00:00:00Z".to_owned(),
+                currency: "USD".to_owned(),
+                source: PricingSource::ProviderContract,
+                service_tier: PricingServiceTier::Standard,
+                region: None,
+                evidence: "contract://mimo/v1".to_owned(),
+            },
+        );
+        let valid_card = provider.model_pricing["mimo-v2.5-pro"].clone();
+
+        assert!(
+            config
+                .validation_issues()
+                .iter()
+                .all(|issue| { issue.severity != ConfigIssueSeverity::Error })
+        );
+
+        let mut invalid = valid_card.clone();
+        config
+            .providers
+            .get_mut("mimo")
+            .unwrap()
+            .model_pricing
+            .insert("not-an-exact-model".to_owned(), invalid.clone());
+
+        let issues = config.validation_issues();
+        assert!(issues.iter().any(|issue| {
+            issue.severity == ConfigIssueSeverity::Error
+                && issue.message.contains("requires an exact model")
+        }));
+
+        let provider = config.providers.get_mut("mimo").unwrap();
+        provider.model_pricing.remove("not-an-exact-model");
+        invalid.source = PricingSource::LegacyEstimate;
+        provider
+            .model_pricing
+            .insert("mimo-v2.5-pro".to_owned(), invalid);
+        let issues = config.validation_issues();
+        assert!(issues.iter().any(|issue| {
+            issue.severity == ConfigIssueSeverity::Error
+                && issue.message.contains("cannot be legacy_estimate")
+        }));
+
+        let mut invalid = valid_card;
+        invalid.service_tier = PricingServiceTier::Priority;
+        config
+            .providers
+            .get_mut("mimo")
+            .unwrap()
+            .model_pricing
+            .insert("mimo-v2.5-pro".to_owned(), invalid);
+        let issues = config.validation_issues();
+        assert!(issues.iter().any(|issue| {
+            issue.severity == ConfigIssueSeverity::Error
+                && issue.message.contains("must be standard")
+        }));
+    }
+
+    #[test]
+    fn built_in_deepseek_cards_match_published_flat_rates() {
+        let cards = default_model_pricing("deepseek");
+
+        assert_eq!(cards.len(), 2);
+        assert_eq!(
+            cards["deepseek-v4-flash"].rates,
+            ModelPricing {
+                input_per_million: 0.14,
+                output_per_million: 0.28,
+                cache_write_per_million: 0.14,
+                cache_read_per_million: 0.0028,
+            }
+        );
+        assert_eq!(
+            cards["deepseek-v4-pro"].rates,
+            ModelPricing {
+                input_per_million: 0.435,
+                output_per_million: 0.87,
+                cache_write_per_million: 0.435,
+                cache_read_per_million: 0.003625,
+            }
         );
     }
 

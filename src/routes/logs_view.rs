@@ -345,6 +345,10 @@ fn summarize_logs(logs: &[Value]) -> Value {
     let mut total_cache_write_tokens = 0u64;
     let mut total_cache_read_tokens = 0u64;
     let mut total_cost_estimate = 0.0f64;
+    let mut total_actual_cost = 0.0f64;
+    let mut total_billable_cost = 0.0f64;
+    let mut billable_requests = 0usize;
+    let mut estimate_only_requests = 0usize;
     let mut latency_values = Vec::with_capacity(logs.len());
     let mut first_byte_latency_values = Vec::new();
     let mut first_timestamp = None::<u64>;
@@ -374,6 +378,13 @@ fn summarize_logs(logs: &[Value]) -> Value {
             .get("costEstimate")
             .and_then(Value::as_f64)
             .unwrap_or(0.0);
+        total_actual_cost += log.get("actualCost").and_then(Value::as_f64).unwrap_or(0.0);
+        if let Some(cost) = log.get("billableCost").and_then(Value::as_f64) {
+            total_billable_cost += cost;
+            billable_requests += 1;
+        } else {
+            estimate_only_requests += 1;
+        }
         if let Some(latency) = log.get("latencyMs").and_then(Value::as_u64) {
             latency_values.push(latency);
         }
@@ -408,6 +419,10 @@ fn summarize_logs(logs: &[Value]) -> Value {
         "totalCacheReadTokens": total_cache_read_tokens,
         "totalTokens": total_tokens,
         "totalCostEstimate": total_cost_estimate,
+        "totalActualCost": total_actual_cost,
+        "totalBillableCost": total_billable_cost,
+        "billableRequests": billable_requests,
+        "estimateOnlyRequests": estimate_only_requests,
         "latencyP95Ms": percentile(&latency_values, 95),
         "latencySampleCount": latency_values.len(),
         "firstByteLatencyP95Ms": percentile(&first_byte_latency_values, 95),
@@ -660,6 +675,10 @@ mod tests {
         assert_eq!(body["summary"]["toolUseSuccessRequests"], 1);
         assert_eq!(body["summary"]["totalTokens"], 30);
         assert_eq!(body["summary"]["totalCostEstimate"], 0.75);
+        assert_eq!(body["summary"]["totalActualCost"], 0.0);
+        assert_eq!(body["summary"]["totalBillableCost"], 0.0);
+        assert_eq!(body["summary"]["billableRequests"], 0);
+        assert_eq!(body["summary"]["estimateOnlyRequests"], 3);
         assert_eq!(body["summary"]["latencyP95Ms"], 1_000);
         assert_eq!(body["summary"]["latencySampleCount"], 3);
         assert_eq!(body["summary"]["firstByteLatencyP95Ms"], 250);

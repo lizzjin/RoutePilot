@@ -141,6 +141,9 @@ struct MemoryRecord {
     cache_write_tokens: i64,
     cache_read_tokens: i64,
     cost_amount_microunits: i64,
+    actual_cost_microunits: Option<i64>,
+    billable_cost_microunits: Option<i64>,
+    pricing_evidence: Option<serde_json::Value>,
     billing_mode: Option<String>,
     chargeable: bool,
     latency_ms: i64,
@@ -397,7 +400,9 @@ pub(crate) struct EnterpriseLedgerOverview {
     active_leases: i64,
     expired_leases: i64,
     chargeable_requests: i64,
+    estimate_only_requests: i64,
     total_cost_microunits: i64,
+    total_billable_cost_microunits: i64,
     organization_count: i64,
     project_count: i64,
     environment_count: i64,
@@ -439,6 +444,9 @@ pub(crate) struct EnterpriseRequestRow {
     cache_write_tokens: i64,
     cache_read_tokens: i64,
     cost_amount_microunits: i64,
+    actual_cost_microunits: Option<i64>,
+    billable_cost_microunits: Option<i64>,
+    pricing_evidence: Option<serde_json::Value>,
     currency: String,
     billing_mode: Option<String>,
     chargeable: bool,
@@ -479,6 +487,9 @@ pub(crate) struct EnterpriseAttemptRow {
     cache_write_tokens: i64,
     cache_read_tokens: i64,
     cost_amount_microunits: i64,
+    actual_cost_microunits: Option<i64>,
+    billable_cost_microunits: Option<i64>,
+    pricing_evidence: Option<serde_json::Value>,
     currency: String,
     billing_mode: Option<String>,
     chargeable: bool,
@@ -678,6 +689,7 @@ pub(crate) struct LedgerOutcome {
     terminal_reason: String,
     error_message: Option<String>,
     estimate: UsageEstimate,
+    pricing_evidence: Option<serde_json::Value>,
     billing_mode: String,
     chargeable: bool,
     latency_ms: i64,
@@ -723,6 +735,9 @@ impl MemoryRecord {
             cache_write_tokens: 0,
             cache_read_tokens: 0,
             cost_amount_microunits: 0,
+            actual_cost_microunits: None,
+            billable_cost_microunits: None,
+            pricing_evidence: None,
             billing_mode: None,
             chargeable: false,
             latency_ms: 0,
@@ -753,6 +768,9 @@ impl MemoryRecord {
         self.cache_write_tokens = to_i64(outcome.estimate.cache_write_tokens);
         self.cache_read_tokens = to_i64(outcome.estimate.cache_read_tokens);
         self.cost_amount_microunits = cost_microunits(outcome.estimate.cost_estimate);
+        self.actual_cost_microunits = outcome.estimate.actual_cost.map(cost_microunits);
+        self.billable_cost_microunits = outcome.estimate.billable_cost.map(cost_microunits);
+        self.pricing_evidence.clone_from(&outcome.pricing_evidence);
         self.billing_mode = Some(outcome.billing_mode.clone());
         self.chargeable = outcome.chargeable;
         self.latency_ms = outcome.latency_ms;
@@ -1444,6 +1462,7 @@ impl EnterpriseLedger {
         attempt: &LedgerAttempt,
         outcome: &LedgerOutcome,
     ) -> Result<(), AppError> {
+        validate_billing_outcome(outcome)?;
         match self.backend.as_ref() {
             LedgerBackend::Memory(ledger) => {
                 let mut ledger = ledger.lock().expect("enterprise ledger lock poisoned");
@@ -1460,7 +1479,7 @@ impl EnterpriseLedger {
                     return Ok(());
                 }
                 record.finalize(outcome);
-                if outcome.chargeable {
+                if outcome.chargeable && outcome.estimate.billable_cost.is_some() {
                     settle_memory_budget(&mut ledger, attempt, outcome)?;
                 } else {
                     release_memory_budget(
@@ -1506,7 +1525,7 @@ impl EnterpriseLedger {
                     }
                     return Err(missing_scoped_record());
                 }
-                if outcome.chargeable {
+                if outcome.chargeable && outcome.estimate.billable_cost.is_some() {
                     settle_budget_pg(&mut transaction, attempt, outcome).await?;
                 } else {
                     release_budget_pg(
@@ -1546,6 +1565,7 @@ impl EnterpriseLedger {
         usage: &UsageEventInput,
     ) -> Result<(), AppError> {
         let outcome = LedgerOutcome::from_usage(usage);
+        validate_billing_outcome(&outcome)?;
         let provider_snapshot = usage.attempt_id.as_ref().map(|attempt_id| {
             (
                 usage.provider.as_str(),
@@ -1650,6 +1670,7 @@ impl EnterpriseLedger {
         lease_owner: &str,
         outcome: &LedgerOutcome,
     ) -> Result<(), AppError> {
+        validate_billing_outcome(outcome)?;
         match self.backend.as_ref() {
             LedgerBackend::Memory(ledger) => {
                 let mut ledger = ledger.lock().expect("enterprise ledger lock poisoned");
@@ -1936,7 +1957,9 @@ impl EnterpriseLedger {
             active_leases: 0,
             expired_leases: 0,
             chargeable_requests: 0,
+            estimate_only_requests: 0,
             total_cost_microunits: 0,
+            total_billable_cost_microunits: 0,
             organization_count: 0,
             project_count: 0,
             environment_count: 0,
@@ -1975,10 +1998,18 @@ impl EnterpriseLedger {
                     }
                     if request.record.chargeable {
                         overview.chargeable_requests += 1;
+                        if request.record.terminal
+                            && request.record.billable_cost_microunits.is_none()
+                        {
+                            overview.estimate_only_requests += 1;
+                        }
                     }
                     overview.total_cost_microunits = overview
                         .total_cost_microunits
                         .saturating_add(request.record.cost_amount_microunits);
+                    overview.total_billable_cost_microunits = overview
+                        .total_billable_cost_microunits
+                        .saturating_add(request.record.billable_cost_microunits.unwrap_or(0));
                     organizations.insert(request.record.tenant.organization_id.clone());
                     projects.insert((
                         request.record.tenant.organization_id.clone(),
@@ -2007,7 +2038,12 @@ impl EnterpriseLedger {
                         count(*) FILTER (WHERE state = 'started' AND lease_expires_at > now())::bigint AS active_leases,
                         count(*) FILTER (WHERE state = 'started' AND lease_expires_at <= now())::bigint AS expired_leases,
                         count(*) FILTER (WHERE chargeable)::bigint AS chargeable_requests,
+                        count(*) FILTER (
+                            WHERE state <> 'started' AND chargeable
+                              AND billable_cost_microunits IS NULL
+                        )::bigint AS estimate_only_requests,
                         COALESCE(sum(cost_amount_microunits), 0)::bigint AS total_cost_microunits,
+                        COALESCE(sum(billable_cost_microunits), 0)::bigint AS total_billable_cost_microunits,
                         count(DISTINCT organization_id)::bigint AS organization_count,
                         count(DISTINCT (organization_id, project_id))::bigint AS project_count,
                         count(DISTINCT (organization_id, project_id, environment_id))::bigint AS environment_count
@@ -2025,7 +2061,10 @@ impl EnterpriseLedger {
                 overview.active_leases = row.try_get("active_leases")?;
                 overview.expired_leases = row.try_get("expired_leases")?;
                 overview.chargeable_requests = row.try_get("chargeable_requests")?;
+                overview.estimate_only_requests = row.try_get("estimate_only_requests")?;
                 overview.total_cost_microunits = row.try_get("total_cost_microunits")?;
+                overview.total_billable_cost_microunits =
+                    row.try_get("total_billable_cost_microunits")?;
                 overview.organization_count = row.try_get("organization_count")?;
                 overview.project_count = row.try_get("project_count")?;
                 overview.environment_count = row.try_get("environment_count")?;
@@ -2195,6 +2234,14 @@ impl EnterpriseLedger {
                 COALESCE(sum(r.cache_write_tokens), 0)::bigint AS total_cache_write_tokens,
                 COALESCE(sum(r.cache_read_tokens), 0)::bigint AS total_cache_read_tokens,
                 COALESCE(sum(r.cost_amount_microunits), 0)::bigint AS total_cost_microunits,
+                COALESCE(sum(r.actual_cost_microunits), 0)::bigint AS total_actual_cost_microunits,
+                COALESCE(sum(r.billable_cost_microunits), 0)::bigint AS total_billable_cost_microunits,
+                count(*) FILTER (
+                    WHERE r.billable_cost_microunits IS NOT NULL
+                )::bigint AS billable_requests,
+                count(*) FILTER (
+                    WHERE r.billable_cost_microunits IS NULL
+                )::bigint AS estimate_only_requests,
                 percentile_disc(0.95) WITHIN GROUP (ORDER BY r.latency_ms)
                     FILTER (WHERE r.latency_ms IS NOT NULL) AS latency_p95_ms,
                 count(r.latency_ms)::bigint AS latency_sample_count,
@@ -2239,6 +2286,18 @@ impl EnterpriseLedger {
             "totalTokens": nonnegative_u64(total_tokens),
             "totalCostEstimate": microunits_usd(
                 summary_row.try_get("total_cost_microunits")?
+            ),
+            "totalActualCost": microunits_usd(
+                summary_row.try_get("total_actual_cost_microunits")?
+            ),
+            "totalBillableCost": microunits_usd(
+                summary_row.try_get("total_billable_cost_microunits")?
+            ),
+            "billableRequests": nonnegative_u64(
+                summary_row.try_get("billable_requests")?
+            ),
+            "estimateOnlyRequests": nonnegative_u64(
+                summary_row.try_get("estimate_only_requests")?
             ),
             "latencyP95Ms": summary_row
                 .try_get::<Option<i64>, _>("latency_p95_ms")?
@@ -2679,11 +2738,10 @@ impl EnterpriseLedger {
                         && created_at >= month_start
                     {
                         let row = stats.teams.entry(team_id.to_owned()).or_default();
-                        let cost = if request.record.chargeable {
-                            microunits_usd(request.record.cost_amount_microunits)
-                        } else {
-                            0.0
-                        };
+                        let cost = request
+                            .record
+                            .billable_cost_microunits
+                            .map_or(0.0, microunits_usd);
                         row.monthly_spend_usd += cost;
                         if created_at >= day_start {
                             row.requests_today = row.requests_today.saturating_add(1);
@@ -2720,13 +2778,13 @@ impl EnterpriseLedger {
                                 date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
                             )
                         )::bigint AS requests_today,
-                        COALESCE(sum(cost_amount_microunits) FILTER (
+                        COALESCE(sum(billable_cost_microunits) FILTER (
                             WHERE chargeable
                               AND created_at >= (
                                   date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
                               )
                         ), 0)::bigint AS daily_spend_microunits,
-                        COALESCE(sum(cost_amount_microunits) FILTER (
+                        COALESCE(sum(billable_cost_microunits) FILTER (
                             WHERE chargeable
                         ), 0)::bigint AS monthly_spend_microunits
                      FROM modelport_gateway_requests
@@ -2881,7 +2939,7 @@ impl EnterpriseLedger {
                     .values()
                     .filter(|request| request.record.terminal && request.record.chargeable)
                 {
-                    let cost = microunits_usd(request.record.cost_amount_microunits);
+                    let cost = microunits_usd(request.record.billable_cost_microunits.unwrap_or(0));
                     let age = now.saturating_sub(request.record.created_at_ms);
                     let request_quota_subject_id = request
                         .quota_subject_id
@@ -2918,29 +2976,29 @@ impl EnterpriseLedger {
             LedgerBackend::Postgres(pool) => {
                 let row = sqlx::query(
                     "SELECT
-                        COALESCE(sum(cost_amount_microunits)
+                        COALESCE(sum(billable_cost_microunits)
                             FILTER (WHERE quota_subject_id = ANY($1::text[])), 0)::bigint AS api_key_all_time,
-                        COALESCE(sum(cost_amount_microunits)
+                        COALESCE(sum(billable_cost_microunits)
                             FILTER (WHERE quota_subject_id = ANY($1::text[])
                                 AND created_at >= now() - interval '5 hours'), 0)::bigint
                             AS api_key_five_hours,
-                        COALESCE(sum(cost_amount_microunits)
+                        COALESCE(sum(billable_cost_microunits)
                             FILTER (WHERE quota_subject_id = ANY($1::text[])
                                 AND created_at >= now() - interval '1 day'), 0)::bigint
                             AS api_key_day,
-                        COALESCE(sum(cost_amount_microunits)
+                        COALESCE(sum(billable_cost_microunits)
                             FILTER (WHERE quota_subject_id = ANY($1::text[])
                                 AND created_at >= now() - interval '7 days'), 0)::bigint
                             AS api_key_week,
-                        COALESCE(sum(cost_amount_microunits)
+                        COALESCE(sum(billable_cost_microunits)
                             FILTER (WHERE quota_subject_id = ANY($1::text[])
                                 AND created_at >= now() - interval '30 days'), 0)::bigint
                             AS api_key_month,
-                        COALESCE(sum(cost_amount_microunits)
+                        COALESCE(sum(billable_cost_microunits)
                             FILTER (WHERE team_id = $2
                                 AND created_at >= now() - interval '1 day'), 0)::bigint
                             AS team_day,
-                        COALESCE(sum(cost_amount_microunits)
+                        COALESCE(sum(billable_cost_microunits)
                             FILTER (WHERE team_id = $2
                                 AND created_at >= now() - interval '30 days'), 0)::bigint
                             AS team_month
@@ -2988,8 +3046,9 @@ impl EnterpriseLedger {
                         .saturating_add(nonnegative_u64(request.record.output_tokens))
                         .saturating_add(nonnegative_u64(request.record.cache_write_tokens))
                         .saturating_add(nonnegative_u64(request.record.cache_read_tokens));
-                    cost_microunits = cost_microunits
-                        .saturating_add(request.record.cost_amount_microunits.max(0));
+                    cost_microunits = cost_microunits.saturating_add(
+                        request.record.billable_cost_microunits.unwrap_or(0).max(0),
+                    );
                 }
                 Ok(quota_value_from_totals(
                     &quota.quota_type,
@@ -3006,7 +3065,7 @@ impl EnterpriseLedger {
                             input_tokens + output_tokens
                             + cache_write_tokens + cache_read_tokens
                         ), 0)::bigint AS tokens,
-                        COALESCE(sum(cost_amount_microunits), 0)::bigint
+                        COALESCE(sum(billable_cost_microunits), 0)::bigint
                             AS cost_microunits
                      FROM modelport_gateway_requests
                      WHERE principal_id = $1
@@ -4774,22 +4833,25 @@ async fn update_terminal_record_pg(
              cache_write_tokens = $7,
              cache_read_tokens = $8,
              cost_amount_microunits = $9,
-             billing_mode = $10,
-             chargeable = $11,
-             latency_ms = $12,
-             first_byte_latency_ms = $13,
-             tool_outcome = $14,
-             tool_repair_attempted = $15,
-             tool_repair_recovered = $16,
-             retry_count = $17,
-             fallback_from_provider = $18,
+             actual_cost_microunits = $10,
+             billable_cost_microunits = $11,
+             pricing_evidence = $12,
+             billing_mode = $13,
+             chargeable = $14,
+             latency_ms = $15,
+             first_byte_latency_ms = $16,
+             tool_outcome = $17,
+             tool_repair_attempted = $18,
+             tool_repair_recovered = $19,
+             retry_count = $20,
+             fallback_from_provider = $21,
              updated_at = now(),
              completed_at = now()
-         WHERE {id_column} = $19
-           AND organization_id = $20
-           AND project_id = $21
-           AND environment_id = $22
-           AND lease_owner = $23
+         WHERE {id_column} = $22
+           AND organization_id = $23
+           AND project_id = $24
+           AND environment_id = $25
+           AND lease_owner = $26
            AND state = 'started'"
     );
     let result = sqlx::query(&query)
@@ -4802,6 +4864,9 @@ async fn update_terminal_record_pg(
         .bind(to_i64(outcome.estimate.cache_write_tokens))
         .bind(to_i64(outcome.estimate.cache_read_tokens))
         .bind(cost_microunits(outcome.estimate.cost_estimate))
+        .bind(outcome.estimate.actual_cost.map(cost_microunits))
+        .bind(outcome.estimate.billable_cost.map(cost_microunits))
+        .bind(&outcome.pricing_evidence)
         .bind(&outcome.billing_mode)
         .bind(outcome.chargeable)
         .bind(outcome.latency_ms)
@@ -5274,7 +5339,7 @@ async fn usage_spend_totals_pg_tx(
                 AS team_month
          FROM (
             SELECT quota_subject_id, team_id, created_at,
-                   cost_amount_microunits AS cost_microunits
+                   COALESCE(billable_cost_microunits, 0) AS cost_microunits
             FROM modelport_gateway_requests
             WHERE state <> 'started' AND chargeable
             UNION ALL
@@ -5336,7 +5401,7 @@ async fn quota_totals_pg_tx(
                       AND state = 'reserved'
                       AND created_at >= to_timestamp($2::double precision / 1000.0)), 0)
                 AS tokens,
-            COALESCE((SELECT sum(cost_amount_microunits)::bigint
+            COALESCE((SELECT sum(billable_cost_microunits)::bigint
                 FROM modelport_gateway_requests
                 WHERE principal_id = $1
                   AND state <> 'started'
@@ -5380,7 +5445,8 @@ fn settle_memory_usage(
         reservation.state = "settled".to_owned();
         reservation.actual_requests = 1;
         reservation.actual_tokens = estimate_total_tokens(outcome.estimate);
-        reservation.actual_cost_microunits = cost_microunits(outcome.estimate.cost_estimate);
+        reservation.actual_cost_microunits =
+            outcome.estimate.billable_cost.map_or(0, cost_microunits);
     } else {
         reservation.state = "released".to_owned();
     }
@@ -5421,7 +5487,7 @@ async fn settle_usage_reservation_by_id_pg(
             "settled",
             1i64,
             to_i64(estimate_total_tokens(outcome.estimate)),
-            cost_microunits(outcome.estimate.cost_estimate),
+            outcome.estimate.billable_cost.map_or(0, cost_microunits),
         )
     } else {
         ("released", 0, 0, 0)
@@ -5489,7 +5555,12 @@ fn settle_memory_budget(
     attempt: &LedgerAttempt,
     outcome: &LedgerOutcome,
 ) -> Result<(), AppError> {
-    let settled_microunits = cost_microunits(outcome.estimate.cost_estimate);
+    let settled_microunits = cost_microunits(
+        outcome
+            .estimate
+            .billable_cost
+            .expect("settlement requires billable cost"),
+    );
     let now = now_millis();
     let reserved_microunits = {
         let reservation = ledger
@@ -5592,7 +5663,12 @@ async fn settle_budget_pg(
     attempt: &LedgerAttempt,
     outcome: &LedgerOutcome,
 ) -> Result<(), AppError> {
-    let settled_microunits = cost_microunits(outcome.estimate.cost_estimate);
+    let settled_microunits = cost_microunits(
+        outcome
+            .estimate
+            .billable_cost
+            .expect("settlement requires billable cost"),
+    );
     let reservation = sqlx::query_as::<_, (String, i64)>(
         "UPDATE modelport_budget_reservations
          SET state = 'settled',
@@ -5819,11 +5895,36 @@ fn budget_event(
 }
 
 fn outcome_evidence_source(outcome: &LedgerOutcome) -> &'static str {
-    if outcome.billing_mode == "upstream-returned" {
-        "provider-usage"
-    } else {
-        "local-estimate"
+    match outcome
+        .pricing_evidence
+        .as_ref()
+        .and_then(|value| value.get("method"))
+        .and_then(Value::as_str)
+    {
+        Some("provider_reported") => "provider-reported-cost",
+        Some("exact_rate_card") => "verified-rate-card",
+        _ if outcome.billing_mode == "upstream-returned" => "provider-usage-unpriced",
+        _ => "local-estimate",
     }
+}
+
+fn validate_billing_outcome(outcome: &LedgerOutcome) -> Result<(), AppError> {
+    for value in [outcome.estimate.actual_cost, outcome.estimate.billable_cost]
+        .into_iter()
+        .flatten()
+    {
+        if !value.is_finite() || value < 0.0 {
+            return Err(AppError::Database(
+                "billing outcome contains an invalid reconciled amount".to_owned(),
+            ));
+        }
+    }
+    if outcome.estimate.billable_cost.is_some() && outcome.pricing_evidence.is_none() {
+        return Err(AppError::Database(
+            "billable outcome requires pricing evidence".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn push_operational_log_filters<'args>(
@@ -6000,7 +6101,9 @@ const REQUEST_LIST_SQL: &str = "SELECT
         r.last_attempt_id, r.model_pricing,
         r.state, r.status_code, r.terminal_reason, r.error_message,
         r.input_tokens, r.output_tokens, r.cache_write_tokens, r.cache_read_tokens,
-        r.cost_amount_microunits, r.currency, r.billing_mode, r.chargeable,
+        r.cost_amount_microunits, r.actual_cost_microunits,
+        r.billable_cost_microunits, r.pricing_evidence,
+        r.currency, r.billing_mode, r.chargeable,
         r.latency_ms, r.first_byte_latency_ms,
         r.tool_outcome, r.tool_repair_attempted, r.tool_repair_recovered,
         r.retry_count, r.fallback_from_provider,
@@ -6074,7 +6177,9 @@ const OPERATIONAL_LOG_SELECT_SQL: &str = "SELECT
         r.last_attempt_id, r.model_pricing,
         r.state, r.status_code, r.terminal_reason, r.error_message,
         r.input_tokens, r.output_tokens, r.cache_write_tokens, r.cache_read_tokens,
-        r.cost_amount_microunits, r.currency, r.billing_mode, r.chargeable,
+        r.cost_amount_microunits, r.actual_cost_microunits,
+        r.billable_cost_microunits, r.pricing_evidence,
+        r.currency, r.billing_mode, r.chargeable,
         r.latency_ms, r.first_byte_latency_ms,
         r.tool_outcome, r.tool_repair_attempted, r.tool_repair_recovered,
         r.retry_count, r.fallback_from_provider,
@@ -6119,7 +6224,9 @@ const REQUEST_DETAIL_SQL: &str = "SELECT
         r.last_attempt_id, r.model_pricing,
         r.state, r.status_code, r.terminal_reason, r.error_message,
         r.input_tokens, r.output_tokens, r.cache_write_tokens, r.cache_read_tokens,
-        r.cost_amount_microunits, r.currency, r.billing_mode, r.chargeable,
+        r.cost_amount_microunits, r.actual_cost_microunits,
+        r.billable_cost_microunits, r.pricing_evidence,
+        r.currency, r.billing_mode, r.chargeable,
         r.latency_ms, r.first_byte_latency_ms,
         r.tool_outcome, r.tool_repair_attempted, r.tool_repair_recovered,
         r.retry_count, r.fallback_from_provider,
@@ -6163,7 +6270,9 @@ const ATTEMPT_LIST_SQL: &str = "SELECT
         provider_id, resolved_model, provider_protocol,
         state, status_code, terminal_reason, error_message,
         input_tokens, output_tokens, cache_write_tokens, cache_read_tokens,
-        cost_amount_microunits, currency, billing_mode, chargeable,
+        cost_amount_microunits, actual_cost_microunits,
+        billable_cost_microunits, pricing_evidence,
+        currency, billing_mode, chargeable,
         latency_ms, first_byte_latency_ms,
         lease_owner,
         (EXTRACT(EPOCH FROM lease_expires_at) * 1000)::bigint AS lease_expires_at_ms,
@@ -6726,6 +6835,9 @@ fn memory_request_row(
         cache_write_tokens: record.cache_write_tokens,
         cache_read_tokens: record.cache_read_tokens,
         cost_amount_microunits: record.cost_amount_microunits,
+        actual_cost_microunits: record.actual_cost_microunits,
+        billable_cost_microunits: record.billable_cost_microunits,
+        pricing_evidence: record.pricing_evidence.clone(),
         currency: "USD".to_owned(),
         billing_mode: record.billing_mode.clone(),
         chargeable: record.chargeable,
@@ -6766,6 +6878,9 @@ fn memory_attempt_row(attempt_id: &str, record: &MemoryRecord) -> EnterpriseAtte
         cache_write_tokens: record.cache_write_tokens,
         cache_read_tokens: record.cache_read_tokens,
         cost_amount_microunits: record.cost_amount_microunits,
+        actual_cost_microunits: record.actual_cost_microunits,
+        billable_cost_microunits: record.billable_cost_microunits,
+        pricing_evidence: record.pricing_evidence.clone(),
         currency: "USD".to_owned(),
         billing_mode: record.billing_mode.clone(),
         chargeable: record.chargeable,
@@ -6814,6 +6929,9 @@ fn request_row_from_pg(row: &PgRow) -> Result<EnterpriseRequestRow, sqlx::Error>
         cache_write_tokens: row.try_get("cache_write_tokens")?,
         cache_read_tokens: row.try_get("cache_read_tokens")?,
         cost_amount_microunits: row.try_get("cost_amount_microunits")?,
+        actual_cost_microunits: row.try_get("actual_cost_microunits")?,
+        billable_cost_microunits: row.try_get("billable_cost_microunits")?,
+        pricing_evidence: row.try_get("pricing_evidence")?,
         currency: row.try_get("currency")?,
         billing_mode: row.try_get("billing_mode")?,
         chargeable: row.try_get("chargeable")?,
@@ -6854,6 +6972,9 @@ fn attempt_row_from_pg(row: &PgRow) -> Result<EnterpriseAttemptRow, sqlx::Error>
         cache_write_tokens: row.try_get("cache_write_tokens")?,
         cache_read_tokens: row.try_get("cache_read_tokens")?,
         cost_amount_microunits: row.try_get("cost_amount_microunits")?,
+        actual_cost_microunits: row.try_get("actual_cost_microunits")?,
+        billable_cost_microunits: row.try_get("billable_cost_microunits")?,
+        pricing_evidence: row.try_get("pricing_evidence")?,
         currency: row.try_get("currency")?,
         billing_mode: row.try_get("billing_mode")?,
         chargeable: row.try_get("chargeable")?,
@@ -6917,6 +7038,17 @@ fn operational_log_row(request: &EnterpriseRequestRow) -> Value {
         .and_then(|value| serde_json::from_value::<ModelPricing>(value).ok())
         .unwrap_or_else(|| pricing::pricing_for_model(resolved_model));
     let cost_estimate = request.cost_amount_microunits.max(0) as f64 / 1_000_000.0;
+    let actual_cost = request.actual_cost_microunits.map(microunits_usd);
+    let billable_cost = request.billable_cost_microunits.map(microunits_usd);
+    let reconciliation_status = if billable_cost.is_some() && actual_cost.is_none() {
+        "partially_billable"
+    } else if billable_cost.is_some() {
+        "billable"
+    } else if actual_cost.is_some() {
+        "actual_unbillable"
+    } else {
+        "estimate_only"
+    };
     let status = if request.state == "completed" {
         "success"
     } else if request
@@ -6964,6 +7096,10 @@ fn operational_log_row(request: &EnterpriseRequestRow) -> Value {
         "totalTokens": total_tokens,
         "cacheHitRate": cache_hit_rate,
         "costEstimate": cost_estimate,
+        "actualCost": actual_cost,
+        "billableCost": billable_cost,
+        "reconciliationStatus": reconciliation_status,
+        "pricingEvidence": request.pricing_evidence,
         "modelPricing": pricing,
         "costBreakdown": {
             "inputCost": pricing::cost_component(input_tokens, pricing.input_per_million),
@@ -7073,11 +7209,45 @@ impl Drop for LedgerLease {
 }
 
 impl LedgerOutcome {
+    #[cfg(test)]
     pub(crate) fn provider_attempt(
         success: bool,
         status_code: u16,
         error_message: Option<String>,
         estimate: UsageEstimate,
+        billing_mode: &'static str,
+        latency: Duration,
+    ) -> Self {
+        let pricing_evidence = estimate.billable_cost.map(|_| pricing::PricingEvidence {
+            provider: "test-provider".to_owned(),
+            model: "test-model".to_owned(),
+            method: pricing::PricingMethod::ExactRateCard,
+            currency: "USD".to_owned(),
+            version: "test-card-v1".to_owned(),
+            effective_at: "2026-01-01T00:00:00Z".to_owned(),
+            source: pricing::PricingSource::InternalChargeback,
+            service_tier: pricing::PricingServiceTier::Standard,
+            region: None,
+            evidence: "test://rate-card/v1".to_owned(),
+            rates: None,
+        });
+        Self::provider_attempt_with_evidence(
+            success,
+            status_code,
+            error_message,
+            estimate,
+            pricing_evidence,
+            billing_mode,
+            latency,
+        )
+    }
+
+    pub(crate) fn provider_attempt_with_evidence(
+        success: bool,
+        status_code: u16,
+        error_message: Option<String>,
+        estimate: UsageEstimate,
+        pricing_evidence: Option<pricing::PricingEvidence>,
         billing_mode: &'static str,
         latency: Duration,
     ) -> Self {
@@ -7096,6 +7266,8 @@ impl LedgerOutcome {
             .to_owned(),
             error_message,
             estimate,
+            pricing_evidence: pricing_evidence
+                .and_then(|evidence| serde_json::to_value(evidence).ok()),
             billing_mode: billing_mode.to_owned(),
             chargeable: true,
             latency_ms: duration_millis_i64(latency),
@@ -7126,6 +7298,10 @@ impl LedgerOutcome {
             terminal_reason: usage.terminal_reason.clone(),
             error_message: usage.error_message.clone(),
             estimate: usage.estimate,
+            pricing_evidence: usage
+                .pricing_evidence
+                .as_ref()
+                .and_then(|evidence| serde_json::to_value(evidence).ok()),
             billing_mode: usage.billing_mode.clone(),
             chargeable: usage.chargeable,
             latency_ms: duration_millis_i64(latency),
@@ -7586,6 +7762,32 @@ mod tests {
             cache_write_tokens: 0,
             cache_read_tokens: 0,
             cost_estimate,
+            actual_cost: Some(cost_estimate),
+            billable_cost: Some(cost_estimate),
+        }
+    }
+
+    fn unreconciled_estimate(cost_estimate: f64) -> UsageEstimate {
+        UsageEstimate {
+            actual_cost: None,
+            billable_cost: None,
+            ..estimate(cost_estimate)
+        }
+    }
+
+    fn test_pricing_evidence() -> pricing::PricingEvidence {
+        pricing::PricingEvidence {
+            provider: "test-provider".to_owned(),
+            model: "gpt-test".to_owned(),
+            method: pricing::PricingMethod::ExactRateCard,
+            currency: "USD".to_owned(),
+            version: "test-card-v1".to_owned(),
+            effective_at: "2026-01-01T00:00:00Z".to_owned(),
+            source: pricing::PricingSource::InternalChargeback,
+            service_tier: pricing::PricingServiceTier::Standard,
+            region: None,
+            evidence: "test://rate-card/v1".to_owned(),
+            rates: None,
         }
     }
 
@@ -7772,6 +7974,7 @@ mod tests {
             terminal_reason: "completed".to_owned(),
             estimate: estimate(0.125),
             model_pricing: None,
+            pricing_evidence: Some(test_pricing_evidence()),
             billing_mode: "upstream-returned".to_owned(),
             chargeable: true,
             latency: Duration::from_millis(120),
@@ -8211,6 +8414,7 @@ mod tests {
             terminal_reason: "completed".to_owned(),
             error_message: None,
             estimate: estimate(0.25),
+            pricing_evidence: Some(serde_json::to_value(test_pricing_evidence()).unwrap()),
             billing_mode: "upstream-returned".to_owned(),
             chargeable: true,
             latency_ms: 1250,
@@ -8306,6 +8510,7 @@ mod tests {
             terminal_reason: "completed".to_owned(),
             estimate: estimate(0.25),
             model_pricing: None,
+            pricing_evidence: Some(test_pricing_evidence()),
             billing_mode: "upstream-returned".to_owned(),
             chargeable: true,
             latency: Duration::from_millis(40),
@@ -9282,6 +9487,49 @@ mod tests {
         assert_eq!(budget.recent_events[0].event_type, "settled");
         assert_eq!(budget.recent_events[0].reserved_delta_microunits, -750_000);
         assert_eq!(budget.recent_events[0].settled_delta_microunits, 625_123);
+    }
+
+    #[tokio::test]
+    async fn estimate_only_attempt_releases_reservation_without_settlement() {
+        let ledger = EnterpriseLedger::memory();
+        set_local_budget(&ledger, 1_000_000).await;
+        let request = ledger
+            .begin_request(&context(), "gpt-test", false, None, TEST_FINGERPRINT)
+            .await
+            .unwrap();
+        let attempt = ledger
+            .begin_attempt(
+                &request,
+                &AttemptId::from_string("att_estimate_only"),
+                "unverified-proxy",
+                "gpt-test",
+                "openai-compatible",
+                estimate(0.75),
+            )
+            .await
+            .unwrap();
+        let outcome = LedgerOutcome::provider_attempt(
+            true,
+            200,
+            None,
+            unreconciled_estimate(0.625),
+            "upstream-returned",
+            Duration::ZERO,
+        );
+
+        ledger.finalize_attempt(&attempt, &outcome).await.unwrap();
+
+        let budget = ledger
+            .budget_view(&EnterpriseBudgetScopeQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(budget.account.reserved_microunits, 0);
+        assert_eq!(budget.account.settled_microunits, 0);
+        assert_eq!(budget.recent_events[0].event_type, "released");
+        assert_eq!(
+            budget.recent_events[0].evidence_source,
+            "provider-usage-unpriced"
+        );
     }
 
     #[tokio::test]

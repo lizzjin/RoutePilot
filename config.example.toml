@@ -27,8 +27,6 @@ default_model = "deepseek-v4-flash"
 models = [
   "deepseek-v4-pro",
   "deepseek-v4-flash",
-  "deepseek-chat",
-  "deepseek-reasoner",
 ]
 model_prefixes = ["deepseek-"]
 passthrough_unknown_models = false
@@ -51,6 +49,32 @@ parallel_tool_calls = true
 streaming_arguments = "native"
 response_validation = "best_effort"
 repair_invalid_arguments = false
+
+# Exact-model cards are eligible for governed settlement. Keep the version and
+# evidence synchronized with the Provider's published price change.
+[providers.deepseek.model_pricing."deepseek-v4-flash"]
+input_per_million = 0.14
+output_per_million = 0.28
+cache_write_per_million = 0.14
+cache_read_per_million = 0.0028
+version = "deepseek-public-2026-04-24-v1"
+effective_at = "2026-04-24T00:00:00Z"
+currency = "USD"
+source = "provider_published"
+service_tier = "standard"
+evidence = "https://api-docs.deepseek.com/quick_start/pricing#deepseek-v4-flash"
+
+[providers.deepseek.model_pricing."deepseek-v4-pro"]
+input_per_million = 0.435
+output_per_million = 0.87
+cache_write_per_million = 0.435
+cache_read_per_million = 0.003625
+version = "deepseek-public-2026-04-24-v1"
+effective_at = "2026-04-24T00:00:00Z"
+currency = "USD"
+source = "provider_published"
+service_tier = "standard"
+evidence = "https://api-docs.deepseek.com/quick_start/pricing#deepseek-v4-pro"
 
 [aliases]
 deepseek-v4-pro = "deepseek:deepseek-v4-pro"

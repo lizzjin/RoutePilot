@@ -272,6 +272,10 @@ pub struct ProviderOverrideRecord {
     pub retry: ProviderRetryConfig,
     #[serde(default)]
     pub pricing: Option<pricing::ModelPricing>,
+    #[serde(default)]
+    pub model_pricing: HashMap<String, pricing::ModelPricingCard>,
+    #[serde(default)]
+    pub trust_upstream_cost: bool,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -1048,6 +1052,7 @@ pub struct UsageEventInput {
     pub terminal_reason: String,
     pub estimate: UsageEstimate,
     pub model_pricing: Option<pricing::ModelPricing>,
+    pub pricing_evidence: Option<pricing::PricingEvidence>,
     pub billing_mode: String,
     /// Whether this request reached an upstream provider and can therefore
     /// consume quota or spend. Locally rejected requests are still logged,
@@ -4267,6 +4272,8 @@ mod tests {
             stream_idle_timeout_ms: None,
             retry: Default::default(),
             pricing: None,
+            model_pricing: Default::default(),
+            trust_upstream_cost: false,
             created_at_ms: 0,
             updated_at_ms: 0,
         }

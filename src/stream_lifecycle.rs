@@ -17,6 +17,7 @@ pub(crate) struct StreamLifecycle {
 struct StreamLifecycleInner {
     state: UpstreamStreamState,
     usage: Option<TokenUsageBreakdown>,
+    provider_reported_cost: Option<f64>,
     first_semantic_latency: Option<Duration>,
     response: ResponseObservation,
 }
@@ -178,6 +179,25 @@ impl StreamLifecycle {
             .expect("stream lifecycle lock poisoned")
             .usage
     }
+
+    pub(crate) fn merge_provider_reported_cost(&self, cost: f64) {
+        if !cost.is_finite() || cost < 0.0 {
+            return;
+        }
+        let mut inner = self.inner.lock().expect("stream lifecycle lock poisoned");
+        inner.provider_reported_cost = Some(
+            inner
+                .provider_reported_cost
+                .map_or(cost, |current| current.max(cost)),
+        );
+    }
+
+    pub(crate) fn provider_reported_cost(&self) -> Option<f64> {
+        self.inner
+            .lock()
+            .expect("stream lifecycle lock poisoned")
+            .provider_reported_cost
+    }
 }
 
 impl Default for StreamLifecycle {
@@ -317,6 +337,17 @@ mod tests {
         let outcome = StreamTerminalOutcome::after_eof(&lifecycle);
         assert!(outcome.success());
         assert_eq!(outcome.terminal_reason(), "completed");
+    }
+
+    #[test]
+    fn provider_reported_stream_cost_keeps_latest_cumulative_value() {
+        let lifecycle = StreamLifecycle::new();
+        lifecycle.merge_provider_reported_cost(0.25);
+        lifecycle.merge_provider_reported_cost(0.50);
+        lifecycle.merge_provider_reported_cost(0.40);
+        lifecycle.merge_provider_reported_cost(f64::NAN);
+
+        assert_eq!(lifecycle.provider_reported_cost(), Some(0.50));
     }
 
     #[test]

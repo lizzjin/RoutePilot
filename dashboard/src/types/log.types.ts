@@ -4,6 +4,28 @@ export type RequestStatus = 'success' | 'error' | 'timeout'
 export type StreamMode = 'stream' | 'non-stream'
 export type ToolUseMode = 'requested' | 'not-requested'
 export type TrafficClass = 'business' | 'synthetic' | 'diagnostic'
+export type ReconciliationStatus = 'billable' | 'partially_billable' | 'actual_unbillable' | 'estimate_only'
+
+export interface ModelPricingRates {
+  inputPerMillion: number
+  outputPerMillion: number
+  cacheWritePerMillion: number
+  cacheReadPerMillion: number
+}
+
+export interface PricingEvidence {
+  provider: string
+  model: string
+  method: 'provider_reported' | 'exact_rate_card'
+  currency: string
+  version: string
+  effectiveAt: string
+  source: 'provider_published' | 'provider_contract' | 'internal_chargeback' | 'legacy_estimate'
+  serviceTier: 'standard' | 'batch' | 'flex' | 'priority' | 'custom'
+  region?: string | null
+  evidence: string
+  rates?: ModelPricingRates | null
+}
 
 export interface RequestLog {
   id: string
@@ -37,12 +59,11 @@ export interface RequestLog {
   totalTokens?: number
   cacheHitRate?: number
   costEstimate?: number
-  modelPricing?: {
-    inputPerMillion: number
-    outputPerMillion: number
-    cacheWritePerMillion: number
-    cacheReadPerMillion: number
-  }
+  actualCost?: number | null
+  billableCost?: number | null
+  reconciliationStatus?: ReconciliationStatus
+  pricingEvidence?: PricingEvidence | null
+  modelPricing?: ModelPricingRates
   costBreakdown?: {
     inputCost: number
     outputCost: number
@@ -86,6 +107,10 @@ export interface LogSummary {
   totalCacheReadTokens: number
   totalTokens: number
   totalCostEstimate: number
+  totalActualCost: number
+  totalBillableCost: number
+  billableRequests: number
+  estimateOnlyRequests: number
   latencyP95Ms?: number
   latencySampleCount?: number
   firstByteLatencyP95Ms?: number

@@ -52,6 +52,9 @@ function summarizeLogs(logs: RequestLog[]): LogSummary {
   const totalCacheReadTokens = logs.reduce((sum, log) => sum + (log.cacheReadTokens || 0), 0)
   const totalTokens = totalInputTokens + totalOutputTokens + totalCacheWriteTokens + totalCacheReadTokens
   const totalCostEstimate = logs.reduce((sum, log) => sum + (log.costEstimate || 0), 0)
+  const totalActualCost = logs.reduce((sum, log) => sum + (log.actualCost || 0), 0)
+  const totalBillableCost = logs.reduce((sum, log) => sum + (log.billableCost || 0), 0)
+  const billableRequests = logs.filter((log) => log.billableCost != null).length
   const timestamps = logs.map(logTime).filter(Number.isFinite).sort((a, b) => a - b)
   const minutes = timestamps.length > 1
     ? Math.max((timestamps[timestamps.length - 1] - timestamps[0]) / 60000, 1)
@@ -73,6 +76,10 @@ function summarizeLogs(logs: RequestLog[]): LogSummary {
     totalCacheReadTokens,
     totalTokens,
     totalCostEstimate,
+    totalActualCost,
+    totalBillableCost,
+    billableRequests,
+    estimateOnlyRequests: logs.length - billableRequests,
     latencyP95Ms: percentile(latencies, 0.95),
     latencySampleCount: latencies.length,
     firstByteLatencyP95Ms: percentile(firstByteLatencies, 0.95),

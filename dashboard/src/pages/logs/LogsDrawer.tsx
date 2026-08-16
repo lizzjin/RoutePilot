@@ -32,6 +32,7 @@ import {
   parseLogDate,
   protocolLabel,
   providerTone,
+  reconciliationStatusLabel,
   shortId,
   trafficClassLabel,
 } from './log-utils'
@@ -358,8 +359,33 @@ function OverviewTab({
         <DetailLine label="输入成本" value={formatMoney(cost?.inputCost || 0, 6)} mono />
         <DetailLine label="缓存成本" value={`${formatMoney(cost?.cacheWriteCost || 0, 6)} / ${formatMoney(cost?.cacheReadCost || 0, 6)}`} mono />
         <DetailLine label="输出成本" value={formatMoney(cost?.outputCost || 0, 6)} mono />
-        <DetailLine label="花费" value={formatMoney(log.costEstimate || 0, 6)} mono />
+        <DetailLine label="预估金额" value={formatMoney(log.costEstimate || 0, 6)} mono />
+        <DetailLine
+          label="实际金额"
+          value={log.actualCost == null ? '尚未核算' : formatMoney(log.actualCost, 6)}
+          mono={log.actualCost != null}
+        />
+        <DetailLine
+          label="可计费金额"
+          value={log.billableCost == null ? '不可结算' : formatMoney(log.billableCost, 6)}
+          mono={log.billableCost != null}
+        />
+        <DetailLine label="核算状态" value={reconciliationStatusLabel(log.reconciliationStatus)} />
         <DetailLine label="计费模式" value={billingModeLabel(log.billingMode)} />
+        {log.pricingEvidence && (
+          <>
+            <DetailLine
+              label="计价证据"
+              value={`${log.pricingEvidence.method} · ${log.pricingEvidence.source} · ${log.pricingEvidence.version}`}
+            />
+            <DetailLine
+              label="证据引用"
+              value={log.pricingEvidence.evidence}
+              copyValue={log.pricingEvidence.evidence}
+              mono
+            />
+          </>
+        )}
       </DetailSection>
 
       {log.errorMessage && (

@@ -62,9 +62,9 @@ export function LogsSummaryGrid({
   return (
     <div className="grid grid-cols-2 gap-3 xl:grid-cols-6">
       <SummaryMetric
-        label="消耗费用"
-        value={formatMoney(summary?.totalCostEstimate || 0, 4)}
-        helper={`${formatInteger(totalRequests)} 次调用`}
+        label="可计费费用"
+        value={formatMoney(summary?.totalBillableCost || 0, 4)}
+        helper={`${formatInteger(summary?.billableRequests || 0)} 已核算 · ${formatInteger(summary?.estimateOnlyRequests || 0)} 仅预估 · 预估 ${formatMoney(summary?.totalCostEstimate || 0, 4)}`}
         icon={BadgeDollarSign}
         tone="sky"
       />

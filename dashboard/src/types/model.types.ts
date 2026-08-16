@@ -51,6 +51,16 @@ export interface ModelPricing {
   cacheReadPerMillion: number
 }
 
+export interface ModelPricingCard extends ModelPricing {
+  version: string
+  effectiveAt: string
+  currency: 'USD'
+  source: 'provider_published' | 'provider_contract' | 'internal_chargeback'
+  serviceTier: 'standard'
+  region?: string | null
+  evidence: string
+}
+
 export interface ProviderHealth {
   providerId: string
   credentialId?: string
@@ -139,6 +149,8 @@ export interface Provider {
   retry?: ProviderRetryPolicy
   adaptationCatalogVersion?: number
   pricing?: ModelPricing | null
+  modelPricing?: Record<string, ModelPricingCard>
+  trustUpstreamCost?: boolean
   status: ProviderStatus
   credentials?: ProviderCredential[]
   activeCredentialId?: string | null
@@ -181,6 +193,8 @@ export interface ProviderWritePayload {
   streamIdleTimeoutMs?: number
   retry?: ProviderRetryPolicy
   pricing?: ModelPricing | null
+  modelPricing?: Record<string, ModelPricingCard>
+  trustUpstreamCost?: boolean
   disabled?: boolean
 }
 

@@ -52,6 +52,8 @@ function generateLog(id: number, hoursAgo: number): RequestLog {
   const cacheWriteCost = (cacheWriteTokens / 1_000_000) * pricing.cacheWritePerMillion
   const cacheReadCost = (cacheReadTokens / 1_000_000) * pricing.cacheReadPerMillion
   const costEstimate = inputCost + outputCost + cacheWriteCost + cacheReadCost
+  const hasBillableEvidence = route.provider === 'deepseek' || route.provider === 'openrouter'
+  const billableCost = hasBillableEvidence ? costEstimate : null
   const group = randomItem(groups)
   const tokenName = randomItem(tokenNames)
   const latencyMs = randomInt(200, 12000)
@@ -84,6 +86,24 @@ function generateLog(id: number, hoursAgo: number): RequestLog {
     totalTokens: inputTokens + outputTokens + cacheWriteTokens + cacheReadTokens,
     cacheHitRate: cacheReadTokens > 0 ? (cacheReadTokens / Math.max(inputTokens + cacheWriteTokens + cacheReadTokens, 1)) * 100 : 0,
     costEstimate,
+    actualCost: billableCost,
+    billableCost,
+    reconciliationStatus: hasBillableEvidence ? 'billable' : 'estimate_only',
+    pricingEvidence: hasBillableEvidence ? {
+      provider: route.provider,
+      model: route.model,
+      method: route.provider === 'openrouter' ? 'provider_reported' : 'exact_rate_card',
+      currency: 'USD',
+      version: route.provider === 'openrouter' ? 'provider-response-v1' : 'deepseek-public-2026-04-24-v1',
+      effectiveAt: route.provider === 'openrouter' ? 'response-time' : '2026-04-24T00:00:00Z',
+      source: route.provider === 'openrouter' ? 'provider_contract' : 'provider_published',
+      serviceTier: 'standard',
+      region: null,
+      evidence: route.provider === 'openrouter'
+        ? 'upstream usage.cost'
+        : 'https://api-docs.deepseek.com/quick_start/pricing',
+      rates: route.provider === 'openrouter' ? null : pricing,
+    } : null,
     modelPricing: pricing,
     costBreakdown: {
       inputCost,

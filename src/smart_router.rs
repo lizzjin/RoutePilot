@@ -821,6 +821,8 @@ mod tests {
                 cache_write_per_million: 0.0,
                 cache_read_per_million: 0.0,
             }),
+            model_pricing: Default::default(),
+            trust_upstream_cost: false,
         }
     }
 

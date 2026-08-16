@@ -81,6 +81,9 @@ pub(crate) fn openai_stream_passthrough(
                 if let Some(usage) = pricing::openai_usage_if_present(&chunk) {
                     stream_lifecycle.merge_usage(usage);
                 }
+                if let Some(cost) = pricing::openai_reported_cost(&chunk) {
+                    stream_lifecycle.merge_provider_reported_cost(cost);
+                }
                 observe_openai_stream_chunk(&stream_lifecycle, &chunk);
                 if chunk
                     .get("choices")

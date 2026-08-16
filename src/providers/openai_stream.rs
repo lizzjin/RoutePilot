@@ -187,6 +187,9 @@ pub(crate) fn openai_stream_to_anthropic(
                     if let Some(usage) = pricing::openai_usage_if_present(&response) {
                         stream_lifecycle.merge_usage(usage);
                     }
+                    if let Some(cost) = pricing::openai_reported_cost(&response) {
+                        stream_lifecycle.merge_provider_reported_cost(cost);
+                    }
                 }
 
                 if !message_started {

@@ -45,6 +45,8 @@ pub(super) struct ProviderWriteBody {
     stream_idle_timeout_ms: Option<u64>,
     retry: Option<crate::config::ProviderRetryConfig>,
     pricing: Option<crate::pricing::ModelPricing>,
+    model_pricing: Option<std::collections::HashMap<String, crate::pricing::ModelPricingCard>>,
+    trust_upstream_cost: Option<bool>,
     disabled: Option<bool>,
 }
 
@@ -819,7 +821,7 @@ fn provider_body_to_record(
         });
     validate_provider_tool_use(&id, protocol_kind, &tool_use)?;
 
-    Ok(ProviderOverrideRecord {
+    let record = ProviderOverrideRecord {
         id,
         display_name,
         protocol,
@@ -878,9 +880,22 @@ fn provider_body_to_record(
         pricing: body
             .pricing
             .or_else(|| current_provider.and_then(|provider| provider.pricing)),
+        model_pricing: body
+            .model_pricing
+            .or_else(|| current_provider.map(|provider| provider.model_pricing.clone()))
+            .unwrap_or_default(),
+        trust_upstream_cost: body
+            .trust_upstream_cost
+            .or_else(|| current_provider.map(|provider| provider.trust_upstream_cost))
+            .unwrap_or(false),
         created_at_ms: 0,
         updated_at_ms: 0,
-    })
+    };
+    for (model, card) in &record.model_pricing {
+        crate::pricing::validate_model_pricing_card(model, &record.models, card)
+            .map_err(AppError::InvalidRequest)?;
+    }
+    Ok(record)
 }
 
 fn resolve_provider_api_key_env(

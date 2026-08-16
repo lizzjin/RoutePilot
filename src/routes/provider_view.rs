@@ -408,6 +408,8 @@ impl ProviderRowAssembler {
             "retry": provider.retry,
             "adaptationCatalogVersion": MODEL_ADAPTATION_CATALOG_VERSION,
             "pricing": provider.pricing,
+            "modelPricing": provider.model_pricing,
+            "trustUpstreamCost": provider.trust_upstream_cost,
             "status": status,
             "runtimeStatus": runtime_status,
             "hasApiKey": has_api_key,

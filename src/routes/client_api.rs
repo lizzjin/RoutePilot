@@ -208,7 +208,9 @@ struct SentAttempt {
     boundary: ProviderBoundary,
     credential_id: Option<String>,
     estimate: UsageEstimate,
-    pricing: Option<ModelPricing>,
+    pricing: ModelPricing,
+    pricing_card: Option<pricing::ModelPricingCard>,
+    trust_upstream_cost: bool,
     stream_lifecycle: StreamLifecycle,
     ledger_attempt: LedgerAttempt,
     started: Instant,
@@ -871,6 +873,7 @@ async fn handle_inference(
     let mut tool_repair_attempted = false;
     let mut tool_repair_recovered = false;
     let mut prior_attempt_usage = UsageEstimate::default();
+    let mut prior_pricing_evidence = None::<pricing::PricingEvidence>;
     let mut successful_local_lease = None::<LocalLease>;
 
     while let Some((mut attempt, repair, provider_retry_ordinal)) = attempts.pop_front() {
@@ -918,8 +921,16 @@ async fn handle_inference(
                 continue;
             }
         };
-        let pricing_verified = attempt.provider.pricing.is_some();
-        let estimate = estimate_usage(&exchange, &upstream_model, attempt.provider.pricing);
+        let pricing_card = attempt
+            .provider
+            .model_pricing_card(&upstream_model)
+            .cloned();
+        let pricing_verified = pricing_card.is_some() || attempt.provider.trust_upstream_cost;
+        let applied_pricing = attempt
+            .provider
+            .effective_pricing(&upstream_model)
+            .unwrap_or_else(|| pricing::pricing_for_model(&upstream_model));
+        let estimate = estimate_usage(&exchange, &upstream_model, Some(applied_pricing));
         let usage_policy = match state.control.check_quotas(
             &identity,
             request_client_ip.as_deref(),
@@ -992,7 +1003,9 @@ async fn handle_inference(
             boundary: attempt_boundary,
             credential_id: credential_id.clone(),
             estimate,
-            pricing: attempt.provider.pricing,
+            pricing: applied_pricing,
+            pricing_card,
+            trust_upstream_cost: attempt.provider.trust_upstream_cost,
             stream_lifecycle: stream_lifecycle.clone(),
             ledger_attempt: ledger_attempt.clone(),
             started: attempt_started,
@@ -1035,34 +1048,46 @@ async fn handle_inference(
                     "failed to persist provider attempt outcome"
                 );
             }
-            let provider_usage = attempt_result
+            let provider_charge = attempt_result
                 .as_ref()
                 .ok()
-                .and_then(|response| pricing::usage_from_headers(response.headers()))
-                .map(usage_estimate_from_charge);
-            let rejected_tool_usage = attempt_result
+                .and_then(|response| pricing::usage_from_headers(response.headers()));
+            let rejected_tool_charge = attempt_result
                 .as_ref()
                 .err()
                 .and_then(AppError::tool_argument_usage)
                 .map(|usage| {
-                    usage_estimate_from_charge(pricing::charge_for_model_with_pricing(
+                    pricing::charge_with_evidence(
+                        &provider_id,
                         &upstream_model,
                         usage,
-                        repair_template.provider.pricing,
-                    ))
+                        Some(applied_pricing),
+                        repair_template.provider.model_pricing_card(&upstream_model),
+                        None,
+                    )
                 });
-            let billing_mode = if provider_usage.is_some() || rejected_tool_usage.is_some() {
+            let attempt_charge = provider_charge.or(rejected_tool_charge);
+            let pricing_evidence = attempt_charge
+                .as_ref()
+                .and_then(|charge| charge.pricing_evidence.clone());
+            if pricing_evidence.is_some() {
+                prior_pricing_evidence.clone_from(&pricing_evidence);
+            }
+            let billing_mode = if attempt_charge.is_some() {
                 "upstream-returned"
             } else {
                 "local-estimate"
             };
-            let attempt_estimate = provider_usage.or(rejected_tool_usage).unwrap_or(estimate);
+            let attempt_estimate = attempt_charge
+                .map(usage_estimate_from_charge)
+                .unwrap_or(estimate);
             finalized_attempt_estimate = Some(attempt_estimate);
-            let ledger_outcome = LedgerOutcome::provider_attempt(
+            let ledger_outcome = LedgerOutcome::provider_attempt_with_evidence(
                 attempt_success,
                 attempt_status,
                 attempt_error.clone(),
                 attempt_estimate,
+                pricing_evidence,
                 billing_mode,
                 attempt_started.elapsed(),
             );
@@ -1159,16 +1184,23 @@ async fn handle_inference(
         .as_ref()
         .map(|sent| sent.estimate)
         .unwrap_or_default();
-    let applied_pricing = last_sent.as_ref().and_then(|sent| sent.pricing);
+    let applied_pricing = last_sent.as_ref().map(|sent| sent.pricing);
+    let pricing_evidence = upstream_usage
+        .as_ref()
+        .and_then(|charge| charge.pricing_evidence.clone())
+        .or_else(|| prior_pricing_evidence.clone());
     let actual_estimate = merge_usage_estimates(
         prior_attempt_usage,
         upstream_usage
+            .as_ref()
             .map(|charge| UsageEstimate {
                 input_tokens: charge.input_tokens,
                 output_tokens: charge.output_tokens,
                 cache_write_tokens: charge.cache_write_tokens,
                 cache_read_tokens: charge.cache_read_tokens,
                 cost_estimate: charge.cost_estimate,
+                actual_cost: charge.actual_cost,
+                billable_cost: charge.billable_cost,
             })
             .unwrap_or(local_estimate),
     );
@@ -1223,6 +1255,7 @@ async fn handle_inference(
         terminal_reason: terminal_reason.to_owned(),
         estimate: actual_estimate,
         model_pricing: applied_pricing,
+        pricing_evidence,
         billing_mode: billing_mode.to_owned(),
         chargeable,
         latency: duration,
@@ -1243,6 +1276,7 @@ async fn handle_inference(
 
     if stream && success {
         let mut response = result.expect("successful stream result must contain a response");
+        response.headers_mut().remove(pricing::USAGE_HEADER);
         attach_routing_response_headers(
             &mut response,
             &RoutingResponseEvidence {
@@ -1267,6 +1301,8 @@ async fn handle_inference(
                 tool_continuation,
                 credential_id: sent.credential_id,
                 pricing: sent.pricing,
+                pricing_card: sent.pricing_card,
+                trust_upstream_cost: sent.trust_upstream_cost,
                 lifecycle: sent.stream_lifecycle,
                 ledger_request,
                 ledger_attempt: sent.ledger_attempt,
@@ -1310,6 +1346,7 @@ async fn handle_inference(
         Ok(response) => response,
         Err(error) => error.into_response(),
     };
+    response.headers_mut().remove(pricing::USAGE_HEADER);
     attach_routing_response_headers(
         &mut response,
         &RoutingResponseEvidence {
@@ -1587,6 +1624,8 @@ fn usage_estimate_from_charge(charge: pricing::UsageCharge) -> UsageEstimate {
         cache_write_tokens: charge.cache_write_tokens,
         cache_read_tokens: charge.cache_read_tokens,
         cost_estimate: charge.cost_estimate,
+        actual_cost: charge.actual_cost,
+        billable_cost: charge.billable_cost,
     }
 }
 
@@ -1601,7 +1640,36 @@ fn merge_usage_estimates(left: UsageEstimate, right: UsageEstimate) -> UsageEsti
             .cache_read_tokens
             .saturating_add(right.cache_read_tokens),
         cost_estimate: left.cost_estimate + right.cost_estimate,
+        actual_cost: merge_complete_cost(left, right),
+        billable_cost: merge_billable_cost(left.billable_cost, right.billable_cost),
     }
+}
+
+fn merge_complete_cost(left: UsageEstimate, right: UsageEstimate) -> Option<f64> {
+    let left_empty = estimate_total_tokens_for_merge(left) == 0 && left.cost_estimate == 0.0;
+    let right_empty = estimate_total_tokens_for_merge(right) == 0 && right.cost_estimate == 0.0;
+    match (left.actual_cost, right.actual_cost) {
+        (Some(left), Some(right)) => Some(left + right),
+        (None, Some(right)) if left_empty => Some(right),
+        (Some(left), None) if right_empty => Some(left),
+        _ => None,
+    }
+}
+
+fn merge_billable_cost(left: Option<f64>, right: Option<f64>) -> Option<f64> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left + right),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
+}
+
+fn estimate_total_tokens_for_merge(estimate: UsageEstimate) -> u64 {
+    estimate
+        .input_tokens
+        .saturating_add(estimate.output_tokens)
+        .saturating_add(estimate.cache_write_tokens)
+        .saturating_add(estimate.cache_read_tokens)
 }
 
 fn request_idempotency_key(headers: &HeaderMap) -> Result<Option<String>, AppError> {
@@ -1650,7 +1718,9 @@ struct StreamFinalizationContext {
     usage: UsageEventInput,
     tool_continuation: bool,
     credential_id: Option<String>,
-    pricing: Option<ModelPricing>,
+    pricing: ModelPricing,
+    pricing_card: Option<pricing::ModelPricingCard>,
+    trust_upstream_cost: bool,
     lifecycle: StreamLifecycle,
     ledger_request: LedgerRequest,
     ledger_attempt: LedgerAttempt,
@@ -1665,11 +1735,22 @@ struct StreamFinalizationContext {
 impl StreamFinalizationContext {
     fn finalize(mut self, outcome: StreamTerminalOutcome) {
         let duration = self.started.elapsed();
-        if let Some(usage) = self.lifecycle.usage() {
-            let charge = pricing::charge_for_model_with_pricing(
+        let provider_reported_cost = self
+            .trust_upstream_cost
+            .then(|| self.lifecycle.provider_reported_cost())
+            .flatten();
+        if let Some(usage) = self
+            .lifecycle
+            .usage()
+            .or_else(|| provider_reported_cost.map(|_| TokenUsageBreakdown::default()))
+        {
+            let charge = pricing::charge_with_evidence(
+                &self.usage.provider,
                 &self.usage.resolved_model,
                 usage,
-                self.pricing,
+                Some(self.pricing),
+                self.pricing_card.as_ref(),
+                provider_reported_cost,
             );
             self.usage.estimate = merge_usage_estimates(
                 self.prior_attempt_usage,
@@ -1679,8 +1760,13 @@ impl StreamFinalizationContext {
                     cache_write_tokens: charge.cache_write_tokens,
                     cache_read_tokens: charge.cache_read_tokens,
                     cost_estimate: charge.cost_estimate,
+                    actual_cost: charge.actual_cost,
+                    billable_cost: charge.billable_cost,
                 },
             );
+            if charge.pricing_evidence.is_some() {
+                self.usage.pricing_evidence = charge.pricing_evidence;
+            }
             self.usage.billing_mode = if self.usage.retry_count > 0 {
                 "mixed-attempts".to_owned()
             } else {
@@ -2303,6 +2389,8 @@ fn estimate_usage(
             },
             configured_pricing,
         ),
+        actual_cost: None,
+        billable_cost: None,
     }
 }
 

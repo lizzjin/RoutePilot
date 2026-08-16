@@ -5,6 +5,8 @@ pub struct UsageEstimate {
     pub cache_write_tokens: u64,
     pub cache_read_tokens: u64,
     pub cost_estimate: f64,
+    pub actual_cost: Option<f64>,
+    pub billable_cost: Option<f64>,
 }
 
 pub(crate) const DAY_MS: u64 = 24 * 60 * 60 * 1_000;
@@ -106,6 +108,8 @@ mod tests {
             cache_write_tokens: 30,
             cache_read_tokens: 40,
             cost_estimate: 0.125,
+            actual_cost: None,
+            billable_cost: None,
         };
 
         assert_eq!(quota_increment("requests", estimate), 1.0);

@@ -70,7 +70,10 @@ pub async fn chat_completions(
                     resolved.provider.request_timeout(),
                 )
                 .await?;
-            let usage = pricing::openai_usage_if_present(&upstream);
+            let usage = response_usage(&resolved, &upstream);
+            let usage_header = usage
+                .map(|usage| usage_header_for_response(&resolved, usage, &upstream))
+                .transpose()?;
             stream_lifecycle.observe_openai_response(&upstream);
             if stream_lifecycle.response_observation().tool_call_count > 0
                 || stream_lifecycle.response_observation().text_present
@@ -79,6 +82,9 @@ pub async fn chat_completions(
             }
             if let Some(usage) = usage {
                 stream_lifecycle.merge_usage(usage);
+            }
+            if let Some(cost) = pricing::openai_reported_cost(&upstream) {
+                stream_lifecycle.merge_provider_reported_cost(cost);
             }
             stream_lifecycle.mark_completed();
             let events = openai_complete_to_stream(
@@ -89,11 +95,8 @@ pub async fn chat_completions(
             let mut response = Sse::new(events)
                 .keep_alive(KeepAlive::default())
                 .into_response();
-            if let Some(usage) = usage {
-                response.headers_mut().insert(
-                    USAGE_HEADER,
-                    pricing::usage_header_value(&resolved.model, usage, resolved.provider.pricing)?,
-                );
+            if let Some(usage_header) = usage_header {
+                response.headers_mut().insert(USAGE_HEADER, usage_header);
             }
             return Ok(response);
         }
@@ -148,7 +151,10 @@ pub async fn chat_completions(
                 resolved.provider.request_timeout(),
             )
             .await?;
-        let usage = pricing::openai_usage_if_present(&upstream);
+        let usage = response_usage(&resolved, &upstream);
+        let usage_header = usage
+            .map(|usage| usage_header_for_response(&resolved, usage, &upstream))
+            .transpose()?;
         stream_lifecycle.observe_openai_response(&upstream);
         if let Some(object) = upstream.as_object_mut()
             && object.contains_key("model")
@@ -159,11 +165,8 @@ pub async fn chat_completions(
             );
         }
         let mut response = Json(upstream).into_response();
-        if let Some(usage) = usage {
-            response.headers_mut().insert(
-                USAGE_HEADER,
-                pricing::usage_header_value(&resolved.model, usage, resolved.provider.pricing)?,
-            );
+        if let Some(usage_header) = usage_header {
+            response.headers_mut().insert(USAGE_HEADER, usage_header);
         }
         Ok(response)
     }
@@ -206,8 +209,14 @@ pub async fn messages(
                     resolved.provider.request_timeout(),
                 )
                 .await?;
-            let usage = pricing::openai_usage_if_present(&upstream);
+            let usage = response_usage(&resolved, &upstream);
+            let usage_header = usage
+                .map(|usage| usage_header_for_response(&resolved, usage, &upstream))
+                .transpose()?;
             let message = openai_response_to_anthropic(&upstream, &request.model, &tool_policy)?;
+            if let Some(cost) = pricing::openai_reported_cost(&upstream) {
+                stream_lifecycle.merge_provider_reported_cost(cost);
+            }
             stream_lifecycle.observe_anthropic_response(&message);
             if stream_lifecycle.response_observation().tool_call_count > 0
                 || stream_lifecycle.response_observation().text_present
@@ -219,11 +228,8 @@ pub async fn messages(
             let mut response = Sse::new(events)
                 .keep_alive(KeepAlive::default())
                 .into_response();
-            if let Some(usage) = usage {
-                response.headers_mut().insert(
-                    USAGE_HEADER,
-                    pricing::usage_header_value(&resolved.model, usage, resolved.provider.pricing)?,
-                );
+            if let Some(usage_header) = usage_header {
+                response.headers_mut().insert(USAGE_HEADER, usage_header);
             }
             return Ok(response);
         }
@@ -273,19 +279,49 @@ pub async fn messages(
                 resolved.provider.request_timeout(),
             )
             .await?;
-        let usage = pricing::openai_usage_if_present(&response);
+        let usage = response_usage(&resolved, &response);
+        let usage_header = usage
+            .map(|usage| usage_header_for_response(&resolved, usage, &response))
+            .transpose()?;
         let message = openai_response_to_anthropic(&response, &request.model, &tool_policy)
             .map_err(|error| error.with_tool_argument_usage(usage))?;
         stream_lifecycle.observe_anthropic_response(&message);
         let mut response = Json(message).into_response();
-        if let Some(usage) = usage {
-            response.headers_mut().insert(
-                USAGE_HEADER,
-                pricing::usage_header_value(&resolved.model, usage, resolved.provider.pricing)?,
-            );
+        if let Some(usage_header) = usage_header {
+            response.headers_mut().insert(USAGE_HEADER, usage_header);
         }
         Ok(response)
     }
+}
+
+fn usage_header_for_response(
+    resolved: &ResolvedProvider,
+    usage: pricing::TokenUsageBreakdown,
+    response: &Value,
+) -> Result<axum::http::HeaderValue, AppError> {
+    let provider_reported_cost = resolved
+        .provider
+        .trust_upstream_cost
+        .then(|| pricing::openai_reported_cost(response))
+        .flatten();
+    pricing::usage_header_value(
+        &resolved.provider_id,
+        &resolved.model,
+        usage,
+        resolved.provider.pricing,
+        resolved.provider.model_pricing_card(&resolved.model),
+        provider_reported_cost,
+    )
+}
+
+fn response_usage(
+    resolved: &ResolvedProvider,
+    response: &Value,
+) -> Option<pricing::TokenUsageBreakdown> {
+    pricing::openai_usage_if_present(response).or_else(|| {
+        (resolved.provider.trust_upstream_cost && pricing::openai_reported_cost(response).is_some())
+            .then_some(pricing::TokenUsageBreakdown::default())
+    })
 }
 
 fn apply_tool_argument_repair(
@@ -985,6 +1021,8 @@ mod tests {
             stream_idle_timeout_ms: None,
             retry: Default::default(),
             pricing: None,
+            model_pricing: Default::default(),
+            trust_upstream_cost: true,
         };
         // Runtime configuration validation rejects the reserved value. Even if
         // an already-loaded record is mutated, the adapter's credential wins.

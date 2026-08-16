@@ -2578,6 +2578,8 @@ fn provider_record_to_config(record: &ProviderOverrideRecord) -> Result<Provider
         stream_idle_timeout_ms: record.stream_idle_timeout_ms,
         retry: record.retry.clone(),
         pricing: record.pricing,
+        model_pricing: record.model_pricing.clone(),
+        trust_upstream_cost: record.trust_upstream_cost,
     })
 }
 
@@ -2991,6 +2993,8 @@ mod tests {
             stream_idle_timeout_ms: None,
             retry: Default::default(),
             pricing: None,
+            model_pricing: Default::default(),
+            trust_upstream_cost: false,
         };
         let inactive = ProviderConfig {
             display_name: "DeepSeek".to_owned(),
@@ -3022,6 +3026,8 @@ mod tests {
             stream_idle_timeout_ms: None,
             retry: Default::default(),
             pricing: None,
+            model_pricing: Default::default(),
+            trust_upstream_cost: false,
         };
         let config = AppConfig {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
@@ -3090,6 +3096,8 @@ mod tests {
             stream_idle_timeout_ms: None,
             retry: Default::default(),
             pricing: None,
+            model_pricing: Default::default(),
+            trust_upstream_cost: false,
         };
         let config = AppConfig {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
@@ -4459,12 +4467,29 @@ data: [DONE]
         .await;
         let mut state = test_state(upstream, 1024 * 1024);
         let mut config = state.config.snapshot();
-        config.providers.get_mut("mimo").unwrap().pricing = Some(crate::pricing::ModelPricing {
-            input_per_million: 1.0,
-            output_per_million: 1.0,
-            cache_read_per_million: 0.0,
-            cache_write_per_million: 0.0,
-        });
+        config
+            .providers
+            .get_mut("mimo")
+            .unwrap()
+            .model_pricing
+            .insert(
+                "mimo-v2.5-pro".to_owned(),
+                crate::pricing::ModelPricingCard {
+                    rates: crate::pricing::ModelPricing {
+                        input_per_million: 1.0,
+                        output_per_million: 1.0,
+                        cache_read_per_million: 0.0,
+                        cache_write_per_million: 0.0,
+                    },
+                    version: "test-contract-v1".to_owned(),
+                    effective_at: "2026-08-01T00:00:00Z".to_owned(),
+                    currency: "USD".to_owned(),
+                    source: crate::pricing::PricingSource::ProviderContract,
+                    service_tier: crate::pricing::PricingServiceTier::Standard,
+                    region: None,
+                    evidence: "contract://test/mimo-v1".to_owned(),
+                },
+            );
         state.config = Arc::new(RuntimeConfig::new(config));
         let owner = state
             .auth
@@ -4524,6 +4549,14 @@ data: [DONE]
             post_message_with_key(app.clone(), &key_a.key, message_body(false)).await;
         assert_eq!(first_status, StatusCode::OK, "{first_body}");
         wait_for_usage_rows(&ledger, 1).await;
+        let usage_rows = ledger.usage_rows().await.unwrap();
+        assert_eq!(usage_rows[0]["actualCost"], 0.001);
+        assert_eq!(usage_rows[0]["billableCost"], 0.001);
+        assert_eq!(usage_rows[0]["reconciliationStatus"], "billable");
+        assert_eq!(
+            usage_rows[0]["pricingEvidence"]["method"],
+            "exact_rate_card"
+        );
         control.delete_api_key(&key_a.public.id).unwrap();
         let key_b = create();
         assert_eq!(key_b.public.spend_limit_usd, 0.0005);
@@ -6997,6 +7030,8 @@ data: [DONE]
                 stream_idle_timeout_ms: None,
                 retry: Default::default(),
                 pricing: None,
+                model_pricing: Default::default(),
+                trust_upstream_cost: false,
                 created_at_ms: 0,
                 updated_at_ms: 0,
             })
@@ -7198,6 +7233,8 @@ data: [DONE]
             stream_idle_timeout_ms: None,
             retry: Default::default(),
             pricing: None,
+            model_pricing: Default::default(),
+            trust_upstream_cost: false,
         };
 
         let err = discover_provider_models(&state, "anthropic", &provider)
@@ -7262,6 +7299,8 @@ data: [DONE]
             stream_idle_timeout_ms: None,
             retry: Default::default(),
             pricing: None,
+            model_pricing: Default::default(),
+            trust_upstream_cost: false,
         };
 
         let models = discover_provider_models(&state, "local_anthropic", &provider)
@@ -7338,6 +7377,8 @@ data: [DONE]
             stream_idle_timeout_ms: None,
             retry: Default::default(),
             pricing: None,
+            model_pricing: Default::default(),
+            trust_upstream_cost: false,
         };
 
         let models = discover_provider_models(&state, "cpa_claude", &provider)
@@ -8494,6 +8535,8 @@ data: {"type":"message_stop"}
             stream_idle_timeout_ms: None,
             retry: Default::default(),
             pricing: None,
+            model_pricing: Default::default(),
+            trust_upstream_cost: false,
         };
 
         AppState {
@@ -8597,6 +8640,8 @@ data: {"type":"message_stop"}
             stream_idle_timeout_ms: None,
             retry: Default::default(),
             pricing: None,
+            model_pricing: Default::default(),
+            trust_upstream_cost: false,
         };
 
         AppState {

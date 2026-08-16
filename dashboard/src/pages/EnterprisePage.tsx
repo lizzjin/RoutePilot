@@ -328,8 +328,8 @@ function OverviewRail({ overview, loading }: { overview?: EnterpriseLedgerOvervi
     { label: '完成', value: overview?.completedRequests, detail: `${overview?.failedRequests ?? 0} 失败`, icon: CheckCircle2 },
     { label: '活跃租约', value: overview?.activeLeases, detail: `${overview?.expiredLeases ?? 0} 已过期`, icon: Clock3 },
     { label: '幂等请求', value: overview?.idempotentRequests, detail: '仅暴露存在性', icon: KeyRound },
-    { label: '未对账', value: overview?.unreconciledRequests, detail: '需 Provider 证据', icon: TriangleAlert },
-    { label: '账本成本', value: overview ? formatMoney(overview.totalCostMicrounits) : undefined, detail: 'USD · 微单位汇总', icon: Layers3 },
+    { label: '仅预估', value: overview?.estimateOnlyRequests, detail: `${overview?.unreconciledRequests ?? 0} 个租约异常`, icon: TriangleAlert },
+    { label: '可计费成本', value: overview ? formatMoney(overview.totalBillableCostMicrounits) : undefined, detail: `预估 ${overview ? formatMoney(overview.totalCostMicrounits) : '$0'}`, icon: Layers3 },
   ]
   return (
     <section className="grid overflow-hidden border-y sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6" aria-label="运行账本概览">
@@ -607,7 +607,11 @@ function EnterpriseRequestRow({ request, onSelect }: { request: EnterpriseReques
       </TableCell>
       <TableCell className="text-right">
         <p className="font-mono text-xs">{totalTokens.toLocaleString('zh-CN')} tok</p>
-        <p className="mt-1 font-mono text-[11px] text-muted-foreground">{formatMoney(request.costAmountMicrounits)}</p>
+        <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+          {request.billableCostMicrounits == null
+            ? `预估 ${formatMoney(request.costAmountMicrounits)}`
+            : `可计费 ${formatMoney(request.billableCostMicrounits)}`}
+        </p>
       </TableCell>
       <TableCell className="pr-3 text-right">
         <p className="whitespace-nowrap text-xs">{formatTime(request.createdAtMs)}</p>
@@ -675,7 +679,7 @@ function RequestDetailContent({ request, attempts }: { request: EnterpriseReques
         <DetailRow label="请求路径" value={request.requestPath} />
         <DetailRow label="状态 / HTTP" value={`${stateLabel(request.state)} / ${request.statusCode ?? '—'}`} />
         <DetailRow label="终止原因" value={request.terminalReason || '执行中'} />
-        <DetailRow label="计费模式" value={`${request.billingMode || '未结算'} · ${request.chargeable ? '可计费' : '不可计费'}`} />
+        <DetailRow label="用量模式" value={`${request.billingMode || '未结算'} · ${request.chargeable ? '已进入上游' : '未进入上游'}`} />
         <DetailRow label="请求延迟" value={`${request.latencyMs}ms${request.firstByteLatencyMs === null ? '' : ` · TTFT ${request.firstByteLatencyMs}ms`}`} />
         <DetailRow label="Tool 终态" value={request.toolOutcome} />
         <DetailRow label="Tool 修复" value={request.toolRepairAttempted ? (request.toolRepairRecovered ? '已恢复' : '未恢复') : '未触发'} />
@@ -692,10 +696,12 @@ function RequestDetailContent({ request, attempts }: { request: EnterpriseReques
           <UsageCell label="缓存创建" value={request.cacheWriteTokens} />
           <UsageCell label="缓存读取" value={request.cacheReadTokens} />
         </div>
-        <div className="mt-3 flex items-center justify-between border-b pb-3 text-sm">
-          <span className="text-muted-foreground">账本成本</span>
-          <span className="font-mono font-semibold">{formatMoney(request.costAmountMicrounits)} {request.currency}</span>
+        <div className="mt-3 grid gap-2 border-b pb-3 text-sm sm:grid-cols-3">
+          <span><span className="text-muted-foreground">预估</span> <b className="font-mono">{formatMoney(request.costAmountMicrounits)}</b></span>
+          <span><span className="text-muted-foreground">实际</span> <b className="font-mono">{request.actualCostMicrounits == null ? '—' : formatMoney(request.actualCostMicrounits)}</b></span>
+          <span><span className="text-muted-foreground">可计费</span> <b className="font-mono">{request.billableCostMicrounits == null ? '—' : formatMoney(request.billableCostMicrounits)}</b></span>
         </div>
+        {request.pricingEvidence && <DetailRow label="计价证据" value={`${request.pricingEvidence.method} · ${request.pricingEvidence.version} · ${request.pricingEvidence.evidence}`} />}
       </DetailSection>
 
       <DetailSection title={`Provider Attempts · ${attempts.length}`} icon={Server}>
@@ -718,7 +724,8 @@ function RequestDetailContent({ request, attempts }: { request: EnterpriseReques
                     <span>协议 <b className="font-medium text-foreground">{attempt.providerProtocol}</b></span>
                     <span>HTTP <b className="font-mono font-medium text-foreground">{attempt.statusCode ?? '—'}</b></span>
                     <span>Tokens <b className="font-mono font-medium text-foreground">{(attempt.inputTokens + attempt.outputTokens + attempt.cacheWriteTokens + attempt.cacheReadTokens).toLocaleString('zh-CN')}</b></span>
-                    <span>成本 <b className="font-mono font-medium text-foreground">{formatMoney(attempt.costAmountMicrounits)}</b></span>
+                    <span>预估 <b className="font-mono font-medium text-foreground">{formatMoney(attempt.costAmountMicrounits)}</b></span>
+                    <span>可计费 <b className="font-mono font-medium text-foreground">{attempt.billableCostMicrounits == null ? '—' : formatMoney(attempt.billableCostMicrounits)}</b></span>
                     <span>耗时 <b className="font-mono font-medium text-foreground">{attempt.latencyMs}ms{attempt.firstByteLatencyMs === null ? '' : ` · TTFT ${attempt.firstByteLatencyMs}ms`}</b></span>
                   </div>
                   {(attempt.terminalReason || attempt.errorMessage) && (

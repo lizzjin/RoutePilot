@@ -16,7 +16,9 @@ export interface EnterpriseLedgerOverview {
   activeLeases: number
   expiredLeases: number
   chargeableRequests: number
+  estimateOnlyRequests: number
   totalCostMicrounits: number
+  totalBillableCostMicrounits: number
   organizationCount: number
   projectCount: number
   environmentCount: number
@@ -44,6 +46,9 @@ export interface EnterpriseRequest {
   cacheWriteTokens: number
   cacheReadTokens: number
   costAmountMicrounits: number
+  actualCostMicrounits: number | null
+  billableCostMicrounits: number | null
+  pricingEvidence: PricingEvidence | null
   currency: string
   billingMode: string | null
   chargeable: boolean
@@ -81,6 +86,9 @@ export interface EnterpriseAttempt {
   cacheWriteTokens: number
   cacheReadTokens: number
   costAmountMicrounits: number
+  actualCostMicrounits: number | null
+  billableCostMicrounits: number | null
+  pricingEvidence: PricingEvidence | null
   currency: string
   billingMode: string | null
   chargeable: boolean
@@ -167,3 +175,4 @@ export interface EnterpriseBudgetAdjustment extends EnterpriseBudgetScope {
   reason: string
   evidenceReference: string
 }
+import type { PricingEvidence } from './log.types'

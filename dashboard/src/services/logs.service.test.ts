@@ -18,6 +18,10 @@ const emptySummary: LogSummary = {
   totalCacheReadTokens: 0,
   totalTokens: 0,
   totalCostEstimate: 0,
+  totalActualCost: 0,
+  totalBillableCost: 0,
+  billableRequests: 0,
+  estimateOnlyRequests: 0,
   rpm: 0,
   tpm: 0,
 }

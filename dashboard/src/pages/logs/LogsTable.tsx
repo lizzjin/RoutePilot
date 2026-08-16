@@ -25,6 +25,7 @@ import {
   parseLogDate,
   protocolLabel,
   providerTone,
+  reconciliationStatusLabel,
   rowTone,
   shortId,
   trafficClassLabel,
@@ -172,10 +173,13 @@ function TokensCell({ log }: { log: RequestLog }) {
 }
 
 function CostCell({ log }: { log: RequestLog }) {
+  const displayedCost = log.billableCost ?? log.costEstimate ?? 0
   return (
     <div className="space-y-1 text-center">
-      <div className="font-mono text-sm font-semibold">{formatMoney(log.costEstimate || 0, 6)}</div>
-      <div className="text-xs text-muted-foreground">{billingModeLabel(log.billingMode)}</div>
+      <div className="font-mono text-sm font-semibold">{formatMoney(displayedCost, 6)}</div>
+      <div className="text-xs text-muted-foreground">
+        {reconciliationStatusLabel(log.reconciliationStatus)} · {billingModeLabel(log.billingMode)}
+      </div>
     </div>
   )
 }

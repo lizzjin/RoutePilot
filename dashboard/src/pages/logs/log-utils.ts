@@ -68,6 +68,13 @@ export function billingModeLabel(value?: string): string {
   return value || '本地估算'
 }
 
+export function reconciliationStatusLabel(value?: RequestLog['reconciliationStatus']): string {
+  if (value === 'billable') return '可计费'
+  if (value === 'partially_billable') return '部分可计费'
+  if (value === 'actual_unbillable') return '实际金额待审核'
+  return '仅预估'
+}
+
 export function trafficClassLabel(value?: RequestLog['trafficClass']): string {
   if (value === 'synthetic') return '合成测试'
   if (value === 'diagnostic') return '诊断'

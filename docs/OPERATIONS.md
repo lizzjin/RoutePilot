@@ -180,10 +180,15 @@ statuses can be retained (such as 401); transport failures map to 502. This
 makes request and provider-outcome diagnostics reflect the error contract the
 client actually encountered.
 
-Token and cost values are operational estimates, not invoices. Inspect
-`billingMode` for provenance: `upstream-returned` means the completed adapter
-path exposed Provider-reported token counts, while `local-estimate` means
-ModelPort used its request heuristic. Both use ModelPort's local pricing table.
+Token and cost values have separate reconciliation tracks. `costEstimate` is an
+operational estimate used for routing and reservations. `actualCost` exists only
+when ModelPort receives a trusted Provider-reported amount or applies an exact,
+versioned card to Provider-reported usage. `billableCost` is the governed amount
+used for settlement and is null when evidence is insufficient. Inspect
+`reconciliationStatus` and `pricingEvidence` before treating a row as spend.
+`billingMode` still describes token provenance: `upstream-returned` means the
+adapter exposed Provider usage, while `local-estimate` means ModelPort used its
+request heuristic. Provider usage alone does not make an amount billable.
 `firstByteLatencyMs` is null for non-stream requests. For live streams it starts
 at the upstream attempt and stops at the first non-empty text delta or tool-call
 event, not at an SSE keepalive or metadata-only frame. Live-stream records use

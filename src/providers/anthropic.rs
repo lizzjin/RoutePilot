@@ -80,7 +80,14 @@ pub async fn chat_completions(
         if let Some(usage) = usage {
             response.headers_mut().insert(
                 USAGE_HEADER,
-                pricing::usage_header_value(&resolved.model, usage, resolved.provider.pricing)?,
+                pricing::usage_header_value(
+                    &resolved.provider_id,
+                    &resolved.model,
+                    usage,
+                    resolved.provider.pricing,
+                    resolved.provider.model_pricing_card(&resolved.model),
+                    None,
+                )?,
             );
         }
         Ok(response)
@@ -204,7 +211,14 @@ pub async fn messages(
         if let Some(usage) = usage {
             response.headers_mut().insert(
                 USAGE_HEADER,
-                pricing::usage_header_value(&resolved.model, usage, resolved.provider.pricing)?,
+                pricing::usage_header_value(
+                    &resolved.provider_id,
+                    &resolved.model,
+                    usage,
+                    resolved.provider.pricing,
+                    resolved.provider.model_pricing_card(&resolved.model),
+                    None,
+                )?,
             );
         }
         Ok(response)

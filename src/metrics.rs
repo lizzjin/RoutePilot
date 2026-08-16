@@ -574,6 +574,8 @@ mod tests {
                 cache_write_tokens: 5,
                 cache_read_tokens: 6,
                 cost_estimate: 0.000123,
+                actual_cost: None,
+                billable_cost: None,
             },
         );
 

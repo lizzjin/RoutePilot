@@ -182,10 +182,13 @@ identity must remain exact and no generation occurs.
 
 Completed paths that expose Provider usage are labelled
 `billingMode="upstream-returned"`; paths that use the request heuristic are
-`billingMode="local-estimate"`. This is provenance, not an invoice guarantee:
-cost still comes from the local pricing table, and ordinary live streams may
-not expose their final Provider usage. Request totals include every sent retry
-or fallback attempt; mixed Provider-reported and locally estimated attempts use
+`billingMode="local-estimate"`. This token provenance is separate from monetary
+reconciliation. `costEstimate` always remains operational; `actualCost` and
+`billableCost` require either a trusted Provider amount or an exact-model,
+versioned rate card applied to Provider usage. A request can be partially
+billable when only some retry/fallback attempts have evidence; each attempt row
+retains its own evidence. Request totals include every sent attempt. Mixed
+Provider-reported and locally estimated attempts use
 `billingMode="mixed-attempts"`, while fully estimated retries use
 `billingMode="local-estimate+retry"`.
 

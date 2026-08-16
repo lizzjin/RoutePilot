@@ -783,18 +783,43 @@ input_per_million = 1.0
 output_per_million = 4.0
 cache_write_per_million = 1.0
 cache_read_per_million = 0.1
+
+[providers.example.model_pricing."example-model"]
+input_per_million = 1.0
+output_per_million = 4.0
+cache_write_per_million = 1.0
+cache_read_per_million = 0.1
+version = "provider-public-2026-08-01-v1"
+effective_at = "2026-08-01T00:00:00Z"
+currency = "USD"
+source = "provider_published"
+service_tier = "standard"
+evidence = "https://provider.example/pricing#example-model"
 ```
 
-`pricing` is an optional provider-level USD rate per million tokens and takes
-precedence over the built-in model-family estimate. It may represent either an
-upstream API price or an explicitly agreed internal chargeback for a local
-runtime. `input_per_million` and `output_per_million` apply to ordinary prompt
-and generated tokens; `cache_write_per_million` and `cache_read_per_million`
-apply only when the upstream reports those token classes. Set all four values
-to zero when local inference is intentionally uncharged. ModelPort stores the
-applied pricing snapshot with each usage record, so later rate changes do not
-rewrite historical spend. Internal rates are operational estimates rather than
-Provider invoices and should be versioned in deployment documentation.
+`pricing` is the legacy provider-wide USD estimate. It overrides the built-in
+model-family estimate for admission, routing, and capacity reservation, but it
+is never settled or presented as an invoice-grade charge.
+
+`model_pricing.<exact-model>` is the governed rate-card surface. The key must
+appear verbatim in the Provider's `models` list. Each card records its version,
+RFC3339 UTC effective timestamp, USD currency, source, standard service tier, and a durable
+evidence reference. Supported sources are `provider_published`,
+`provider_contract`, and `internal_chargeback`; `legacy_estimate` is rejected.
+Until request-tier matching exists, non-standard service tiers are rejected
+instead of silently applying the wrong rate. Add a new card version when rates
+change; completed ledger rows retain their applied price and evidence snapshot.
+
+`input_per_million` and `output_per_million` apply to ordinary prompt and
+generated tokens. `cache_write_per_million` and `cache_read_per_million` apply
+only when the upstream reports those token classes. Set all four values to zero
+for an intentionally free but still governed internal chargeback.
+
+For an OpenAI-compatible aggregator that returns an authoritative USD
+`usage.cost`, set `trust_upstream_cost = true` on that Provider. This is enabled
+by default only for the built-in OpenRouter profile. Do not enable it for an
+unreviewed proxy: a trusted Provider-reported amount takes precedence over a
+local exact-model card.
 
 `fidelity_mode="stability"` is a label for a provider configured with stream
 rewriting; it does not enable deduplication by itself. Set

@@ -42,7 +42,7 @@ pub async fn run(args: Vec<String>) -> Result<(), AppError> {
     let _ = fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("model_port=info,tower_http=info,axum=info")),
+                .unwrap_or_else(|_| EnvFilter::new("routepilot=info,tower_http=info,axum=info")),
         )
         .try_init();
 

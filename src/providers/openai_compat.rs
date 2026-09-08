@@ -543,6 +543,10 @@ fn apply_default_reasoning_config(
     apply_llama_cpp_reasoning(requested_model, enabled, None, config, body)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Reasoning inputs and provider dialect policy are independent protocol mapping inputs"
+)]
 fn apply_reasoning_dialect(
     requested_model: &str,
     effort: Option<ReasoningEffort>,
@@ -1013,7 +1017,7 @@ mod tests {
             static_headers: std::collections::BTreeMap::from([
                 (
                     "HTTP-Referer".to_owned(),
-                    "https://modelport.example".to_owned(),
+                    "https://routepilot.example".to_owned(),
                 ),
                 ("authorization".to_owned(), "unsafe".to_owned()),
             ]),
@@ -1029,7 +1033,7 @@ mod tests {
         let rendered = headers(&provider, &HeaderMap::new()).unwrap();
         assert!(rendered.contains(&(
             "http-referer".to_owned(),
-            "https://modelport.example".to_owned()
+            "https://routepilot.example".to_owned()
         )));
         assert!(rendered.contains(&("authorization".to_owned(), "Bearer secret".to_owned())));
         provider.static_headers.clear();

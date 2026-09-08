@@ -11,11 +11,11 @@ load_env
 # component POSTGRES_* values instead of a complete URL. Mirror that expansion
 # for static validation only; host start scripts still require an endpoint that
 # is reachable from the host.
-if [[ -z "${MODELPORT_DATABASE_URL:-}" && -n "${MODELPORT_POSTGRES_PASSWORD:-}" ]]; then
-  export MODELPORT_DATABASE_URL="postgres://${MODELPORT_POSTGRES_USER:-modelport}:${MODELPORT_POSTGRES_PASSWORD}@postgres:5432/${MODELPORT_POSTGRES_DB:-modelport}"
+if [[ -z "${ROUTEPILOT_DATABASE_URL:-}" && -n "${ROUTEPILOT_POSTGRES_PASSWORD:-}" ]]; then
+  export ROUTEPILOT_DATABASE_URL="postgres://${ROUTEPILOT_POSTGRES_USER:-routepilot}:${ROUTEPILOT_POSTGRES_PASSWORD}@postgres:5432/${ROUTEPILOT_POSTGRES_DB:-routepilot}"
 fi
 
-if [[ "${MODELPORT_FORCE_BUILD:-0}" != "1" ]] && release_is_fresh; then
+if [[ "${ROUTEPILOT_FORCE_BUILD:-0}" != "1" ]] && release_is_fresh; then
   "$RELEASE_BIN" config validate
   exit 0
 fi

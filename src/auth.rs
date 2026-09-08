@@ -27,7 +27,7 @@ use crate::{
     storage::JsonStore,
 };
 
-pub const ADMIN_SESSION_COOKIE: &str = "modelport_admin_session";
+pub const ADMIN_SESSION_COOKIE: &str = "routepilot_admin_session";
 
 const DEFAULT_SESSION_TTL_SECONDS: u64 = 12 * 60 * 60;
 const MAX_FAILED_ATTEMPTS: u32 = 5;
@@ -221,10 +221,10 @@ impl AuthStore {
     pub fn load_or_bootstrap(config: &AppConfig) -> Result<Self, AppError> {
         let store = JsonStore::open("auth")?;
         let session_ttl_seconds = env_u64(
-            "MODELPORT_ADMIN_SESSION_TTL_SECONDS",
+            "ROUTEPILOT_ADMIN_SESSION_TTL_SECONDS",
             DEFAULT_SESSION_TTL_SECONDS,
         );
-        let cookie_secure = env_flag("MODELPORT_ADMIN_COOKIE_SECURE");
+        let cookie_secure = env_flag("ROUTEPILOT_ADMIN_COOKIE_SECURE");
         let (file, revision): (AuthFile, u64) =
             store.read_versioned_or_default(serde_json::json!({ "users": [] }))?;
         let users = file
@@ -796,37 +796,37 @@ impl AuthStore {
             return Ok(());
         }
 
-        let password = env::var("MODELPORT_ADMIN_PASSWORD")
+        let password = env::var("ROUTEPILOT_ADMIN_PASSWORD")
             .ok()
             .or_else(|| config.auth_token.clone())
             .ok_or_else(|| {
                 AppError::Config(
-                    "MODELPORT_ADMIN_PASSWORD is required to bootstrap the first admin user"
+                    "ROUTEPILOT_ADMIN_PASSWORD is required to bootstrap the first admin user"
                         .to_owned(),
                 )
             })?;
         validate_bootstrap_password(&password)?;
 
         let username = normalize_username(
-            &env::var("MODELPORT_ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_owned()),
+            &env::var("ROUTEPILOT_ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_owned()),
         )?;
         let email = validate_email(
-            &env::var("MODELPORT_ADMIN_EMAIL")
-                .unwrap_or_else(|_| "admin@modelport.local".to_owned()),
+            &env::var("ROUTEPILOT_ADMIN_EMAIL")
+                .unwrap_or_else(|_| "admin@routepilot.local".to_owned()),
         )?;
         let primary = new_bootstrap_admin(username, email, &password)?;
         inner.users.insert(primary.id.clone(), primary);
 
         let backup_values = (
-            env::var("MODELPORT_BACKUP_ADMIN_USERNAME").ok(),
-            env::var("MODELPORT_BACKUP_ADMIN_EMAIL").ok(),
-            env::var("MODELPORT_BACKUP_ADMIN_PASSWORD").ok(),
+            env::var("ROUTEPILOT_BACKUP_ADMIN_USERNAME").ok(),
+            env::var("ROUTEPILOT_BACKUP_ADMIN_EMAIL").ok(),
+            env::var("ROUTEPILOT_BACKUP_ADMIN_PASSWORD").ok(),
         );
         let backup_configured =
             backup_values.0.is_some() || backup_values.1.is_some() || backup_values.2.is_some();
-        if env_flag("MODELPORT_ENTERPRISE_MODE") && !backup_configured {
+        if env_flag("ROUTEPILOT_ENTERPRISE_MODE") && !backup_configured {
             return Err(AppError::Config(
-                "enterprise bootstrap requires MODELPORT_BACKUP_ADMIN_USERNAME, MODELPORT_BACKUP_ADMIN_EMAIL, and MODELPORT_BACKUP_ADMIN_PASSWORD"
+                "enterprise bootstrap requires ROUTEPILOT_BACKUP_ADMIN_USERNAME, ROUTEPILOT_BACKUP_ADMIN_EMAIL, and ROUTEPILOT_BACKUP_ADMIN_PASSWORD"
                     .to_owned(),
             ));
         }
@@ -1072,7 +1072,7 @@ fn validate_password_strength(password: &str) -> Result<(), AppError> {
     let has_common_prefix = [
         "admin",
         "password",
-        "modelport",
+        "routepilot",
         "letmein",
         "qwerty",
         "example-password",
@@ -1084,8 +1084,8 @@ fn validate_password_strength(password: &str) -> Result<(), AppError> {
         "administrator"
             | "password123"
             | "password1234"
-            | "modelport123"
-            | "modelport-admin"
+            | "routepilot123"
+            | "routepilot-admin"
             | "letmein12345"
             | "change-me-now"
     ) || normalized.starts_with("replace-with-")
@@ -1220,7 +1220,7 @@ mod tests {
 
     fn failing_store_path(label: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
-            "modelport-{label}-{}-{}",
+            "routepilot-{label}-{}-{}",
             std::process::id(),
             Uuid::new_v4().simple()
         ));
@@ -1234,7 +1234,7 @@ mod tests {
         let user = AdminUserRecord {
             id: "usr_test".to_owned(),
             username: "admin".to_owned(),
-            email: "admin@modelport.local".to_owned(),
+            email: "admin@routepilot.local".to_owned(),
             role: "admin".to_owned(),
             status: "active".to_owned(),
             password_hash: hash_password("strong-password-123").unwrap(),
@@ -1534,7 +1534,7 @@ mod tests {
         let admin = AdminUserRecord {
             id: "usr_admin".to_owned(),
             username: "admin".to_owned(),
-            email: "admin@modelport.local".to_owned(),
+            email: "admin@routepilot.local".to_owned(),
             role: "admin".to_owned(),
             status: "active".to_owned(),
             password_hash: hash_password("strong-password-123").unwrap(),
@@ -1546,7 +1546,7 @@ mod tests {
         let user = AdminUserRecord {
             id: "usr_user".to_owned(),
             username: "dev".to_owned(),
-            email: "dev@modelport.local".to_owned(),
+            email: "dev@routepilot.local".to_owned(),
             role: "user".to_owned(),
             status: "active".to_owned(),
             password_hash: hash_password("old-password-123").unwrap(),
@@ -1566,7 +1566,7 @@ mod tests {
                 "usr_user",
                 "usr_admin",
                 UpdateUserInput {
-                    email: Some("devops@modelport.local".to_owned()),
+                    email: Some("devops@routepilot.local".to_owned()),
                     password: Some("new-password-123".to_owned()),
                     role: Some("viewer".to_owned()),
                     status: Some("disabled".to_owned()),
@@ -1574,7 +1574,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(updated.email, "devops@modelport.local");
+        assert_eq!(updated.email, "devops@routepilot.local");
         assert_eq!(updated.role, "viewer");
         assert_eq!(updated.status, "disabled");
         let inner = store.inner.lock().unwrap();
@@ -1589,7 +1589,7 @@ mod tests {
         let admin = AdminUserRecord {
             id: "usr_admin".to_owned(),
             username: "admin".to_owned(),
-            email: "admin@modelport.local".to_owned(),
+            email: "admin@routepilot.local".to_owned(),
             role: "admin".to_owned(),
             status: "active".to_owned(),
             password_hash: hash_password("strong-password-123").unwrap(),

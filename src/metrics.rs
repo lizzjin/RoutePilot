@@ -253,63 +253,63 @@ impl Metrics {
         let inner = self.inner.lock().expect("metrics lock poisoned");
         let mut output = String::new();
 
-        output.push_str("# HELP modelport_uptime_seconds Seconds since ModelPort started.\n");
-        output.push_str("# TYPE modelport_uptime_seconds gauge\n");
+        output.push_str("# HELP routepilot_uptime_seconds Seconds since RoutePilot started.\n");
+        output.push_str("# TYPE routepilot_uptime_seconds gauge\n");
         output.push_str(&format!(
-            "modelport_uptime_seconds {}\n\n",
+            "routepilot_uptime_seconds {}\n\n",
             self.started_at.elapsed().as_secs()
         ));
-        output.push_str("# HELP modelport_build_info Static release and source-build identity.\n");
-        output.push_str("# TYPE modelport_build_info gauge\n");
+        output.push_str("# HELP routepilot_build_info Static release and source-build identity.\n");
+        output.push_str("# TYPE routepilot_build_info gauge\n");
         output.push_str(&format!(
-            "modelport_build_info{{version=\"{}\",revision=\"{}\",source_state=\"{}\"}} 1\n\n",
+            "routepilot_build_info{{version=\"{}\",revision=\"{}\",source_state=\"{}\"}} 1\n\n",
             escape_label_value(crate::version::VERSION),
             escape_label_value(crate::version::REVISION),
             escape_label_value(crate::version::SOURCE_STATE),
         ));
 
         output.push_str(
-            "# HELP modelport_route_requests_total Total route requests handled by ModelPort.\n",
+            "# HELP routepilot_route_requests_total Total route requests handled by RoutePilot.\n",
         );
-        output.push_str("# TYPE modelport_route_requests_total counter\n");
-        output.push_str("# HELP modelport_route_successes_total Total successful route requests handled by ModelPort.\n");
-        output.push_str("# TYPE modelport_route_successes_total counter\n");
-        output.push_str("# HELP modelport_route_failures_total Total failed route requests handled by ModelPort.\n");
-        output.push_str("# TYPE modelport_route_failures_total counter\n");
-        output.push_str("# HELP modelport_route_duration_ms_total Total route handling duration in milliseconds.\n");
-        output.push_str("# TYPE modelport_route_duration_ms_total counter\n");
+        output.push_str("# TYPE routepilot_route_requests_total counter\n");
+        output.push_str("# HELP routepilot_route_successes_total Total successful route requests handled by RoutePilot.\n");
+        output.push_str("# TYPE routepilot_route_successes_total counter\n");
+        output.push_str("# HELP routepilot_route_failures_total Total failed route requests handled by RoutePilot.\n");
+        output.push_str("# TYPE routepilot_route_failures_total counter\n");
+        output.push_str("# HELP routepilot_route_duration_ms_total Total route handling duration in milliseconds.\n");
+        output.push_str("# TYPE routepilot_route_duration_ms_total counter\n");
         for (route, counters) in &inner.routes {
             let labels = format!("route=\"{}\"", escape_label_value(route));
-            push_counter_set(&mut output, "modelport_route", &labels, counters);
+            push_counter_set(&mut output, "routepilot_route", &labels, counters);
         }
         output.push('\n');
 
         output.push_str(
-            "# HELP modelport_routing_decisions_total Routing decisions observed by this process, by mode, profile, and selected provider.\n",
+            "# HELP routepilot_routing_decisions_total Routing decisions observed by this process, by mode, profile, and selected provider.\n",
         );
-        output.push_str("# TYPE modelport_routing_decisions_total counter\n");
+        output.push_str("# TYPE routepilot_routing_decisions_total counter\n");
         for (key, count) in &inner.routing_decisions {
             output.push_str(&format!(
-                "modelport_routing_decisions_total{{mode=\"{}\",profile=\"{}\",provider=\"{}\"}} {count}\n",
+                "routepilot_routing_decisions_total{{mode=\"{}\",profile=\"{}\",provider=\"{}\"}} {count}\n",
                 escape_label_value(&key.mode),
                 escape_label_value(&key.profile),
                 escape_label_value(&key.provider),
             ));
         }
         output.push_str(
-            "# HELP modelport_routing_shadow_disagreements_total Decisions where the recommendation differed from the configured baseline selection.\n",
+            "# HELP routepilot_routing_shadow_disagreements_total Decisions where the recommendation differed from the configured baseline selection.\n",
         );
-        output.push_str("# TYPE modelport_routing_shadow_disagreements_total counter\n");
+        output.push_str("# TYPE routepilot_routing_shadow_disagreements_total counter\n");
         output.push_str(&format!(
-            "modelport_routing_shadow_disagreements_total {}\n",
+            "routepilot_routing_shadow_disagreements_total {}\n",
             inner.routing_shadow_disagreements_total
         ));
         output.push('\n');
 
         output.push_str(
-            "# HELP modelport_inference_rejections_total Inference requests rejected before a Provider result, by bounded phase and reason.\n",
+            "# HELP routepilot_inference_rejections_total Inference requests rejected before a Provider result, by bounded phase and reason.\n",
         );
-        output.push_str("# TYPE modelport_inference_rejections_total counter\n");
+        output.push_str("# TYPE routepilot_inference_rejections_total counter\n");
         for (key, count) in &inner.rejections {
             let labels = format!(
                 "route=\"{}\",phase=\"{}\",reason=\"{}\"",
@@ -318,29 +318,29 @@ impl Metrics {
                 escape_label_value(&key.reason),
             );
             output.push_str(&format!(
-                "modelport_inference_rejections_total{{{labels}}} {count}\n"
+                "routepilot_inference_rejections_total{{{labels}}} {count}\n"
             ));
         }
         output.push('\n');
 
-        output.push_str("# HELP modelport_message_requests_total Total message requests by provider/model/traffic class/stream.\n");
-        output.push_str("# TYPE modelport_message_requests_total counter\n");
-        output.push_str("# HELP modelport_message_successes_total Total successful message requests by provider/model/traffic class/stream.\n");
-        output.push_str("# TYPE modelport_message_successes_total counter\n");
-        output.push_str("# HELP modelport_message_failures_total Total failed message requests by provider/model/traffic class/stream.\n");
-        output.push_str("# TYPE modelport_message_failures_total counter\n");
-        output.push_str("# HELP modelport_message_duration_ms_total Total message request lifecycle duration in milliseconds by provider/model/traffic class/stream.\n");
-        output.push_str("# TYPE modelport_message_duration_ms_total counter\n");
-        output.push_str("# HELP modelport_message_input_tokens_total Total input tokens by provider/model/traffic class/stream.\n");
-        output.push_str("# TYPE modelport_message_input_tokens_total counter\n");
-        output.push_str("# HELP modelport_message_output_tokens_total Total output tokens by provider/model/traffic class/stream.\n");
-        output.push_str("# TYPE modelport_message_output_tokens_total counter\n");
-        output.push_str("# HELP modelport_message_cache_write_tokens_total Total cache write tokens by provider/model/traffic class/stream.\n");
-        output.push_str("# TYPE modelport_message_cache_write_tokens_total counter\n");
-        output.push_str("# HELP modelport_message_cache_read_tokens_total Total cache read tokens by provider/model/traffic class/stream.\n");
-        output.push_str("# TYPE modelport_message_cache_read_tokens_total counter\n");
-        output.push_str("# HELP modelport_message_cost_estimate_usd_total Total estimated message cost in USD by provider/model/traffic class/stream.\n");
-        output.push_str("# TYPE modelport_message_cost_estimate_usd_total counter\n");
+        output.push_str("# HELP routepilot_message_requests_total Total message requests by provider/model/traffic class/stream.\n");
+        output.push_str("# TYPE routepilot_message_requests_total counter\n");
+        output.push_str("# HELP routepilot_message_successes_total Total successful message requests by provider/model/traffic class/stream.\n");
+        output.push_str("# TYPE routepilot_message_successes_total counter\n");
+        output.push_str("# HELP routepilot_message_failures_total Total failed message requests by provider/model/traffic class/stream.\n");
+        output.push_str("# TYPE routepilot_message_failures_total counter\n");
+        output.push_str("# HELP routepilot_message_duration_ms_total Total message request lifecycle duration in milliseconds by provider/model/traffic class/stream.\n");
+        output.push_str("# TYPE routepilot_message_duration_ms_total counter\n");
+        output.push_str("# HELP routepilot_message_input_tokens_total Total input tokens by provider/model/traffic class/stream.\n");
+        output.push_str("# TYPE routepilot_message_input_tokens_total counter\n");
+        output.push_str("# HELP routepilot_message_output_tokens_total Total output tokens by provider/model/traffic class/stream.\n");
+        output.push_str("# TYPE routepilot_message_output_tokens_total counter\n");
+        output.push_str("# HELP routepilot_message_cache_write_tokens_total Total cache write tokens by provider/model/traffic class/stream.\n");
+        output.push_str("# TYPE routepilot_message_cache_write_tokens_total counter\n");
+        output.push_str("# HELP routepilot_message_cache_read_tokens_total Total cache read tokens by provider/model/traffic class/stream.\n");
+        output.push_str("# TYPE routepilot_message_cache_read_tokens_total counter\n");
+        output.push_str("# HELP routepilot_message_cost_estimate_usd_total Total estimated message cost in USD by provider/model/traffic class/stream.\n");
+        output.push_str("# TYPE routepilot_message_cost_estimate_usd_total counter\n");
         for (key, counters) in &inner.messages {
             let labels = format!(
                 "provider=\"{}\",model=\"{}\",traffic_class=\"{}\",stream=\"{}\"",
@@ -354,61 +354,61 @@ impl Metrics {
         output.push('\n');
 
         output.push_str(
-            "# HELP modelport_message_latency_ms End-to-end inference request latency in milliseconds.\n",
+            "# HELP routepilot_message_latency_ms End-to-end inference request latency in milliseconds.\n",
         );
-        output.push_str("# TYPE modelport_message_latency_ms histogram\n");
+        output.push_str("# TYPE routepilot_message_latency_ms histogram\n");
         for (index, upper_bound) in MESSAGE_LATENCY_BUCKETS_MS.iter().enumerate() {
             output.push_str(&format!(
-                "modelport_message_latency_ms_bucket{{le=\"{upper_bound}\"}} {}\n",
+                "routepilot_message_latency_ms_bucket{{le=\"{upper_bound}\"}} {}\n",
                 inner.message_latency.cumulative_buckets[index]
             ));
         }
         output.push_str(&format!(
-            "modelport_message_latency_ms_bucket{{le=\"+Inf\"}} {}\n",
+            "routepilot_message_latency_ms_bucket{{le=\"+Inf\"}} {}\n",
             inner.message_latency.count
         ));
         output.push_str(&format!(
-            "modelport_message_latency_ms_sum {}\n",
+            "routepilot_message_latency_ms_sum {}\n",
             inner.message_latency.sum_ms
         ));
         output.push_str(&format!(
-            "modelport_message_latency_ms_count {}\n\n",
+            "routepilot_message_latency_ms_count {}\n\n",
             inner.message_latency.count
         ));
 
         output.push_str(
-            "# HELP modelport_ledger_operation_failures_total Ledger operation failures by bounded operation.\n",
+            "# HELP routepilot_ledger_operation_failures_total Ledger operation failures by bounded operation.\n",
         );
-        output.push_str("# TYPE modelport_ledger_operation_failures_total counter\n");
+        output.push_str("# TYPE routepilot_ledger_operation_failures_total counter\n");
         output.push_str(
-            "# HELP modelport_ledger_operation_degraded Whether the latest ledger operation failed.\n",
+            "# HELP routepilot_ledger_operation_degraded Whether the latest ledger operation failed.\n",
         );
-        output.push_str("# TYPE modelport_ledger_operation_degraded gauge\n");
+        output.push_str("# TYPE routepilot_ledger_operation_degraded gauge\n");
         for (operation, metrics) in &inner.ledger_operations {
             let operation = escape_label_value(operation);
             output.push_str(&format!(
-                "modelport_ledger_operation_failures_total{{operation=\"{operation}\"}} {}\n",
+                "routepilot_ledger_operation_failures_total{{operation=\"{operation}\"}} {}\n",
                 metrics.failures_total
             ));
             output.push_str(&format!(
-                "modelport_ledger_operation_degraded{{operation=\"{operation}\"}} {}\n",
+                "routepilot_ledger_operation_degraded{{operation=\"{operation}\"}} {}\n",
                 u8::from(metrics.degraded)
             ));
         }
         output.push_str(
-            "# HELP modelport_ledger_reconciled_requests_total Expired request leases reconciled by this process.\n",
+            "# HELP routepilot_ledger_reconciled_requests_total Expired request leases reconciled by this process.\n",
         );
-        output.push_str("# TYPE modelport_ledger_reconciled_requests_total counter\n");
+        output.push_str("# TYPE routepilot_ledger_reconciled_requests_total counter\n");
         output.push_str(&format!(
-            "modelport_ledger_reconciled_requests_total {}\n",
+            "routepilot_ledger_reconciled_requests_total {}\n",
             inner.reconciled_requests_total
         ));
         output.push_str(
-            "# HELP modelport_ledger_reconciled_attempts_total Expired attempt leases reconciled by this process.\n",
+            "# HELP routepilot_ledger_reconciled_attempts_total Expired attempt leases reconciled by this process.\n",
         );
-        output.push_str("# TYPE modelport_ledger_reconciled_attempts_total counter\n");
+        output.push_str("# TYPE routepilot_ledger_reconciled_attempts_total counter\n");
         output.push_str(&format!(
-            "modelport_ledger_reconciled_attempts_total {}\n",
+            "routepilot_ledger_reconciled_attempts_total {}\n",
             inner.reconciled_attempts_total
         ));
 
@@ -517,25 +517,25 @@ fn push_counter_set(output: &mut String, prefix: &str, labels: &str, counters: &
 }
 
 fn push_message_counter_set(output: &mut String, labels: &str, message: &MessageCounterSet) {
-    push_counter_set(output, "modelport_message", labels, &message.counters);
+    push_counter_set(output, "routepilot_message", labels, &message.counters);
     output.push_str(&format!(
-        "modelport_message_input_tokens_total{{{labels}}} {}\n",
+        "routepilot_message_input_tokens_total{{{labels}}} {}\n",
         message.usage.input_tokens_total
     ));
     output.push_str(&format!(
-        "modelport_message_output_tokens_total{{{labels}}} {}\n",
+        "routepilot_message_output_tokens_total{{{labels}}} {}\n",
         message.usage.output_tokens_total
     ));
     output.push_str(&format!(
-        "modelport_message_cache_write_tokens_total{{{labels}}} {}\n",
+        "routepilot_message_cache_write_tokens_total{{{labels}}} {}\n",
         message.usage.cache_write_tokens_total
     ));
     output.push_str(&format!(
-        "modelport_message_cache_read_tokens_total{{{labels}}} {}\n",
+        "routepilot_message_cache_read_tokens_total{{{labels}}} {}\n",
         message.usage.cache_read_tokens_total
     ));
     output.push_str(&format!(
-        "modelport_message_cost_estimate_usd_total{{{labels}}} {}\n",
+        "routepilot_message_cost_estimate_usd_total{{{labels}}} {}\n",
         message.usage.cost_estimate_usd_total
     ));
 }
@@ -581,56 +581,56 @@ mod tests {
 
         let rendered = metrics.render_prometheus();
 
-        assert!(rendered.contains("modelport_uptime_seconds"));
+        assert!(rendered.contains("routepilot_uptime_seconds"));
         assert!(rendered.contains(&format!(
-            r#"modelport_build_info{{version="{}""#,
+            r#"routepilot_build_info{{version="{}""#,
             crate::version::VERSION
         )));
-        assert!(rendered.contains(r#"modelport_route_requests_total{route="messages"} 1"#));
+        assert!(rendered.contains(r#"routepilot_route_requests_total{route="messages"} 1"#));
         assert_eq!(
             rendered
-                .matches(r#"modelport_route_requests_total{route="messages"} 1"#)
+                .matches(r#"routepilot_route_requests_total{route="messages"} 1"#)
                 .count(),
             1,
             "a Prometheus scrape must not contain duplicate route samples"
         );
         assert!(rendered.contains(
-            r#"modelport_message_requests_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 1"#
+            r#"routepilot_message_requests_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 1"#
         ));
         assert!(rendered.contains(
-            r#"modelport_message_input_tokens_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 3"#
+            r#"routepilot_message_input_tokens_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 3"#
         ));
         assert!(rendered.contains(
-            r#"modelport_message_output_tokens_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 4"#
+            r#"routepilot_message_output_tokens_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 4"#
         ));
         assert!(rendered.contains(
-            r#"modelport_message_cache_write_tokens_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 5"#
+            r#"routepilot_message_cache_write_tokens_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 5"#
         ));
         assert!(rendered.contains(
-            r#"modelport_message_cache_read_tokens_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 6"#
+            r#"routepilot_message_cache_read_tokens_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 6"#
         ));
         assert!(rendered.contains(
-            r#"modelport_message_cost_estimate_usd_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 0.000123"#
+            r#"routepilot_message_cost_estimate_usd_total{provider="mimo",model="mimo-v2.5-pro",traffic_class="business",stream="false"} 0.000123"#
         ));
-        assert!(rendered.contains(r#"modelport_message_latency_ms_bucket{le="100"} 1"#));
-        assert!(rendered.contains(r#"modelport_message_latency_ms_bucket{le="+Inf"} 1"#));
-        assert!(rendered.contains("modelport_message_latency_ms_sum 12"));
-        assert!(rendered.contains("modelport_message_latency_ms_count 1"));
+        assert!(rendered.contains(r#"routepilot_message_latency_ms_bucket{le="100"} 1"#));
+        assert!(rendered.contains(r#"routepilot_message_latency_ms_bucket{le="+Inf"} 1"#));
+        assert!(rendered.contains("routepilot_message_latency_ms_sum 12"));
+        assert!(rendered.contains("routepilot_message_latency_ms_count 1"));
         assert!(rendered.contains(
-            r#"modelport_inference_rejections_total{route="messages",phase="validation",reason="invalid_request"} 1"#
-        ));
-        assert!(rendered.contains(
-            r#"modelport_ledger_operation_failures_total{operation="request_finalization"} 1"#
+            r#"routepilot_inference_rejections_total{route="messages",phase="validation",reason="invalid_request"} 1"#
         ));
         assert!(rendered.contains(
-            r#"modelport_ledger_operation_degraded{operation="request_finalization"} 1"#
+            r#"routepilot_ledger_operation_failures_total{operation="request_finalization"} 1"#
         ));
-        assert!(rendered.contains("modelport_ledger_reconciled_requests_total 2"));
-        assert!(rendered.contains("modelport_ledger_reconciled_attempts_total 3"));
         assert!(rendered.contains(
-            r#"modelport_routing_decisions_total{mode="shadow",profile="balanced",provider="mimo"} 1"#
+            r#"routepilot_ledger_operation_degraded{operation="request_finalization"} 1"#
         ));
-        assert!(rendered.contains("modelport_routing_shadow_disagreements_total 1"));
+        assert!(rendered.contains("routepilot_ledger_reconciled_requests_total 2"));
+        assert!(rendered.contains("routepilot_ledger_reconciled_attempts_total 3"));
+        assert!(rendered.contains(
+            r#"routepilot_routing_decisions_total{mode="shadow",profile="balanced",provider="mimo"} 1"#
+        ));
+        assert!(rendered.contains("routepilot_routing_shadow_disagreements_total 1"));
         assert_eq!(
             metrics.degraded_ledger_operations(),
             vec!["request_finalization"]

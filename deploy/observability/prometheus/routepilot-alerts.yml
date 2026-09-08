@@ -1,0 +1,267 @@
+groups:
+  - name: routepilot.availability
+    rules:
+      - alert: RoutePilotMetricsTargetDown
+        expr: up{job="routepilot"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: gateway
+        annotations:
+          summary: RoutePilot metrics target is unreachable
+          description: Prometheus has been unable to scrape {{ $labels.instance }} for two minutes.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotmetricstargetdown
+
+      - alert: RoutePilotNotReady
+        expr: routepilot_gateway_ready == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: gateway
+        annotations:
+          summary: RoutePilot is alive but not ready for governed traffic
+          description: Fail-closed gateway dependencies on {{ $labels.instance }} have been unready for two minutes.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotnotready
+
+      # Optional independent endpoint probe. It remains silent when the
+      # Blackbox Exporter example has not been installed.
+      - alert: RoutePilotReadinessProbeFailed
+        expr: probe_success{job="routepilot-readiness"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: gateway
+        annotations:
+          summary: RoutePilot authenticated readiness endpoint is unreachable
+          description: The independent /readyz probe for {{ $labels.instance }} has failed for two minutes.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotnotready
+
+      - alert: RoutePilotDirtyBuildRunning
+        expr: routepilot_build_info{source_state!="clean"} == 1
+        for: 10m
+        labels:
+          severity: warning
+          component: release
+        annotations:
+          summary: A non-release RoutePilot build is running
+          description: Instance {{ $labels.instance }} reports source_state={{ $labels.source_state }}.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotdirtybuildrunning
+
+  - name: routepilot.storage
+    rules:
+      - alert: RoutePilotDatabaseNotReady
+        expr: routepilot_database_ready == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: RoutePilot cannot complete its PostgreSQL readiness query
+          description: PostgreSQL readiness is failing on {{ $labels.instance }}.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotnotready
+
+      - alert: RoutePilotDatabasePoolSaturated
+        expr: routepilot_database_pool_utilization_ratio > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: RoutePilot PostgreSQL pool utilization is above 85%
+          description: Instance {{ $labels.instance }} has sustained pool utilization of {{ $value | humanizePercentage }} for five minutes.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotdatabasepoolsaturated
+
+      - alert: RoutePilotLedgerOperationDegraded
+        expr: routepilot_ledger_operation_degraded == 1
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: RoutePilot ledger operation is degraded
+          description: The most recent {{ $labels.operation }} operation failed on {{ $labels.instance }}.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotledgeroperationdegraded
+
+      - alert: RoutePilotLedgerFailuresDetected
+        expr: increase(routepilot_ledger_operation_failures_total[10m]) > 0
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: RoutePilot ledger failures occurred
+          description: Operation {{ $labels.operation }} failed {{ $value | humanize }} time(s) in ten minutes on {{ $labels.instance }}.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotledgeroperationdegraded
+
+      - alert: RoutePilotPendingFinalizersStuck
+        expr: routepilot_ledger_pending_finalizers > 0
+        for: 2m
+        labels:
+          severity: critical
+          component: ledger
+        annotations:
+          summary: RoutePilot request finalizers are not settling
+          description: Instance {{ $labels.instance }} has {{ $value | humanize }} pending finalizer(s) after two minutes.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotpendingfinalizersstuck
+
+      - alert: RoutePilotExpiredLeasesReconciled
+        expr: >-
+          increase(routepilot_ledger_reconciled_requests_total[15m])
+          + increase(routepilot_ledger_reconciled_attempts_total[15m]) > 0
+        labels:
+          severity: warning
+          component: ledger
+        annotations:
+          summary: RoutePilot reconciled expired request leases
+          description: Instance {{ $labels.instance }} reconciled {{ $value | humanize }} expired request/attempt lease(s) in fifteen minutes.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotexpiredleasesreconciled
+
+  - name: routepilot.traffic
+    rules:
+      - alert: RoutePilotInferenceErrorRateHigh
+        expr: >-
+          (
+            sum(rate(routepilot_message_failures_total[10m]))
+            /
+            clamp_min(sum(rate(routepilot_message_requests_total[10m])), 0.001)
+          ) > 0.10
+          and
+          sum(increase(routepilot_message_requests_total[10m])) >= 20
+        for: 5m
+        labels:
+          severity: critical
+          component: gateway
+        annotations:
+          summary: RoutePilot inference error rate is above 10%
+          description: The ten-minute inference error ratio is {{ $value | humanizePercentage }}.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotinferenceerrorratehigh
+
+      - alert: RoutePilotInferenceP95LatencyHigh
+        expr: >-
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(routepilot_message_latency_ms_bucket[10m]))
+          ) > 120000
+          and
+          sum(increase(routepilot_message_latency_ms_count[10m])) >= 20
+        for: 10m
+        labels:
+          severity: warning
+          component: gateway
+        annotations:
+          summary: RoutePilot inference p95 latency is above two minutes
+          description: Global end-to-end p95 latency is {{ $value | humanize }} ms; compare with Provider generation time before changing gateway limits.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotinferencep95latencyhigh
+
+      - alert: RoutePilotAdmissionOrStreamPressure
+        expr: >-
+          sum by (phase) (
+            increase(routepilot_inference_rejections_total{phase=~"admission|concurrency"}[10m])
+          ) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: admission
+        annotations:
+          summary: RoutePilot is rejecting work at admission or stream concurrency
+          description: Phase {{ $labels.phase }} rejected {{ $value | humanize }} request(s) in ten minutes.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotadmissionorstreampressure
+
+      - alert: RoutePilotLocalInteractiveQueueWaiting
+        expr: routepilot_local_scheduler_oldest_interactive_wait_ms > 30000
+        for: 5m
+        labels:
+          severity: warning
+          component: queue
+        annotations:
+          summary: RoutePilot local interactive queue wait exceeds 30 seconds
+          description: The oldest interactive request on {{ $labels.instance }} has waited {{ $value | humanize }} ms.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotadmissionorstreampressure
+
+      - alert: RoutePilotLocalBatchQueueWaiting
+        expr: routepilot_local_scheduler_oldest_batch_wait_ms > 300000
+        for: 10m
+        labels:
+          severity: warning
+          component: queue
+        annotations:
+          summary: RoutePilot local batch queue wait exceeds five minutes
+          description: The oldest batch request on {{ $labels.instance }} has waited {{ $value | humanize }} ms.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotadmissionorstreampressure
+
+      - alert: RoutePilotStreamPermitsExhausted
+        expr: >-
+          routepilot_stream_permits_available == 0
+          and on (instance)
+          sum by (instance) (
+            increase(routepilot_inference_rejections_total{phase="concurrency"}[5m])
+          ) > 0
+        for: 2m
+        labels:
+          severity: warning
+          component: stream
+        annotations:
+          summary: RoutePilot stream permits are exhausted and requests are being rejected
+          description: Instance {{ $labels.instance }} has no stream permits and recorded concurrency rejection(s).
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotadmissionorstreampressure
+
+      - alert: RoutePilotQuotaRejectionsDetected
+        expr: >-
+          sum(increase(routepilot_inference_rejections_total{reason="quota_exceeded"}[15m])) > 0
+        labels:
+          severity: warning
+          component: budget
+        annotations:
+          summary: RoutePilot rejected requests for quota exhaustion
+          description: "{{ $value | humanize }} pre-ledger request(s) were rejected for quota exhaustion in fifteen minutes."
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotquotarejectionsdetected
+
+  - name: routepilot.providers
+    rules:
+      - alert: RoutePilotProviderUnavailable
+        expr: routepilot_provider_available == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: provider
+        annotations:
+          summary: A configured RoutePilot Provider is unavailable
+          description: Provider {{ $labels.provider }} has no usable credential or is cooling down on {{ $labels.instance }}.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotprovidererrorratehigh
+
+      - alert: RoutePilotProviderCoolingDown
+        expr: routepilot_provider_cooldown == 1
+        for: 2m
+        labels:
+          severity: warning
+          component: provider
+        annotations:
+          summary: RoutePilot has placed a Provider in cooldown
+          description: Provider {{ $labels.provider }} is cooling down on {{ $labels.instance }} after retryable/account failures.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotprovidererrorratehigh
+
+      - alert: RoutePilotProviderErrorRateHigh
+        expr: >-
+          (
+            sum by (provider) (
+              rate(routepilot_message_failures_total{provider!="__overflow__"}[10m])
+            )
+            /
+            clamp_min(
+              sum by (provider) (
+                rate(routepilot_message_requests_total{provider!="__overflow__"}[10m])
+              ),
+              0.001
+            )
+          ) > 0.20
+          and on (provider)
+          sum by (provider) (
+            increase(routepilot_message_requests_total{provider!="__overflow__"}[10m])
+          ) >= 10
+        for: 5m
+        labels:
+          severity: critical
+          component: provider
+        annotations:
+          summary: RoutePilot Provider error rate is above 20%
+          description: Provider {{ $labels.provider }} has a ten-minute error ratio of {{ $value | humanizePercentage }}.
+          runbook_url: https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md#routepilotprovidererrorratehigh

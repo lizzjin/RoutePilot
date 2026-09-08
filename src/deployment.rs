@@ -14,11 +14,11 @@ pub(crate) fn validate_environment() -> Result<(), AppError> {
     validate_finalization_drain_timeout()?;
     if database::enterprise_mode_enabled()? {
         validate_enterprise_security(EnterpriseSecurityValues {
-            cookie_secure: std::env::var("MODELPORT_ADMIN_COOKIE_SECURE").ok(),
-            require_control_api_keys: std::env::var("MODELPORT_REQUIRE_CONTROL_API_KEYS").ok(),
-            disable_csrf: std::env::var("MODELPORT_DISABLE_CSRF").ok(),
-            allowed_origins: std::env::var("MODELPORT_ALLOWED_ORIGINS").ok(),
-            trusted_proxies: std::env::var("MODELPORT_TRUSTED_PROXIES").ok(),
+            cookie_secure: std::env::var("ROUTEPILOT_ADMIN_COOKIE_SECURE").ok(),
+            require_control_api_keys: std::env::var("ROUTEPILOT_REQUIRE_CONTROL_API_KEYS").ok(),
+            disable_csrf: std::env::var("ROUTEPILOT_DISABLE_CSRF").ok(),
+            allowed_origins: std::env::var("ROUTEPILOT_ALLOWED_ORIGINS").ok(),
+            trusted_proxies: std::env::var("ROUTEPILOT_TRUSTED_PROXIES").ok(),
         })?;
     }
     Ok(())
@@ -35,17 +35,17 @@ struct EnterpriseSecurityValues {
 fn validate_enterprise_security(values: EnterpriseSecurityValues) -> Result<(), AppError> {
     if !flag_enabled(values.cookie_secure.as_deref()) {
         return Err(AppError::Config(
-            "MODELPORT_ENTERPRISE_MODE requires MODELPORT_ADMIN_COOKIE_SECURE=1".to_owned(),
+            "ROUTEPILOT_ENTERPRISE_MODE requires ROUTEPILOT_ADMIN_COOKIE_SECURE=1".to_owned(),
         ));
     }
     if !flag_enabled(values.require_control_api_keys.as_deref()) {
         return Err(AppError::Config(
-            "MODELPORT_ENTERPRISE_MODE requires MODELPORT_REQUIRE_CONTROL_API_KEYS=1".to_owned(),
+            "ROUTEPILOT_ENTERPRISE_MODE requires ROUTEPILOT_REQUIRE_CONTROL_API_KEYS=1".to_owned(),
         ));
     }
     if flag_enabled(values.disable_csrf.as_deref()) {
         return Err(AppError::Config(
-            "MODELPORT_DISABLE_CSRF is forbidden when MODELPORT_ENTERPRISE_MODE=1".to_owned(),
+            "ROUTEPILOT_DISABLE_CSRF is forbidden when ROUTEPILOT_ENTERPRISE_MODE=1".to_owned(),
         ));
     }
     let allowed_origins = values
@@ -55,7 +55,8 @@ fn validate_enterprise_security(values: EnterpriseSecurityValues) -> Result<(), 
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
             AppError::Config(
-                "MODELPORT_ENTERPRISE_MODE requires explicit MODELPORT_ALLOWED_ORIGINS".to_owned(),
+                "ROUTEPILOT_ENTERPRISE_MODE requires explicit ROUTEPILOT_ALLOWED_ORIGINS"
+                    .to_owned(),
             )
         })?;
     if allowed_origins
@@ -64,7 +65,7 @@ fn validate_enterprise_security(values: EnterpriseSecurityValues) -> Result<(), 
         .any(|origin| !origin.starts_with("https://"))
     {
         return Err(AppError::Config(
-            "MODELPORT_ENTERPRISE_MODE requires HTTPS-only MODELPORT_ALLOWED_ORIGINS".to_owned(),
+            "ROUTEPILOT_ENTERPRISE_MODE requires HTTPS-only ROUTEPILOT_ALLOWED_ORIGINS".to_owned(),
         ));
     }
     if values
@@ -74,14 +75,14 @@ fn validate_enterprise_security(values: EnterpriseSecurityValues) -> Result<(), 
         .is_none_or(str::is_empty)
     {
         return Err(AppError::Config(
-            "MODELPORT_ENTERPRISE_MODE requires explicit MODELPORT_TRUSTED_PROXIES".to_owned(),
+            "ROUTEPILOT_ENTERPRISE_MODE requires explicit ROUTEPILOT_TRUSTED_PROXIES".to_owned(),
         ));
     }
     Ok(())
 }
 
 fn validate_finalization_drain_timeout() -> Result<(), AppError> {
-    let Some(value) = std::env::var("MODELPORT_FINALIZATION_DRAIN_TIMEOUT_SECONDS")
+    let Some(value) = std::env::var("ROUTEPILOT_FINALIZATION_DRAIN_TIMEOUT_SECONDS")
         .ok()
         .filter(|value| !value.trim().is_empty())
     else {
@@ -89,12 +90,12 @@ fn validate_finalization_drain_timeout() -> Result<(), AppError> {
     };
     let seconds = value.parse::<u64>().map_err(|_| {
         AppError::Config(
-            "MODELPORT_FINALIZATION_DRAIN_TIMEOUT_SECONDS must be an integer".to_owned(),
+            "ROUTEPILOT_FINALIZATION_DRAIN_TIMEOUT_SECONDS must be an integer".to_owned(),
         )
     })?;
     if !(1..=300).contains(&seconds) {
         return Err(AppError::Config(
-            "MODELPORT_FINALIZATION_DRAIN_TIMEOUT_SECONDS must be between 1 and 300".to_owned(),
+            "ROUTEPILOT_FINALIZATION_DRAIN_TIMEOUT_SECONDS must be between 1 and 300".to_owned(),
         ));
     }
     Ok(())
@@ -118,7 +119,7 @@ mod tests {
             cookie_secure: Some("1".to_owned()),
             require_control_api_keys: Some("1".to_owned()),
             disable_csrf: None,
-            allowed_origins: Some("https://modelport.example.com".to_owned()),
+            allowed_origins: Some("https://routepilot.example.com".to_owned()),
             trusted_proxies: Some("10.0.0.0/8".to_owned()),
         }
     }
@@ -140,7 +141,7 @@ mod tests {
         assert!(validate_enterprise_security(values).is_err());
 
         let mut values = secure_values();
-        values.allowed_origins = Some("http://modelport.example.com".to_owned());
+        values.allowed_origins = Some("http://routepilot.example.com".to_owned());
         assert!(validate_enterprise_security(values).is_err());
 
         let mut values = secure_values();

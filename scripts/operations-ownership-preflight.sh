@@ -2,7 +2,7 @@
 set -euo pipefail
 
 die() {
-  printf '[modelport-ownership] ERROR: %s\n' "$*" >&2
+  printf '[routepilot-ownership] ERROR: %s\n' "$*" >&2
   exit 1
 }
 
@@ -69,7 +69,7 @@ if missing:
     raise SystemExit("ownership escalation is missing: " + ", ".join(missing))
 
 print(
-    "[modelport-ownership] preflight passed: "
+    "[routepilot-ownership] preflight passed: "
     f"owner={owner} backups={len(backups)} timezone={coverage['timezone']} "
     f"acknowledgement_minutes={ack}"
 )

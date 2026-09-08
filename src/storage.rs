@@ -23,7 +23,7 @@ use crate::{
     error::AppError,
 };
 
-const STATE_TABLE: &str = "modelport_state";
+const STATE_TABLE: &str = "routepilot_state";
 const STATE_SCHEMA_LOCK_KEY: i64 = 0x4d4f_4445_4c50_4f52;
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -88,7 +88,7 @@ impl JsonStore {
     pub fn open(namespace: &str) -> Result<Self, AppError> {
         let database_url = database_url().ok_or_else(|| {
             AppError::Config(
-                "MODELPORT_DATABASE_URL is required; current releases store auth and control state in PostgreSQL"
+                "ROUTEPILOT_DATABASE_URL is required; current releases store auth and control state in PostgreSQL"
                     .to_owned(),
             )
         })?;
@@ -395,7 +395,7 @@ fn spawn_postgres_worker(
 ) -> Result<mpsc::Sender<PostgresCommand>, AppError> {
     let (command_sender, command_receiver) = mpsc::channel::<PostgresCommand>();
     let (ready_sender, ready_receiver) = mpsc::channel::<Result<(), String>>();
-    let thread_name = format!("modelport-postgres-{namespace}");
+    let thread_name = format!("routepilot-postgres-{namespace}");
     thread::Builder::new().name(thread_name).spawn({
         let namespace = namespace.clone();
         move || {
@@ -571,7 +571,7 @@ mod tests {
     fn temporary_test_directory(label: &str) -> PathBuf {
         let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "modelport-storage-{label}-{}-{sequence}",
+            "routepilot-storage-{label}-{}-{sequence}",
             std::process::id()
         ))
     }
@@ -611,12 +611,12 @@ mod tests {
 
     #[tokio::test]
     async fn postgres_state_cas_allows_exactly_one_concurrent_writer() {
-        let Ok(database_url) = std::env::var("MODELPORT_TEST_DATABASE_URL") else {
+        let Ok(database_url) = std::env::var("ROUTEPILOT_TEST_DATABASE_URL") else {
             return;
         };
         let pool = connect_pool(&database_url, Some(4))
             .await
-            .expect("connect to MODELPORT_TEST_DATABASE_URL");
+            .expect("connect to ROUTEPILOT_TEST_DATABASE_URL");
         initialize_postgres(&pool)
             .await
             .expect("initialize versioned state table");
@@ -659,12 +659,12 @@ mod tests {
 
     #[tokio::test]
     async fn postgres_state_batch_cas_is_atomic() {
-        let Ok(database_url) = std::env::var("MODELPORT_TEST_DATABASE_URL") else {
+        let Ok(database_url) = std::env::var("ROUTEPILOT_TEST_DATABASE_URL") else {
             return;
         };
         let pool = connect_pool(&database_url, Some(2))
             .await
-            .expect("connect to MODELPORT_TEST_DATABASE_URL");
+            .expect("connect to ROUTEPILOT_TEST_DATABASE_URL");
         initialize_postgres(&pool)
             .await
             .expect("initialize versioned state table");

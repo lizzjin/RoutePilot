@@ -29,9 +29,9 @@ esac
 
 load_env
 
-dashboard_url="${MODELPORT_DASHBOARD_URL:-http://127.0.0.1:33002}"
-admin_username="${MODELPORT_ADMIN_USERNAME:-admin}"
-admin_password="${MODELPORT_ADMIN_PASSWORD:-}"
+dashboard_url="${ROUTEPILOT_DASHBOARD_URL:-http://127.0.0.1:33002}"
+admin_username="${ROUTEPILOT_ADMIN_USERNAME:-admin}"
+admin_password="${ROUTEPILOT_ADMIN_PASSWORD:-}"
 acceptance_model="$(default_upstream_model)"
 
 cookie_file="$(mktemp)"
@@ -47,17 +47,17 @@ created_team_id=""
 cleanup() {
   if [[ -n "$created_key_id" ]]; then
     curl_local -sS -m 10 -b "$cookie_file" \
-      -H 'X-ModelPort-CSRF: 1' \
+      -H 'X-RoutePilot-CSRF: 1' \
       -X DELETE "$(base_url)/admin/api-keys/$created_key_id" >/dev/null 2>&1 || true
   fi
   if [[ -n "$created_user_id" ]]; then
     curl_local -sS -m 10 -b "$cookie_file" \
-      -H 'X-ModelPort-CSRF: 1' \
+      -H 'X-RoutePilot-CSRF: 1' \
       -X DELETE "$(base_url)/admin/users/$created_user_id" >/dev/null 2>&1 || true
   fi
   if [[ -n "$created_team_id" ]]; then
     curl_local -sS -m 10 -b "$cookie_file" \
-      -H 'X-ModelPort-CSRF: 1' \
+      -H 'X-RoutePilot-CSRF: 1' \
       -X DELETE "$(base_url)/admin/teams/$created_team_id" >/dev/null 2>&1 || true
   fi
   rm -f "${temp_files[@]}"
@@ -114,7 +114,7 @@ expect_status() {
   fi
 }
 
-modelport_cli() {
+routepilot_cli() {
   if [[ -x "$RELEASE_BIN" ]]; then
     "$RELEASE_BIN" "$@"
   elif [[ -x "$DEBUG_BIN" ]]; then
@@ -134,14 +134,14 @@ admin_json() {
       -o "$body_file" -w '%{http_code}' \
       -X "$method" \
       -H 'Content-Type: application/json' \
-      -H 'X-ModelPort-CSRF: 1' \
+      -H 'X-RoutePilot-CSRF: 1' \
       "$(base_url)$path" \
       -d "$payload"
   else
     curl_local -sS -m 20 -b "$cookie_file" -c "$cookie_file" \
       -o "$body_file" -w '%{http_code}' \
       -X "$method" \
-      -H 'X-ModelPort-CSRF: 1' \
+      -H 'X-RoutePilot-CSRF: 1' \
       "$(base_url)$path"
   fi
 }
@@ -154,7 +154,7 @@ message_payload() {
     process.stdout.write(JSON.stringify({
       model,
       max_tokens: maxTokens,
-      messages: [{ role: "user", content: "Reply with: ModelPort acceptance OK." }]
+      messages: [{ role: "user", content: "Reply with: RoutePilot acceptance OK." }]
     }));
   ' "$acceptance_model" "$max_tokens"
 }
@@ -163,7 +163,7 @@ require_command curl
 require_command node
 
 if [[ -z "$admin_password" ]]; then
-  die "MODELPORT_ADMIN_PASSWORD is required for acceptance login"
+  die "ROUTEPILOT_ADMIN_PASSWORD is required for acceptance login"
 fi
 
 if health_ok; then
@@ -198,7 +198,7 @@ models_status="$(
   curl_local -sS -m 10 \
     -o "$body_file" \
     -w '%{http_code}' \
-    -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+    -H "x-api-key: $ROUTEPILOT_AUTH_TOKEN" \
     "$(base_url)/v1/models"
 )"
 expect_status "$models_status" "200" "authenticated /v1/models"
@@ -210,7 +210,7 @@ create_user_payload="$(
     const username = process.argv[1];
     process.stdout.write(JSON.stringify({
       username,
-      email: `${username}@modelport.local`,
+      email: `${username}@routepilot.local`,
       password: "acceptance-password-123",
       role: "user",
       status: "active"
@@ -301,8 +301,8 @@ else
   die "audit log is empty after acceptance operations"
 fi
 
-modelport_cli backup export "$backup_file" >/dev/null
-modelport_cli backup validate "$backup_file" >/dev/null
+routepilot_cli backup export "$backup_file" >/dev/null
+routepilot_cli backup validate "$backup_file" >/dev/null
 ok "backup export and validate succeeded"
 
 if [[ "$upstream" == "1" ]]; then
@@ -347,4 +347,4 @@ status="$(admin_json DELETE "/admin/teams/$created_team_id")"
 expect_status "$status" "200" "cleanup acceptance team"
 created_team_id=""
 
-printf '\nModelPort acceptance passed for personal/small-team deployment.\n'
+printf '\nRoutePilot acceptance passed for personal/small-team deployment.\n'

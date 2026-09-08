@@ -1,7 +1,7 @@
--- Authoritative incident ledger for the optional, read-only ModelPort
+-- Authoritative incident ledger for the optional, read-only RoutePilot
 -- operations agent. The agent never connects to this database directly;
 -- observations arrive through the versioned internal API.
-CREATE TABLE modelport_ops_incidents (
+CREATE TABLE routepilot_ops_incidents (
     incident_id TEXT PRIMARY KEY,
     event_key TEXT NOT NULL UNIQUE,
     detector_type TEXT NOT NULL,
@@ -17,13 +17,13 @@ CREATE TABLE modelport_ops_incidents (
     occurrence_count BIGINT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT modelport_ops_incidents_severity_check
+    CONSTRAINT routepilot_ops_incidents_severity_check
         CHECK (severity IN ('SEV-1', 'SEV-2', 'SEV-3', 'SEV-4')),
-    CONSTRAINT modelport_ops_incidents_status_check
+    CONSTRAINT routepilot_ops_incidents_status_check
         CHECK (status IN (
             'open', 'acknowledged', 'mitigating', 'monitoring', 'resolved', 'suppressed'
         )),
-    CONSTRAINT modelport_ops_incidents_text_check CHECK (
+    CONSTRAINT routepilot_ops_incidents_text_check CHECK (
         length(event_key) BETWEEN 1 AND 240
         AND length(detector_type) BETWEEN 1 AND 80
         AND length(title) BETWEEN 1 AND 240
@@ -33,36 +33,36 @@ CREATE TABLE modelport_ops_incidents (
     )
 );
 
-CREATE INDEX modelport_ops_incidents_status_seen_idx
-    ON modelport_ops_incidents (status, last_seen_at DESC, incident_id DESC);
+CREATE INDEX routepilot_ops_incidents_status_seen_idx
+    ON routepilot_ops_incidents (status, last_seen_at DESC, incident_id DESC);
 
-CREATE TABLE modelport_ops_incident_evidence (
+CREATE TABLE routepilot_ops_incident_evidence (
     evidence_id TEXT PRIMARY KEY,
-    incident_id TEXT NOT NULL REFERENCES modelport_ops_incidents (incident_id)
+    incident_id TEXT NOT NULL REFERENCES routepilot_ops_incidents (incident_id)
         ON DELETE CASCADE,
     evidence_hash TEXT NOT NULL,
     observed_at TIMESTAMPTZ NOT NULL,
     evidence JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT modelport_ops_incident_evidence_unique
+    CONSTRAINT routepilot_ops_incident_evidence_unique
         UNIQUE (incident_id, evidence_hash),
-    CONSTRAINT modelport_ops_incident_evidence_hash_check
+    CONSTRAINT routepilot_ops_incident_evidence_hash_check
         CHECK (length(evidence_hash) = 64)
 );
 
-CREATE INDEX modelport_ops_incident_evidence_incident_idx
-    ON modelport_ops_incident_evidence (incident_id, observed_at DESC, evidence_id DESC);
+CREATE INDEX routepilot_ops_incident_evidence_incident_idx
+    ON routepilot_ops_incident_evidence (incident_id, observed_at DESC, evidence_id DESC);
 
-CREATE TABLE modelport_ops_incident_timeline (
+CREATE TABLE routepilot_ops_incident_timeline (
     timeline_id TEXT PRIMARY KEY,
-    incident_id TEXT NOT NULL REFERENCES modelport_ops_incidents (incident_id)
+    incident_id TEXT NOT NULL REFERENCES routepilot_ops_incidents (incident_id)
         ON DELETE CASCADE,
     event_type TEXT NOT NULL,
     actor_id TEXT NOT NULL,
     actor_name TEXT NOT NULL,
     message TEXT NOT NULL,
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT modelport_ops_incident_timeline_text_check CHECK (
+    CONSTRAINT routepilot_ops_incident_timeline_text_check CHECK (
         length(event_type) BETWEEN 1 AND 80
         AND length(actor_id) BETWEEN 1 AND 160
         AND length(actor_name) BETWEEN 1 AND 160
@@ -70,10 +70,10 @@ CREATE TABLE modelport_ops_incident_timeline (
     )
 );
 
-CREATE INDEX modelport_ops_incident_timeline_incident_idx
-    ON modelport_ops_incident_timeline (incident_id, occurred_at, timeline_id);
+CREATE INDEX routepilot_ops_incident_timeline_incident_idx
+    ON routepilot_ops_incident_timeline (incident_id, occurred_at, timeline_id);
 
-CREATE TABLE modelport_ops_agent_heartbeats (
+CREATE TABLE routepilot_ops_agent_heartbeats (
     instance_id TEXT PRIMARY KEY,
     agent_version TEXT NOT NULL,
     mode TEXT NOT NULL,
@@ -86,9 +86,9 @@ CREATE TABLE modelport_ops_agent_heartbeats (
     model_last_success_at TIMESTAMPTZ,
     observed_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT modelport_ops_agent_heartbeats_mode_check
+    CONSTRAINT routepilot_ops_agent_heartbeats_mode_check
         CHECK (mode IN ('disabled', 'replay', 'shadow', 'read_only')),
-    CONSTRAINT modelport_ops_agent_heartbeats_text_check CHECK (
+    CONSTRAINT routepilot_ops_agent_heartbeats_text_check CHECK (
         length(instance_id) BETWEEN 1 AND 160
         AND length(agent_version) BETWEEN 1 AND 80
         AND length(rule_set_version) BETWEEN 1 AND 80
@@ -99,9 +99,9 @@ CREATE TABLE modelport_ops_agent_heartbeats (
     )
 );
 
-CREATE TABLE modelport_ops_incident_feedback (
+CREATE TABLE routepilot_ops_incident_feedback (
     feedback_id TEXT PRIMARY KEY,
-    incident_id TEXT NOT NULL REFERENCES modelport_ops_incidents (incident_id)
+    incident_id TEXT NOT NULL REFERENCES routepilot_ops_incidents (incident_id)
         ON DELETE CASCADE,
     actor_id TEXT NOT NULL,
     actor_name TEXT NOT NULL,
@@ -110,14 +110,14 @@ CREATE TABLE modelport_ops_incident_feedback (
     recommendation_adopted BOOLEAN,
     note TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT modelport_ops_incident_feedback_outcome_check
+    CONSTRAINT routepilot_ops_incident_feedback_outcome_check
         CHECK (outcome IN ('true_positive', 'false_positive', 'needs_review')),
-    CONSTRAINT modelport_ops_incident_feedback_text_check CHECK (
+    CONSTRAINT routepilot_ops_incident_feedback_text_check CHECK (
         length(actor_id) BETWEEN 1 AND 160
         AND length(actor_name) BETWEEN 1 AND 160
         AND (note IS NULL OR length(note) <= 1000)
     )
 );
 
-CREATE INDEX modelport_ops_incident_feedback_incident_idx
-    ON modelport_ops_incident_feedback (incident_id, created_at DESC);
+CREATE INDEX routepilot_ops_incident_feedback_incident_idx
+    ON routepilot_ops_incident_feedback (incident_id, created_at DESC);

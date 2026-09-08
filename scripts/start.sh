@@ -9,7 +9,7 @@ load_env
 require_runtime_dir
 
 if health_ok; then
-  log "ModelPort is already running at $(base_url)"
+  log "RoutePilot is already running at $(base_url)"
   exit 0
 fi
 
@@ -20,11 +20,11 @@ else
   rm -f "$PID_FILE"
 fi
 
-if ! release_is_fresh || [[ "${MODELPORT_FORCE_BUILD:-0}" == "1" ]]; then
+if ! release_is_fresh || [[ "${ROUTEPILOT_FORCE_BUILD:-0}" == "1" ]]; then
   "$SCRIPT_DIR/build-release.sh"
 fi
 
-log "starting ModelPort in background at $(base_url)"
+log "starting RoutePilot in background at $(base_url)"
 log "log file: $LOG_FILE"
 if command -v setsid >/dev/null 2>&1; then
   setsid "$RELEASE_BIN" >> "$LOG_FILE" 2>&1 < /dev/null &
@@ -35,10 +35,10 @@ pid="$!"
 echo "$pid" > "$PID_FILE"
 
 if wait_for_health 30 1; then
-  log "ModelPort started, pid $(cat "$PID_FILE")"
+  log "RoutePilot started, pid $(cat "$PID_FILE")"
   "$SCRIPT_DIR/status.sh"
 else
-  log "ModelPort failed to become healthy"
+  log "RoutePilot failed to become healthy"
   tail -n 80 "$LOG_FILE" >&2 || true
   exit 1
 fi

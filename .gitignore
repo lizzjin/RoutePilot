@@ -2,7 +2,7 @@
 .env
 .env.backup-*
 /config.toml
-.modelport/
+.routepilot/
 /backups/
 .claude/settings.json
 dashboard/playwright-report/

@@ -199,19 +199,19 @@ fn default_routing_activation_percent() -> u8 {
 }
 
 fn apply_smart_routing_env_override(config: &mut SmartRoutingConfig) -> Result<(), AppError> {
-    if let Some(value) = env_value("MODELPORT_SMART_ROUTING_MODE") {
+    if let Some(value) = env_value("ROUTEPILOT_SMART_ROUTING_MODE") {
         config.mode = match value.trim().to_ascii_lowercase().as_str() {
             "off" => SmartRoutingMode::Off,
             "shadow" => SmartRoutingMode::Shadow,
             "active" => SmartRoutingMode::Active,
             _ => {
                 return Err(AppError::Config(
-                    "MODELPORT_SMART_ROUTING_MODE must be off, shadow, or active".to_owned(),
+                    "ROUTEPILOT_SMART_ROUTING_MODE must be off, shadow, or active".to_owned(),
                 ));
             }
         };
     }
-    if let Some(value) = env_value("MODELPORT_SMART_ROUTING_PROFILE") {
+    if let Some(value) = env_value("ROUTEPILOT_SMART_ROUTING_PROFILE") {
         config.default_profile = match value.trim().to_ascii_lowercase().as_str() {
             "quality" => RoutingProfile::Quality,
             "balanced" => RoutingProfile::Balanced,
@@ -219,22 +219,22 @@ fn apply_smart_routing_env_override(config: &mut SmartRoutingConfig) -> Result<(
             "latency" => RoutingProfile::Latency,
             _ => {
                 return Err(AppError::Config(
-                    "MODELPORT_SMART_ROUTING_PROFILE must be quality, balanced, economy, or latency"
+                    "ROUTEPILOT_SMART_ROUTING_PROFILE must be quality, balanced, economy, or latency"
                         .to_owned(),
                 ));
             }
         };
     }
-    if let Some(value) = env_value("MODELPORT_SMART_ROUTING_ACTIVATION_PERCENT") {
+    if let Some(value) = env_value("ROUTEPILOT_SMART_ROUTING_ACTIVATION_PERCENT") {
         config.activation_percent = value.parse::<u8>().map_err(|_| {
             AppError::Config(
-                "MODELPORT_SMART_ROUTING_ACTIVATION_PERCENT must be an integer from 0 to 100"
+                "ROUTEPILOT_SMART_ROUTING_ACTIVATION_PERCENT must be an integer from 0 to 100"
                     .to_owned(),
             )
         })?;
         if config.activation_percent > 100 {
             return Err(AppError::Config(
-                "MODELPORT_SMART_ROUTING_ACTIVATION_PERCENT must be from 0 to 100".to_owned(),
+                "ROUTEPILOT_SMART_ROUTING_ACTIVATION_PERCENT must be from 0 to 100".to_owned(),
             ));
         }
     }
@@ -858,10 +858,10 @@ struct ProviderSpec {
 }
 
 const OPENAI_LEGACY_ENV_MIGRATIONS: &[(&str, &str)] = &[
-    ("MODELPORT_OPENAI_BASE_URL", "OPENAI_BASE_URL"),
-    ("MODELPORT_OPENAI_API_KEY", "OPENAI_API_KEY"),
-    ("MODELPORT_OPENAI_MODEL", "OPENAI_MODEL"),
-    ("MODELPORT_OPENAI_MODELS", "OPENAI_MODELS"),
+    ("ROUTEPILOT_OPENAI_BASE_URL", "OPENAI_BASE_URL"),
+    ("ROUTEPILOT_OPENAI_API_KEY", "OPENAI_API_KEY"),
+    ("ROUTEPILOT_OPENAI_MODEL", "OPENAI_MODEL"),
+    ("ROUTEPILOT_OPENAI_MODELS", "OPENAI_MODELS"),
 ];
 
 impl AppConfig {
@@ -936,7 +936,7 @@ impl AppConfig {
             routing_aliases.sort();
             for alias in routing_aliases {
                 if seen.insert(alias.clone()) {
-                    models.push((alias, "ModelPort Smart Router".to_owned()));
+                    models.push((alias, "RoutePilot Smart Router".to_owned()));
                 }
             }
         }
@@ -949,11 +949,11 @@ impl AppConfig {
 
         if self.auth_token.is_none() {
             issues.push(ConfigIssue::warning(
-                "client authentication is disabled; only use MODELPORT_ALLOW_NO_AUTH=1 in isolated local testing",
+                "client authentication is disabled; only use ROUTEPILOT_ALLOW_NO_AUTH=1 in isolated local testing",
             ));
         } else if self.auth_token.as_deref().is_some_and(is_placeholder_value) {
             issues.push(ConfigIssue::error(
-                "MODELPORT_AUTH_TOKEN or ANTHROPIC_AUTH_TOKEN is still a placeholder",
+                "ROUTEPILOT_AUTH_TOKEN or ANTHROPIC_AUTH_TOKEN is still a placeholder",
             ));
         } else if self
             .auth_token
@@ -967,18 +967,18 @@ impl AppConfig {
 
         if !self.bind_addr.ip().is_loopback() {
             issues.push(ConfigIssue::warning(format!(
-                "MODELPORT_BIND is {bind}; keep a reverse proxy or firewall in front when not binding loopback",
+                "ROUTEPILOT_BIND is {bind}; keep a reverse proxy or firewall in front when not binding loopback",
                 bind = self.bind_addr
             )));
         }
         if self.max_request_body_bytes == 0 {
             issues.push(ConfigIssue::error(
-                "MODELPORT_MAX_REQUEST_BODY_BYTES must be greater than 0",
+                "ROUTEPILOT_MAX_REQUEST_BODY_BYTES must be greater than 0",
             ));
         }
         if self.max_concurrent_requests == 0 {
             issues.push(ConfigIssue::error(
-                "MODELPORT_MAX_CONCURRENT_REQUESTS must be greater than 0",
+                "ROUTEPILOT_MAX_CONCURRENT_REQUESTS must be greater than 0",
             ));
         }
         validate_runtime_guardrail_env(&mut issues);
@@ -1025,17 +1025,17 @@ impl AppConfig {
             );
             validate_cpa_provider(id, provider, &mut issues);
             if id == "openai"
-                && openai_base_url_targets_modelport_listener(&provider.base_url, self.bind_addr)
+                && openai_base_url_targets_routepilot_listener(&provider.base_url, self.bind_addr)
             {
                 issues.push(ConfigIssue::error(format!(
-                    "provider `openai` base_url `{}` points back to this ModelPort listener; set server-side `MODELPORT_OPENAI_BASE_URL` to the upstream OpenAI API and reserve `OPENAI_BASE_URL` for client processes",
+                    "provider `openai` base_url `{}` points back to this RoutePilot listener; set server-side `ROUTEPILOT_OPENAI_BASE_URL` to the upstream OpenAI API and reserve `OPENAI_BASE_URL` for client processes",
                     provider.base_url
                 )));
             }
         }
 
         if self.providers.get("openai").is_some_and(|provider| {
-            provider.api_key_env.as_deref() == Some("MODELPORT_OPENAI_API_KEY")
+            provider.api_key_env.as_deref() == Some("ROUTEPILOT_OPENAI_API_KEY")
         }) {
             validate_openai_legacy_env_fallbacks(&mut issues);
         }
@@ -1255,12 +1255,12 @@ impl AppConfig {
         let bind_addr = resolve_bind(server.bind)?;
         let max_request_body_bytes = resolve_usize_env(
             server.max_request_body_bytes,
-            "MODELPORT_MAX_REQUEST_BODY_BYTES",
+            "ROUTEPILOT_MAX_REQUEST_BODY_BYTES",
             DEFAULT_MAX_REQUEST_BODY_BYTES,
         );
         let max_concurrent_requests = resolve_usize_env(
             server.max_concurrent_requests,
-            "MODELPORT_MAX_CONCURRENT_REQUESTS",
+            "ROUTEPILOT_MAX_CONCURRENT_REQUESTS",
             DEFAULT_MAX_CONCURRENT_REQUESTS,
         );
         let auth_token = require_auth_token(
@@ -1323,7 +1323,7 @@ impl AppConfig {
             if api_key_required
                 && api_key.is_none()
                 && configured_default_provider.as_deref() != Some(id.as_str())
-                && !env_flag("MODELPORT_INCLUDE_UNAVAILABLE_PROVIDERS")
+                && !env_flag("ROUTEPILOT_INCLUDE_UNAVAILABLE_PROVIDERS")
             {
                 continue;
             }
@@ -1395,15 +1395,15 @@ impl AppConfig {
     }
 
     fn from_env_defaults() -> Result<Self, AppError> {
-        let bind_addr = resolve_bind(service_env_value("MODELPORT_BIND"))?;
+        let bind_addr = resolve_bind(service_env_value("ROUTEPILOT_BIND"))?;
         let max_request_body_bytes = resolve_usize_env(
             None,
-            "MODELPORT_MAX_REQUEST_BODY_BYTES",
+            "ROUTEPILOT_MAX_REQUEST_BODY_BYTES",
             DEFAULT_MAX_REQUEST_BODY_BYTES,
         );
         let max_concurrent_requests = resolve_usize_env(
             None,
-            "MODELPORT_MAX_CONCURRENT_REQUESTS",
+            "ROUTEPILOT_MAX_CONCURRENT_REQUESTS",
             DEFAULT_MAX_CONCURRENT_REQUESTS,
         );
         let mut providers = HashMap::new();
@@ -1427,7 +1427,7 @@ impl AppConfig {
 
         let aliases = default_aliases();
         let default_provider =
-            env_value("MODELPORT_DEFAULT_PROVIDER").unwrap_or_else(|| "deepseek".to_owned());
+            env_value("ROUTEPILOT_DEFAULT_PROVIDER").unwrap_or_else(|| "deepseek".to_owned());
         let mut smart_routing = SmartRoutingConfig::default();
         apply_smart_routing_env_override(&mut smart_routing)?;
 
@@ -1477,7 +1477,7 @@ impl RuntimeConfig {
 
         if error_count > 0 {
             return Err(AppError::Config(format!(
-                "configuration reload rejected with {error_count} error(s); run `model-port config validate` for details"
+                "configuration reload rejected with {error_count} error(s); run `routepilot config validate` for details"
             )));
         }
 
@@ -1706,15 +1706,15 @@ const OPTIONAL_PROVIDER_SPECS: &[ProviderSpec] = &[
         id: "openai",
         display_name: "OpenAI",
         protocol: ProviderProtocol::OpenaiCompat,
-        base_url_env: "MODELPORT_OPENAI_BASE_URL",
+        base_url_env: "ROUTEPILOT_OPENAI_BASE_URL",
         base_url_env_fallbacks: &["OPENAI_BASE_URL"],
         default_base_url: "https://api.openai.com/v1",
-        api_key_env: Some("MODELPORT_OPENAI_API_KEY"),
+        api_key_env: Some("ROUTEPILOT_OPENAI_API_KEY"),
         api_key_env_fallbacks: &["OPENAI_API_KEY"],
         api_key_required: true,
-        default_model_env: "MODELPORT_OPENAI_MODEL",
+        default_model_env: "ROUTEPILOT_OPENAI_MODEL",
         default_model: "gpt-5.5",
-        models_env: "MODELPORT_OPENAI_MODELS",
+        models_env: "ROUTEPILOT_OPENAI_MODELS",
         models: &[
             "gpt-5.5",
             "gpt-5.5-pro",
@@ -2176,7 +2176,7 @@ fn default_fidelity_mode(
 fn default_buffer_stream_text(provider_id: &str) -> bool {
     env_bool(
         &format!(
-            "MODELPORT_{}_BUFFER_STREAM_TEXT",
+            "ROUTEPILOT_{}_BUFFER_STREAM_TEXT",
             env_key_fragment(provider_id)
         ),
         false,
@@ -2238,7 +2238,7 @@ fn insert_provider(
 }
 
 fn should_enable_provider(spec: &ProviderSpec) -> bool {
-    if env_flag(&format!("MODELPORT_ENABLE_{}", env_key_fragment(spec.id))) {
+    if env_flag(&format!("ROUTEPILOT_ENABLE_{}", env_key_fragment(spec.id))) {
         return true;
     }
 
@@ -2261,7 +2261,7 @@ fn should_enable_custom_openai_provider() -> bool {
     env_value(CUSTOM_OPENAI_SPEC.base_url_env).is_some()
         || env_value(CUSTOM_OPENAI_SPEC.default_model_env).is_some()
         || env_value("CUSTOM_OPENAI_API_KEY").is_some()
-        || env_flag("MODELPORT_ENABLE_CUSTOM")
+        || env_flag("ROUTEPILOT_ENABLE_CUSTOM")
 }
 
 fn extend_mimo_models_from_claude_env(models: &mut Vec<String>) {
@@ -2307,8 +2307,8 @@ fn openai_legacy_env_name(provider_id: &str, preferred_name: &str) -> Option<&'s
     }
 
     match preferred_name {
-        "MODELPORT_OPENAI_MODEL" => Some("OPENAI_MODEL"),
-        "MODELPORT_OPENAI_MODELS" => Some("OPENAI_MODELS"),
+        "ROUTEPILOT_OPENAI_MODEL" => Some("OPENAI_MODEL"),
+        "ROUTEPILOT_OPENAI_MODELS" => Some("OPENAI_MODELS"),
         _ => None,
     }
 }
@@ -2322,7 +2322,7 @@ fn validate_openai_legacy_env_fallbacks(issues: &mut Vec<ConfigIssue>) {
 
     if !active_fallbacks.is_empty() {
         issues.push(ConfigIssue::warning(format!(
-            "provider `openai` is using legacy client-style environment fallback(s): {}; migrate the ModelPort server to `MODELPORT_OPENAI_*` names so client `OPENAI_*` settings cannot be mistaken for upstream configuration",
+            "provider `openai` is using legacy client-style environment fallback(s): {}; migrate the RoutePilot server to `ROUTEPILOT_OPENAI_*` names so client `OPENAI_*` settings cannot be mistaken for upstream configuration",
             active_fallbacks.join(", ")
         )));
     }
@@ -2344,96 +2344,96 @@ fn select_env_value(process_value: Option<String>, file_value: Option<String>) -
 fn validate_runtime_guardrail_env(issues: &mut Vec<ConfigIssue>) {
     for (name, requirement) in [
         (
-            "MODELPORT_MAX_REQUEST_BODY_BYTES",
+            "ROUTEPILOT_MAX_REQUEST_BODY_BYTES",
             NumericEnvRequirement::NonZeroUsize,
         ),
         (
-            "MODELPORT_MAX_CONCURRENT_REQUESTS",
+            "ROUTEPILOT_MAX_CONCURRENT_REQUESTS",
             NumericEnvRequirement::NonZeroUsize,
         ),
         (
-            "MODELPORT_MAX_CONCURRENT_STREAMS",
+            "ROUTEPILOT_MAX_CONCURRENT_STREAMS",
             NumericEnvRequirement::NonZeroUsize,
         ),
         (
-            "MODELPORT_RATE_LIMIT_WINDOW_SECONDS",
+            "ROUTEPILOT_RATE_LIMIT_WINDOW_SECONDS",
             NumericEnvRequirement::NonZeroU64,
         ),
         (
-            "MODELPORT_RATE_LIMIT_GLOBAL_PER_MINUTE",
+            "ROUTEPILOT_RATE_LIMIT_GLOBAL_PER_MINUTE",
             NumericEnvRequirement::U32,
         ),
         (
-            "MODELPORT_RATE_LIMIT_API_KEY_PER_MINUTE",
+            "ROUTEPILOT_RATE_LIMIT_API_KEY_PER_MINUTE",
             NumericEnvRequirement::U32,
         ),
         (
-            "MODELPORT_RATE_LIMIT_IP_PER_MINUTE",
+            "ROUTEPILOT_RATE_LIMIT_IP_PER_MINUTE",
             NumericEnvRequirement::U32,
         ),
         (
-            "MODELPORT_RATE_LIMIT_PROVIDER_PER_MINUTE",
+            "ROUTEPILOT_RATE_LIMIT_PROVIDER_PER_MINUTE",
             NumericEnvRequirement::U32,
         ),
         (
-            "MODELPORT_RATE_LIMIT_MODEL_PER_MINUTE",
+            "ROUTEPILOT_RATE_LIMIT_MODEL_PER_MINUTE",
             NumericEnvRequirement::U32,
         ),
         (
-            "MODELPORT_MAX_MODEL_NAME_CHARS",
+            "ROUTEPILOT_MAX_MODEL_NAME_CHARS",
             NumericEnvRequirement::NonZeroUsize,
         ),
         (
-            "MODELPORT_MAX_MESSAGES",
+            "ROUTEPILOT_MAX_MESSAGES",
             NumericEnvRequirement::NonZeroUsize,
         ),
         (
-            "MODELPORT_MAX_MESSAGES_JSON_CHARS",
+            "ROUTEPILOT_MAX_MESSAGES_JSON_CHARS",
             NumericEnvRequirement::NonZeroUsize,
         ),
         (
-            "MODELPORT_MAX_SYSTEM_JSON_CHARS",
+            "ROUTEPILOT_MAX_SYSTEM_JSON_CHARS",
             NumericEnvRequirement::NonZeroUsize,
         ),
-        ("MODELPORT_MAX_TOOLS", NumericEnvRequirement::NonZeroUsize),
+        ("ROUTEPILOT_MAX_TOOLS", NumericEnvRequirement::NonZeroUsize),
         (
-            "MODELPORT_MAX_TOOLS_JSON_CHARS",
+            "ROUTEPILOT_MAX_TOOLS_JSON_CHARS",
             NumericEnvRequirement::NonZeroUsize,
         ),
         (
-            "MODELPORT_MAX_OUTPUT_TOKENS",
+            "ROUTEPILOT_MAX_OUTPUT_TOKENS",
             NumericEnvRequirement::NonZeroU64,
         ),
         (
-            "MODELPORT_HTTP_CONNECT_TIMEOUT_SECS",
+            "ROUTEPILOT_HTTP_CONNECT_TIMEOUT_SECS",
             NumericEnvRequirement::NonZeroU64,
         ),
         (
-            "MODELPORT_HTTP_REQUEST_TIMEOUT_SECS",
+            "ROUTEPILOT_HTTP_REQUEST_TIMEOUT_SECS",
             NumericEnvRequirement::NonZeroU64,
         ),
         (
-            "MODELPORT_HTTP_STREAM_IDLE_TIMEOUT_SECS",
+            "ROUTEPILOT_HTTP_STREAM_IDLE_TIMEOUT_SECS",
             NumericEnvRequirement::NonZeroU64,
         ),
         (
-            "MODELPORT_HTTP_MAX_RESPONSE_BYTES",
+            "ROUTEPILOT_HTTP_MAX_RESPONSE_BYTES",
             NumericEnvRequirement::NonZeroUsize,
         ),
         (
-            "MODELPORT_HTTP_SSE_MAX_LINE_BYTES",
+            "ROUTEPILOT_HTTP_SSE_MAX_LINE_BYTES",
             NumericEnvRequirement::NonZeroUsize,
         ),
         (
-            "MODELPORT_HTTP_SSE_MAX_EVENT_BYTES",
+            "ROUTEPILOT_HTTP_SSE_MAX_EVENT_BYTES",
             NumericEnvRequirement::NonZeroUsize,
         ),
         (
-            "MODELPORT_HTTP_SSE_MAX_STREAM_BYTES",
+            "ROUTEPILOT_HTTP_SSE_MAX_STREAM_BYTES",
             NumericEnvRequirement::NonZeroUsize,
         ),
         (
-            "MODELPORT_ADMIN_SESSION_TTL_SECONDS",
+            "ROUTEPILOT_ADMIN_SESSION_TTL_SECONDS",
             NumericEnvRequirement::NonZeroU64,
         ),
     ] {
@@ -2496,7 +2496,7 @@ fn env_file_values() -> HashMap<String, String> {
 }
 
 fn env_file_path() -> Option<PathBuf> {
-    if let Some(path) = env::var_os("MODELPORT_ENV_FILE") {
+    if let Some(path) = env::var_os("ROUTEPILOT_ENV_FILE") {
         return Some(PathBuf::from(path));
     }
 
@@ -2580,12 +2580,12 @@ fn env_key_fragment(id: &str) -> String {
 }
 
 fn config_path() -> PathBuf {
-    if let Some(path) = service_env_value("MODELPORT_CONFIG") {
+    if let Some(path) = service_env_value("ROUTEPILOT_CONFIG") {
         return PathBuf::from(path);
     }
 
     let home = env::var_os("HOME").unwrap_or_else(|| ".".into());
-    PathBuf::from(home).join(".config/modelport/config.toml")
+    PathBuf::from(home).join(".config/routepilot/config.toml")
 }
 
 fn resolve_bind(value: Option<String>) -> Result<SocketAddr, AppError> {
@@ -2642,7 +2642,7 @@ fn validate_provider(
     if let Err(err) = validate_provider_base_url_policy(
         id,
         &provider.base_url,
-        env_flag("MODELPORT_ALLOW_PRIVATE_PROVIDER_URLS"),
+        env_flag("ROUTEPILOT_ALLOW_PRIVATE_PROVIDER_URLS"),
     ) {
         issues.push(ConfigIssue::error(format!(
             "provider `{id}` base_url is not allowed: {err}"
@@ -3118,7 +3118,7 @@ pub(crate) fn validate_provider_static_header(name: &str, value: &str) -> Result
                 | "openai-organization"
                 | "openai-project"
         )
-        || ["x-forwarded-", "x-b3-", "sec-", "x-modelport-"]
+        || ["x-forwarded-", "x-b3-", "sec-", "x-routepilot-"]
             .iter()
             .any(|prefix| normalized.starts_with(prefix))
     {
@@ -3185,7 +3185,7 @@ fn validate_cpa_provider(
         }
         "cpa_claude" if path.ends_with("/v1") => {
             issues.push(ConfigIssue::error(
-                "provider `cpa_claude` base_url must omit `/v1`; ModelPort appends `/v1/messages`"
+                "provider `cpa_claude` base_url must omit `/v1`; RoutePilot appends `/v1/messages`"
                     .to_owned(),
             ));
         }
@@ -3229,10 +3229,10 @@ fn validate_provider_base_url_policy(
         && !provider_allows_loopback_base_url(provider_id)
         && !provider_allows_trusted_internal_http(provider_id, host)
         && (!allow_private_provider_urls || !private_literal_host)
-        && !env_flag("MODELPORT_ALLOW_INSECURE_PROVIDER_HTTP")
+        && !env_flag("ROUTEPILOT_ALLOW_INSECURE_PROVIDER_HTTP")
     {
         return Err(
-            "remote provider URLs must use https; set MODELPORT_ALLOW_INSECURE_PROVIDER_HTTP=1 only for a trusted internal HTTP upstream"
+            "remote provider URLs must use https; set ROUTEPILOT_ALLOW_INSECURE_PROVIDER_HTTP=1 only for a trusted internal HTTP upstream"
                 .to_owned(),
         );
     }
@@ -3261,7 +3261,7 @@ fn validate_provider_base_url_policy(
         }
         if private_or_metadata_ip(ip) {
             return Err(format!(
-                "non-public or special-use IP `{ip}` requires MODELPORT_ALLOW_PRIVATE_PROVIDER_URLS=1"
+                "non-public or special-use IP `{ip}` requires ROUTEPILOT_ALLOW_PRIVATE_PROVIDER_URLS=1"
             ));
         }
     }
@@ -3269,7 +3269,7 @@ fn validate_provider_base_url_policy(
     Ok(())
 }
 
-fn openai_base_url_targets_modelport_listener(base_url: &str, bind_addr: SocketAddr) -> bool {
+fn openai_base_url_targets_routepilot_listener(base_url: &str, bind_addr: SocketAddr) -> bool {
     let Ok(url) = Url::parse(base_url) else {
         return false;
     };
@@ -3384,16 +3384,16 @@ pub(crate) fn is_placeholder_value(value: &str) -> bool {
 }
 
 fn default_auth_token() -> Option<String> {
-    env_value("MODELPORT_AUTH_TOKEN").or_else(|| env_value("ANTHROPIC_AUTH_TOKEN"))
+    env_value("ROUTEPILOT_AUTH_TOKEN").or_else(|| env_value("ANTHROPIC_AUTH_TOKEN"))
 }
 
 fn require_auth_token(auth_token: Option<String>) -> Result<Option<String>, AppError> {
-    if auth_token.is_some() || env_flag("MODELPORT_ALLOW_NO_AUTH") {
+    if auth_token.is_some() || env_flag("ROUTEPILOT_ALLOW_NO_AUTH") {
         return Ok(auth_token);
     }
 
     Err(AppError::Config(
-        "MODELPORT_AUTH_TOKEN or ANTHROPIC_AUTH_TOKEN is required; set MODELPORT_ALLOW_NO_AUTH=1 only for isolated local testing".to_owned(),
+        "ROUTEPILOT_AUTH_TOKEN or ANTHROPIC_AUTH_TOKEN is required; set ROUTEPILOT_ALLOW_NO_AUTH=1 only for isolated local testing".to_owned(),
     ))
 }
 
@@ -3890,19 +3890,19 @@ mod tests {
         let mut issues = Vec::new();
 
         validate_numeric_env_value(
-            "MODELPORT_MAX_MESSAGES",
+            "ROUTEPILOT_MAX_MESSAGES",
             "0",
             NumericEnvRequirement::NonZeroUsize,
             &mut issues,
         );
         validate_numeric_env_value(
-            "MODELPORT_RATE_LIMIT_API_KEY_PER_MINUTE",
+            "ROUTEPILOT_RATE_LIMIT_API_KEY_PER_MINUTE",
             "-1",
             NumericEnvRequirement::U32,
             &mut issues,
         );
         validate_numeric_env_value(
-            "MODELPORT_RATE_LIMIT_WINDOW_SECONDS",
+            "ROUTEPILOT_RATE_LIMIT_WINDOW_SECONDS",
             "abc",
             NumericEnvRequirement::NonZeroU64,
             &mut issues,
@@ -4183,7 +4183,7 @@ mod tests {
             groups: HashMap::from([(
                 "general".to_owned(),
                 RouteGroupConfig {
-                    aliases: vec!["modelport-auto".to_owned()],
+                    aliases: vec!["routepilot-auto".to_owned()],
                     default_profile: Some(RoutingProfile::Economy),
                     candidates: vec![
                         RouteCandidateConfig {
@@ -4216,9 +4216,9 @@ mod tests {
             config
                 .model_list()
                 .iter()
-                .any(|(model, _)| model == "modelport-auto")
+                .any(|(model, _)| model == "routepilot-auto")
         );
-        let (group_id, group) = config.smart_route_group("modelport-auto").unwrap();
+        let (group_id, group) = config.smart_route_group("routepilot-auto").unwrap();
         assert_eq!(group_id, "general");
         assert_eq!(group.candidates.len(), 2);
     }
@@ -4370,16 +4370,16 @@ mod tests {
             "Content-Type",
             "X-Forwarded-For",
             "Baggage",
-            "X-ModelPort-Request-ID",
+            "X-RoutePilot-Request-ID",
         ] {
             assert!(
                 validate_provider_static_header(name, "unsafe").is_err(),
                 "{name} must remain adapter-owned"
             );
         }
-        validate_provider_static_header("HTTP-Referer", "https://modelport.example")
+        validate_provider_static_header("HTTP-Referer", "https://routepilot.example")
             .expect("non-sensitive attribution header should be accepted");
-        validate_provider_static_header("X-Title", "ModelPort")
+        validate_provider_static_header("X-Title", "RoutePilot")
             .expect("non-sensitive attribution header should be accepted");
     }
 }

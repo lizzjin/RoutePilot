@@ -184,7 +184,7 @@ fn build_public_model_rows(config: &AppConfig, require_static_credential: bool) 
                     models.push(json!({
                         "id": alias,
                         "type": "model",
-                        "owned_by": "modelport-router",
+                        "owned_by": "routepilot-router",
                         "display_name": format!("{} (Smart Router)", alias),
                     }));
                 }
@@ -367,13 +367,13 @@ async fn count_tokens_inner(
     let classification = request_routing_header(
         headers,
         &DATA_CLASSIFICATION,
-        "x-modelport-data-classification",
+        "x-routepilot-data-classification",
         32,
     )?
     .map(|value| {
         DataClassification::parse(&value).ok_or_else(|| {
             AppError::InvalidRequest(
-                "x-modelport-data-classification must be unknown, sensitive, internal, or public"
+                "x-routepilot-data-classification must be unknown, sensitive, internal, or public"
                     .to_owned(),
             )
         })
@@ -383,13 +383,13 @@ async fn count_tokens_inner(
     let requested_mode = request_routing_header(
         headers,
         &HYBRID_MODE,
-        "x-modelport-hybrid-mode",
+        "x-routepilot-hybrid-mode",
         32,
     )?
     .map(|value| {
         HybridMode::parse(&value).ok_or_else(|| {
             AppError::InvalidRequest(
-                "x-modelport-hybrid-mode must be local_strict, local_first, balanced, or cloud_first"
+                "x-routepilot-hybrid-mode must be local_strict, local_first, balanced, or cloud_first"
                     .to_owned(),
             )
         })
@@ -583,7 +583,7 @@ async fn handle_inference(
     let classification = match request_routing_header(
         &headers,
         &DATA_CLASSIFICATION,
-        "x-modelport-data-classification",
+        "x-routepilot-data-classification",
         32,
     ) {
         Ok(Some(value)) => DataClassification::parse(&value).ok_or_else(|| {
@@ -592,7 +592,7 @@ async fn handle_inference(
                 route_name,
                 "governance",
                 AppError::InvalidRequest(
-                    "x-modelport-data-classification must be unknown, sensitive, internal, or public"
+                    "x-routepilot-data-classification must be unknown, sensitive, internal, or public"
                         .to_owned(),
                 ),
                 started,
@@ -612,7 +612,7 @@ async fn handle_inference(
     let requested_hybrid_mode = match request_routing_header(
         &headers,
         &HYBRID_MODE,
-        "x-modelport-hybrid-mode",
+        "x-routepilot-hybrid-mode",
         32,
     ) {
         Ok(Some(value)) => Some(HybridMode::parse(&value).ok_or_else(|| {
@@ -621,7 +621,7 @@ async fn handle_inference(
                 route_name,
                 "governance",
                 AppError::InvalidRequest(
-                    "x-modelport-hybrid-mode must be local_strict, local_first, balanced, or cloud_first"
+                    "x-routepilot-hybrid-mode must be local_strict, local_first, balanced, or cloud_first"
                         .to_owned(),
                 ),
                 started,
@@ -656,7 +656,7 @@ async fn handle_inference(
     let routing_profile = match request_routing_header(
         &headers,
         &ROUTING_PROFILE,
-        "x-modelport-routing-profile",
+        "x-routepilot-routing-profile",
         32,
     ) {
         Ok(value) => value,
@@ -673,7 +673,7 @@ async fn handle_inference(
     let routing_session_id = match request_routing_header(
         &headers,
         &ROUTING_SESSION_ID,
-        "x-modelport-session-id",
+        "x-routepilot-session-id",
         128,
     ) {
         Ok(value) => value,
@@ -696,7 +696,7 @@ async fn handle_inference(
                     route_name,
                     "validation",
                     AppError::InvalidRequest(
-                        "x-modelport-routing-profile must be quality, balanced, economy, or latency"
+                        "x-routepilot-routing-profile must be quality, balanced, economy, or latency"
                             .to_owned(),
                     ),
                     started,
@@ -1402,13 +1402,13 @@ fn request_tenant_scope(
                 let value = value.trim();
                 if !crate::domain::valid_tenant_identifier(value) {
                     return Err(AppError::InvalidRequest(
-                        "ModelPort tenant scope headers contain an invalid identifier".to_owned(),
+                        "RoutePilot tenant scope headers contain an invalid identifier".to_owned(),
                     ));
                 }
                 Ok(Some(value))
             }
             Some(Err(_)) => Err(AppError::InvalidRequest(
-                "ModelPort tenant scope headers must be ASCII".to_owned(),
+                "RoutePilot tenant scope headers must be ASCII".to_owned(),
             )),
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1422,10 +1422,10 @@ fn request_tenant_scope(
             Ok(bound_tenant.clone())
         }
         [Some(_), Some(_), Some(_)] => Err(AppError::Forbidden(
-            "requested ModelPort tenant scope is not bound to this API key".to_owned(),
+            "requested RoutePilot tenant scope is not bound to this API key".to_owned(),
         )),
         _ => Err(AppError::InvalidRequest(
-            "x-modelport-organization-id, x-modelport-project-id, and x-modelport-environment-id must be supplied together"
+            "x-routepilot-organization-id, x-routepilot-project-id, and x-routepilot-environment-id must be supplied together"
                 .to_owned(),
         )),
     }
@@ -1707,7 +1707,7 @@ fn request_traffic_class(headers: &HeaderMap) -> Result<String, AppError> {
         "synthetic" => Ok("synthetic".to_owned()),
         "diagnostic" => Ok("diagnostic".to_owned()),
         _ => Err(AppError::InvalidRequest(
-            "x-modelport-traffic-class must be business, batch, synthetic, or diagnostic"
+            "x-routepilot-traffic-class must be business, batch, synthetic, or diagnostic"
                 .to_owned(),
         )),
     }
@@ -2178,7 +2178,7 @@ fn insert_safe_response_header(
 
 fn validate_message_request(request: &AnthropicRequest) -> Result<(), AppError> {
     validate_anthropic_input(request)?;
-    let max_output_tokens = env_u64("MODELPORT_MAX_OUTPUT_TOKENS", 131_072);
+    let max_output_tokens = env_u64("ROUTEPILOT_MAX_OUTPUT_TOKENS", 131_072);
     let max_tokens = request
         .max_tokens
         .ok_or_else(|| AppError::InvalidRequest("max_tokens is required".to_owned()))?;
@@ -2200,12 +2200,12 @@ fn validate_count_tokens_request(request: &AnthropicCountTokensRequest) -> Resul
 }
 
 fn validate_anthropic_input(request: &AnthropicRequest) -> Result<(), AppError> {
-    let max_model_name_chars = env_usize("MODELPORT_MAX_MODEL_NAME_CHARS", 240);
-    let max_messages = env_usize("MODELPORT_MAX_MESSAGES", 200);
-    let max_messages_json_chars = env_usize("MODELPORT_MAX_MESSAGES_JSON_CHARS", 2 * 1024 * 1024);
-    let max_system_json_chars = env_usize("MODELPORT_MAX_SYSTEM_JSON_CHARS", 256 * 1024);
-    let max_tools = env_usize("MODELPORT_MAX_TOOLS", 256);
-    let max_tools_json_chars = env_usize("MODELPORT_MAX_TOOLS_JSON_CHARS", 1024 * 1024);
+    let max_model_name_chars = env_usize("ROUTEPILOT_MAX_MODEL_NAME_CHARS", 240);
+    let max_messages = env_usize("ROUTEPILOT_MAX_MESSAGES", 200);
+    let max_messages_json_chars = env_usize("ROUTEPILOT_MAX_MESSAGES_JSON_CHARS", 2 * 1024 * 1024);
+    let max_system_json_chars = env_usize("ROUTEPILOT_MAX_SYSTEM_JSON_CHARS", 256 * 1024);
+    let max_tools = env_usize("ROUTEPILOT_MAX_TOOLS", 256);
+    let max_tools_json_chars = env_usize("ROUTEPILOT_MAX_TOOLS_JSON_CHARS", 1024 * 1024);
 
     if request.model.trim().is_empty() {
         return Err(AppError::InvalidRequest("model is required".to_owned()));
@@ -2300,12 +2300,12 @@ fn validate_anthropic_input(request: &AnthropicRequest) -> Result<(), AppError> 
 }
 
 fn validate_openai_chat_request(request: &OpenAiChatRequest) -> Result<(), AppError> {
-    let max_model_name_chars = env_usize("MODELPORT_MAX_MODEL_NAME_CHARS", 240);
-    let max_messages = env_usize("MODELPORT_MAX_MESSAGES", 200);
-    let max_messages_json_chars = env_usize("MODELPORT_MAX_MESSAGES_JSON_CHARS", 2 * 1024 * 1024);
-    let max_tools = env_usize("MODELPORT_MAX_TOOLS", 256);
-    let max_tools_json_chars = env_usize("MODELPORT_MAX_TOOLS_JSON_CHARS", 1024 * 1024);
-    let max_output_tokens = env_u64("MODELPORT_MAX_OUTPUT_TOKENS", 131_072);
+    let max_model_name_chars = env_usize("ROUTEPILOT_MAX_MODEL_NAME_CHARS", 240);
+    let max_messages = env_usize("ROUTEPILOT_MAX_MESSAGES", 200);
+    let max_messages_json_chars = env_usize("ROUTEPILOT_MAX_MESSAGES_JSON_CHARS", 2 * 1024 * 1024);
+    let max_tools = env_usize("ROUTEPILOT_MAX_TOOLS", 256);
+    let max_tools_json_chars = env_usize("ROUTEPILOT_MAX_TOOLS_JSON_CHARS", 1024 * 1024);
+    let max_output_tokens = env_u64("ROUTEPILOT_MAX_OUTPUT_TOKENS", 131_072);
 
     if request.model.trim().is_empty() {
         return Err(AppError::InvalidRequest("model is required".to_owned()));
@@ -2453,12 +2453,12 @@ mod tests {
         );
         let mut headers = HeaderMap::new();
         headers.insert(
-            "x-modelport-traffic-class",
+            "x-routepilot-traffic-class",
             HeaderValue::from_static("synthetic"),
         );
         assert_eq!(request_traffic_class(&headers).unwrap(), "synthetic");
         headers.insert(
-            "x-modelport-traffic-class",
+            "x-routepilot-traffic-class",
             HeaderValue::from_static("arbitrary-cardinality"),
         );
         assert!(request_traffic_class(&headers).is_err());

@@ -35,7 +35,7 @@ pub(super) fn settings_row(state: &AppState) -> Value {
         },
         "auth": {
             "enabled": config.auth_token.is_some(),
-            "tokenEnvVar": "MODELPORT_AUTH_TOKEN",
+            "tokenEnvVar": "ROUTEPILOT_AUTH_TOKEN",
             "allowNoAuth": config.auth_token.is_none(),
         },
         "gateway": {
@@ -56,8 +56,8 @@ pub(super) fn settings_row(state: &AppState) -> Value {
         "rateLimits": {
             "maxConcurrentRequests": config.max_concurrent_requests,
             "maxRequestBodyBytes": config.max_request_body_bytes,
-            "requestTimeoutSecs": env_u64("MODELPORT_HTTP_REQUEST_TIMEOUT_SECS", 600),
-            "streamIdleTimeoutSecs": env_u64("MODELPORT_HTTP_STREAM_IDLE_TIMEOUT_SECS", 300),
+            "requestTimeoutSecs": env_u64("ROUTEPILOT_HTTP_REQUEST_TIMEOUT_SECS", 600),
+            "streamIdleTimeoutSecs": env_u64("ROUTEPILOT_HTTP_STREAM_IDLE_TIMEOUT_SECS", 300),
         },
         "runtime": runtime_row(state, &config),
         "setup": setup_row(state, &config),
@@ -114,7 +114,7 @@ fn setup_row(state: &AppState, config: &AppConfig) -> Value {
             "API 认证",
             config.auth_token.is_some(),
             "已启用请求认证",
-            "未配置 MODELPORT_AUTH_TOKEN",
+            "未配置 ROUTEPILOT_AUTH_TOKEN",
         ),
         setup_check(
             "providers",

@@ -1,4 +1,4 @@
-name: modelport
+name: routepilot
 
 # Versioned Small-Team Beta release profile. This file is used from a tagged
 # source checkout and pulls signed GHCR images instead of compiling source.
@@ -6,28 +6,28 @@ services:
   postgres:
     image: postgres:18.4-alpine
     environment:
-      POSTGRES_DB: ${MODELPORT_POSTGRES_DB:-modelport}
-      POSTGRES_USER: ${MODELPORT_POSTGRES_USER:-modelport}
-      POSTGRES_PASSWORD: ${MODELPORT_POSTGRES_PASSWORD:?set MODELPORT_POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${ROUTEPILOT_POSTGRES_DB:-routepilot}
+      POSTGRES_USER: ${ROUTEPILOT_POSTGRES_USER:-routepilot}
+      POSTGRES_PASSWORD: ${ROUTEPILOT_POSTGRES_PASSWORD:?set ROUTEPILOT_POSTGRES_PASSWORD in .env}
       PGDATA: /var/lib/postgresql/18/docker
     volumes:
-      - modelport-postgres-18:/var/lib/postgresql
+      - routepilot-postgres-18:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
-    stop_grace_period: ${MODELPORT_POSTGRES_STOP_GRACE_PERIOD:-1m}
+    stop_grace_period: ${ROUTEPILOT_POSTGRES_STOP_GRACE_PERIOD:-1m}
     logging:
       driver: json-file
       options:
-        max-size: ${MODELPORT_LOG_MAX_SIZE:-10m}
-        max-file: "${MODELPORT_LOG_MAX_FILES:-5}"
+        max-size: ${ROUTEPILOT_LOG_MAX_SIZE:-10m}
+        max-file: "${ROUTEPILOT_LOG_MAX_FILES:-5}"
 
-  modelport:
-    image: ${MODELPORT_IMAGE:-ghcr.io/tiammomo/modelport:0.1.0}
-    pull_policy: ${MODELPORT_PULL_POLICY:-missing}
+  routepilot:
+    image: ${ROUTEPILOT_IMAGE:-ghcr.io/lizzjin/routepilot:0.1.0}
+    pull_policy: ${ROUTEPILOT_PULL_POLICY:-missing}
     init: true
     read_only: true
     cap_drop:
@@ -37,28 +37,28 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
     env_file:
-      - ${MODELPORT_COMPOSE_ENV_FILE:-../../.env}
+      - ${ROUTEPILOT_COMPOSE_ENV_FILE:-../../.env}
     environment:
-      MODELPORT_BIND: 0.0.0.0:38082
-      MODELPORT_ENV_FILE: /config/.env
-      MODELPORT_STATE_DIR: /data
-      MODELPORT_CONFIG: /config/config.toml
-      MODELPORT_DATABASE_URL: ${MODELPORT_DATABASE_URL:-postgres://${MODELPORT_POSTGRES_USER:-modelport}:${MODELPORT_POSTGRES_PASSWORD:?set MODELPORT_POSTGRES_PASSWORD in .env}@postgres:5432/${MODELPORT_POSTGRES_DB:-modelport}}
-      MODELPORT_TRUSTED_PROXIES: ${MODELPORT_TRUSTED_PROXIES:-127.0.0.1,::1,172.16.0.0/12}
-      MODELPORT_ALLOWED_ORIGINS: ${MODELPORT_ALLOWED_ORIGINS:-}
-      RUST_LOG: ${RUST_LOG:-model_port=info,tower_http=info}
+      ROUTEPILOT_BIND: 0.0.0.0:38082
+      ROUTEPILOT_ENV_FILE: /config/.env
+      ROUTEPILOT_STATE_DIR: /data
+      ROUTEPILOT_CONFIG: /config/config.toml
+      ROUTEPILOT_DATABASE_URL: ${ROUTEPILOT_DATABASE_URL:-postgres://${ROUTEPILOT_POSTGRES_USER:-routepilot}:${ROUTEPILOT_POSTGRES_PASSWORD:?set ROUTEPILOT_POSTGRES_PASSWORD in .env}@postgres:5432/${ROUTEPILOT_POSTGRES_DB:-routepilot}}
+      ROUTEPILOT_TRUSTED_PROXIES: ${ROUTEPILOT_TRUSTED_PROXIES:-127.0.0.1,::1,172.16.0.0/12}
+      ROUTEPILOT_ALLOWED_ORIGINS: ${ROUTEPILOT_ALLOWED_ORIGINS:-}
+      RUST_LOG: ${RUST_LOG:-routepilot=info,tower_http=info}
     extra_hosts:
       - host.docker.internal:host-gateway
     ports:
-      - ${MODELPORT_API_PUBLISH:-127.0.0.1:38082}:38082
+      - ${ROUTEPILOT_API_PUBLISH:-127.0.0.1:38082}:38082
     volumes:
-      - modelport-data:/data
+      - routepilot-data:/data
       - type: bind
-        source: ${MODELPORT_COMPOSE_ENV_FILE:-../../.env}
+        source: ${ROUTEPILOT_COMPOSE_ENV_FILE:-../../.env}
         target: /config/.env
         read_only: true
       - type: bind
-        source: ${MODELPORT_CONFIG_FILE:-../../config.toml}
+        source: ${ROUTEPILOT_CONFIG_FILE:-../../config.toml}
         target: /config/config.toml
         read_only: true
     depends_on:
@@ -68,7 +68,7 @@ services:
       test:
         - CMD-SHELL
         - >-
-          probe_key="$${MODELPORT_HEALTHCHECK_API_KEY:-$${MODELPORT_AUTH_TOKEN:-}}";
+          probe_key="$${ROUTEPILOT_HEALTHCHECK_API_KEY:-$${ROUTEPILOT_AUTH_TOKEN:-}}";
           test -n "$${probe_key}" &&
           curl -fsS -H "x-api-key: $${probe_key}" http://127.0.0.1:38082/readyz >/dev/null
       interval: 15s
@@ -76,16 +76,16 @@ services:
       start_period: 20s
       retries: 4
     restart: unless-stopped
-    stop_grace_period: ${MODELPORT_STOP_GRACE_PERIOD:-11m}
+    stop_grace_period: ${ROUTEPILOT_STOP_GRACE_PERIOD:-11m}
     logging:
       driver: json-file
       options:
-        max-size: ${MODELPORT_LOG_MAX_SIZE:-10m}
-        max-file: "${MODELPORT_LOG_MAX_FILES:-5}"
+        max-size: ${ROUTEPILOT_LOG_MAX_SIZE:-10m}
+        max-file: "${ROUTEPILOT_LOG_MAX_FILES:-5}"
 
   dashboard:
-    image: ${MODELPORT_DASHBOARD_IMAGE:-ghcr.io/tiammomo/modelport-dashboard:0.1.0}
-    pull_policy: ${MODELPORT_PULL_POLICY:-missing}
+    image: ${ROUTEPILOT_DASHBOARD_IMAGE:-ghcr.io/lizzjin/routepilot-dashboard:0.1.0}
+    pull_policy: ${ROUTEPILOT_PULL_POLICY:-missing}
     init: true
     read_only: true
     cap_drop:
@@ -95,57 +95,57 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=32m
     ports:
-      - ${MODELPORT_DASHBOARD_PUBLISH:-127.0.0.1:33002}:8080
+      - ${ROUTEPILOT_DASHBOARD_PUBLISH:-127.0.0.1:33002}:8080
     restart: unless-stopped
-    stop_grace_period: ${MODELPORT_DASHBOARD_STOP_GRACE_PERIOD:-30s}
+    stop_grace_period: ${ROUTEPILOT_DASHBOARD_STOP_GRACE_PERIOD:-30s}
     logging:
       driver: json-file
       options:
-        max-size: ${MODELPORT_LOG_MAX_SIZE:-10m}
-        max-file: "${MODELPORT_LOG_MAX_FILES:-5}"
+        max-size: ${ROUTEPILOT_LOG_MAX_SIZE:-10m}
+        max-file: "${ROUTEPILOT_LOG_MAX_FILES:-5}"
 
   ops-agent:
     profiles: ["ops-agent"]
-    image: ${MODELPORT_OPS_AGENT_IMAGE:-ghcr.io/tiammomo/modelport-ops-agent:0.1.0}
-    pull_policy: ${MODELPORT_PULL_POLICY:-missing}
+    image: ${ROUTEPILOT_OPS_AGENT_IMAGE:-ghcr.io/lizzjin/routepilot-ops-agent:0.1.0}
+    pull_policy: ${ROUTEPILOT_PULL_POLICY:-missing}
     init: true
     read_only: true
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
-    cpus: ${MODELPORT_OPS_CPU_LIMIT:-0.50}
-    mem_limit: ${MODELPORT_OPS_MEMORY_LIMIT:-256m}
-    pids_limit: ${MODELPORT_OPS_PIDS_LIMIT:-128}
+    cpus: ${ROUTEPILOT_OPS_CPU_LIMIT:-0.50}
+    mem_limit: ${ROUTEPILOT_OPS_MEMORY_LIMIT:-256m}
+    pids_limit: ${ROUTEPILOT_OPS_PIDS_LIMIT:-128}
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
     environment:
-      MODELPORT_OPS_BASE_URL: http://modelport:38082
-      MODELPORT_OPS_API_KEY: ${MODELPORT_OPS_API_KEY:-}
-      MODELPORT_OPS_MODEL_API_KEY: ${MODELPORT_OPS_MODEL_API_KEY:-}
-      MODELPORT_OPS_MODE: ${MODELPORT_OPS_MODE:-shadow}
-      MODELPORT_OPS_INTERVAL_SECONDS: ${MODELPORT_OPS_INTERVAL_SECONDS:-300}
-      MODELPORT_OPS_WEBHOOK_URL: ${MODELPORT_OPS_WEBHOOK_URL:-}
-      RUST_LOG: ${MODELPORT_OPS_RUST_LOG:-modelport_ops_agent=info}
+      ROUTEPILOT_OPS_BASE_URL: http://routepilot:38082
+      ROUTEPILOT_OPS_API_KEY: ${ROUTEPILOT_OPS_API_KEY:-}
+      ROUTEPILOT_OPS_MODEL_API_KEY: ${ROUTEPILOT_OPS_MODEL_API_KEY:-}
+      ROUTEPILOT_OPS_MODE: ${ROUTEPILOT_OPS_MODE:-shadow}
+      ROUTEPILOT_OPS_INTERVAL_SECONDS: ${ROUTEPILOT_OPS_INTERVAL_SECONDS:-300}
+      ROUTEPILOT_OPS_WEBHOOK_URL: ${ROUTEPILOT_OPS_WEBHOOK_URL:-}
+      RUST_LOG: ${ROUTEPILOT_OPS_RUST_LOG:-routepilot_ops_agent=info}
     volumes:
-      - modelport-ops-spool:/var/lib/modelport-ops
+      - routepilot-ops-spool:/var/lib/routepilot-ops
     depends_on:
-      modelport:
+      routepilot:
         condition: service_healthy
     restart: unless-stopped
     stop_grace_period: 30s
     logging:
       driver: json-file
       options:
-        max-size: ${MODELPORT_LOG_MAX_SIZE:-10m}
-        max-file: "${MODELPORT_LOG_MAX_FILES:-5}"
+        max-size: ${ROUTEPILOT_LOG_MAX_SIZE:-10m}
+        max-file: "${ROUTEPILOT_LOG_MAX_FILES:-5}"
 
 volumes:
-  modelport-data:
-  modelport-postgres-18:
-  modelport-ops-spool:
+  routepilot-data:
+  routepilot-postgres-18:
+  routepilot-ops-spool:
 
 networks:
   default:
-    name: ${MODELPORT_NETWORK_NAME:-modelport_default}
+    name: ${ROUTEPILOT_NETWORK_NAME:-routepilot_default}
     external: true

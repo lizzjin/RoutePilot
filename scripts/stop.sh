@@ -35,12 +35,12 @@ while read -r listen_pid; do
 done < <(listen_pids)
 
 if [[ "${#pids[@]}" -eq 0 ]]; then
-  log "ModelPort is not running"
+  log "RoutePilot is not running"
   rm -f "$PID_FILE"
   exit 0
 fi
 
-log "stopping ModelPort pids: ${pids[*]}"
+log "stopping RoutePilot pids: ${pids[*]}"
 kill "${pids[@]}" >/dev/null 2>&1 || true
 
 for _ in $(seq 1 10); do

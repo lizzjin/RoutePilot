@@ -1,15 +1,15 @@
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const REVISION: &str = match option_env!("MODELPORT_BUILD_REVISION") {
+pub const REVISION: &str = match option_env!("ROUTEPILOT_BUILD_REVISION") {
     Some(value) => value,
     None => "unknown",
 };
-pub const SOURCE_STATE: &str = match option_env!("MODELPORT_BUILD_SOURCE_STATE") {
+pub const SOURCE_STATE: &str = match option_env!("ROUTEPILOT_BUILD_SOURCE_STATE") {
     Some(value) => value,
     None => "unknown",
 };
 
 pub fn display() -> String {
-    format!("model-port {VERSION} (revision {REVISION}, source {SOURCE_STATE})")
+    format!("routepilot {VERSION} (revision {REVISION}, source {SOURCE_STATE})")
 }
 
 pub fn json() -> serde_json::Value {

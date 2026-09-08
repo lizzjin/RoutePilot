@@ -12,7 +12,7 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/bench.sh [--upstream] [-n iterations]
 
-Measures local ModelPort endpoints without printing secrets.
+Measures local RoutePilot endpoints without printing secrets.
 Default iterations: 30 for gateway endpoints, 3 for --upstream.
 USAGE
 }
@@ -105,7 +105,7 @@ measure_health() {
 
 measure_models() {
   curl_local -sS -m 5 -o /dev/null -w '%{time_total}\n' \
-    -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+    -H "x-api-key: $ROUTEPILOT_AUTH_TOKEN" \
     "$(base_url)/v1/models"
 }
 
@@ -116,8 +116,8 @@ measure_upstream_message() {
   payload="$(printf '{"model":"%s","max_tokens":32,"messages":[{"role":"user","content":"只回复 OK。"}]}' "$model")"
 
   curl_local -sS -m 120 -o /dev/null -w '%{time_total}\n' \
-    -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
-    -H 'x-modelport-traffic-class: synthetic' \
+    -H "x-api-key: $ROUTEPILOT_AUTH_TOKEN" \
+    -H 'x-routepilot-traffic-class: synthetic' \
     -H 'Content-Type: application/json' \
     "$(base_url)/v1/messages" \
     -d "$payload"

@@ -1,21 +1,21 @@
 [Unit]
-Description=ModelPort local Claude model gateway
-Documentation=https://github.com/tiammomo/ModelPort
+Description=RoutePilot local Claude model gateway
+Documentation=https://github.com/lizzjin/RoutePilot
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=/etc/modelport/modelport.env
-Environment=RUST_LOG=model_port=info,tower_http=info
-Environment=MODELPORT_STATE_DIR=/var/lib/modelport
-ExecStart=/usr/local/bin/model-port
-WorkingDirectory=/var/lib/modelport
+EnvironmentFile=/etc/routepilot/routepilot.env
+Environment=RUST_LOG=routepilot=info,tower_http=info
+Environment=ROUTEPILOT_STATE_DIR=/var/lib/routepilot
+ExecStart=/usr/local/bin/routepilot
+WorkingDirectory=/var/lib/routepilot
 Restart=always
 RestartSec=3
 
 DynamicUser=true
-StateDirectory=modelport
+StateDirectory=routepilot
 StateDirectoryMode=0700
 UMask=0077
 NoNewPrivileges=true

@@ -24,7 +24,7 @@ pub(crate) fn openai_complete_to_anthropic_stream(
         let message_id = message
             .get("id")
             .and_then(Value::as_str)
-            .unwrap_or("msg_modelport");
+            .unwrap_or("msg_routepilot");
         yield message_start_event(message_id, &requested_model)?;
 
         if let Some(blocks) = message.get("content").and_then(Value::as_array) {

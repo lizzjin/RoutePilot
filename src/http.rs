@@ -62,29 +62,29 @@ pub struct SseFrame {
 impl HttpTransport {
     pub fn new() -> Result<Self, AppError> {
         let connect_timeout =
-            Duration::from_secs(env_u64("MODELPORT_HTTP_CONNECT_TIMEOUT_SECS", 10));
+            Duration::from_secs(env_u64("ROUTEPILOT_HTTP_CONNECT_TIMEOUT_SECS", 10));
         let request_timeout =
-            Duration::from_secs(env_u64("MODELPORT_HTTP_REQUEST_TIMEOUT_SECS", 600));
+            Duration::from_secs(env_u64("ROUTEPILOT_HTTP_REQUEST_TIMEOUT_SECS", 600));
         let stream_idle_timeout =
-            Duration::from_secs(env_u64("MODELPORT_HTTP_STREAM_IDLE_TIMEOUT_SECS", 300));
+            Duration::from_secs(env_u64("ROUTEPILOT_HTTP_STREAM_IDLE_TIMEOUT_SECS", 300));
         let max_response_bytes = env_usize(
-            "MODELPORT_HTTP_MAX_RESPONSE_BYTES",
+            "ROUTEPILOT_HTTP_MAX_RESPONSE_BYTES",
             DEFAULT_MAX_RESPONSE_BYTES,
         );
         let max_sse_line_bytes = env_usize(
-            "MODELPORT_HTTP_SSE_MAX_LINE_BYTES",
+            "ROUTEPILOT_HTTP_SSE_MAX_LINE_BYTES",
             DEFAULT_MAX_SSE_LINE_BYTES,
         );
         let max_sse_event_bytes = env_usize(
-            "MODELPORT_HTTP_SSE_MAX_EVENT_BYTES",
+            "ROUTEPILOT_HTTP_SSE_MAX_EVENT_BYTES",
             DEFAULT_MAX_SSE_EVENT_BYTES,
         );
         let max_sse_stream_bytes = env_usize(
-            "MODELPORT_HTTP_SSE_MAX_STREAM_BYTES",
+            "ROUTEPILOT_HTTP_SSE_MAX_STREAM_BYTES",
             DEFAULT_MAX_SSE_STREAM_BYTES,
         );
-        let user_agent = env::var("MODELPORT_HTTP_USER_AGENT")
-            .unwrap_or_else(|_| format!("model-port/{}", env!("CARGO_PKG_VERSION")));
+        let user_agent = env::var("ROUTEPILOT_HTTP_USER_AGENT")
+            .unwrap_or_else(|_| format!("routepilot/{}", env!("CARGO_PKG_VERSION")));
 
         let client = build_client(connect_timeout, &user_agent, None)?;
 
@@ -230,6 +230,10 @@ impl HttpTransport {
         .await
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keep request identity, security policy, payload, and independent timeout overrides explicit"
+    )]
     pub async fn post_json_sse_with_timeouts(
         &self,
         provider_id: &str,
@@ -367,7 +371,7 @@ impl HttpTransport {
                         chunk.len(),
                         transport.max_sse_stream_bytes,
                         "stream",
-                        "MODELPORT_HTTP_SSE_MAX_STREAM_BYTES",
+                        "ROUTEPILOT_HTTP_SSE_MAX_STREAM_BYTES",
                     )?;
                     line_buffer.extend_from_slice(&chunk);
 
@@ -380,7 +384,7 @@ impl HttpTransport {
                             line.len(),
                             transport.max_sse_event_bytes,
                             "event",
-                            "MODELPORT_HTTP_SSE_MAX_EVENT_BYTES",
+                            "ROUTEPILOT_HTTP_SSE_MAX_EVENT_BYTES",
                         )?;
                         if let Some(frame) = handle_sse_line(
                             &line,
@@ -410,7 +414,7 @@ impl HttpTransport {
                         line_buffer.len(),
                         transport.max_sse_event_bytes,
                         "event",
-                        "MODELPORT_HTTP_SSE_MAX_EVENT_BYTES",
+                        "ROUTEPILOT_HTTP_SSE_MAX_EVENT_BYTES",
                     )?;
                     if let Some(frame) = handle_sse_line(
                         &line_buffer,
@@ -524,7 +528,7 @@ fn ensure_sse_line_limit(line: &[u8], limit: usize) -> Result<(), AppError> {
     if line.len() > limit {
         return Err(sse_limit_error(
             "line",
-            "MODELPORT_HTTP_SSE_MAX_LINE_BYTES",
+            "ROUTEPILOT_HTTP_SSE_MAX_LINE_BYTES",
             limit,
         ));
     }
@@ -542,7 +546,7 @@ fn ensure_pending_sse_line_limit(line: &[u8], limit: usize) -> Result<(), AppErr
     if line_len > limit {
         return Err(sse_limit_error(
             "line",
-            "MODELPORT_HTTP_SSE_MAX_LINE_BYTES",
+            "ROUTEPILOT_HTTP_SSE_MAX_LINE_BYTES",
             limit,
         ));
     }
@@ -636,7 +640,7 @@ async fn response_body(response: Response, limit: usize) -> Result<Vec<u8>, AppE
         let chunk = chunk.map_err(request_error)?;
         if body.len().saturating_add(chunk.len()) > limit {
             return Err(AppError::UpstreamProtocol(format!(
-                "upstream response exceeded MODELPORT_HTTP_MAX_RESPONSE_BYTES ({limit})"
+                "upstream response exceeded ROUTEPILOT_HTTP_MAX_RESPONSE_BYTES ({limit})"
             )));
         }
         body.extend_from_slice(&chunk);
@@ -670,7 +674,7 @@ async fn response_body_with_timeouts(
             let chunk = chunk.map_err(request_error)?;
             if body.len().saturating_add(chunk.len()) > limit {
                 return Err(AppError::UpstreamProtocol(format!(
-                    "upstream response exceeded MODELPORT_HTTP_MAX_RESPONSE_BYTES ({limit})"
+                    "upstream response exceeded ROUTEPILOT_HTTP_MAX_RESPONSE_BYTES ({limit})"
                 )));
             }
             body.extend_from_slice(&chunk);
@@ -1043,16 +1047,16 @@ mod tests {
         assert!(matches!(
             ensure_sse_line_limit(b"12345", 4),
             Err(AppError::UpstreamProtocol(message))
-                if message.contains("MODELPORT_HTTP_SSE_MAX_LINE_BYTES")
+                if message.contains("ROUTEPILOT_HTTP_SSE_MAX_LINE_BYTES")
         ));
         assert_eq!(
-            checked_sse_bytes(4, 4, 8, "event", "MODELPORT_HTTP_SSE_MAX_EVENT_BYTES").unwrap(),
+            checked_sse_bytes(4, 4, 8, "event", "ROUTEPILOT_HTTP_SSE_MAX_EVENT_BYTES").unwrap(),
             8
         );
         assert!(matches!(
-            checked_sse_bytes(4, 5, 8, "event", "MODELPORT_HTTP_SSE_MAX_EVENT_BYTES"),
+            checked_sse_bytes(4, 5, 8, "event", "ROUTEPILOT_HTTP_SSE_MAX_EVENT_BYTES"),
             Err(AppError::UpstreamProtocol(message))
-                if message.contains("MODELPORT_HTTP_SSE_MAX_EVENT_BYTES")
+                if message.contains("ROUTEPILOT_HTTP_SSE_MAX_EVENT_BYTES")
         ));
     }
 
@@ -1102,7 +1106,7 @@ mod tests {
         };
         let client = build_client(
             Duration::from_secs(1),
-            "model-port-pinning-test",
+            "routepilot-pinning-test",
             Some(&pin),
         )
         .unwrap();
@@ -1359,7 +1363,7 @@ mod tests {
         assert_sse_limit(
             line_transport,
             line_url,
-            "MODELPORT_HTTP_SSE_MAX_LINE_BYTES",
+            "ROUTEPILOT_HTTP_SSE_MAX_LINE_BYTES",
         )
         .await;
 
@@ -1370,7 +1374,7 @@ mod tests {
         assert_sse_limit(
             event_transport,
             event_url,
-            "MODELPORT_HTTP_SSE_MAX_EVENT_BYTES",
+            "ROUTEPILOT_HTTP_SSE_MAX_EVENT_BYTES",
         )
         .await;
 
@@ -1379,7 +1383,7 @@ mod tests {
         assert_sse_limit(
             stream_transport,
             stream_url,
-            "MODELPORT_HTTP_SSE_MAX_STREAM_BYTES",
+            "ROUTEPILOT_HTTP_SSE_MAX_STREAM_BYTES",
         )
         .await;
     }
@@ -1416,7 +1420,7 @@ mod tests {
                 .build()
                 .unwrap(),
             connect_timeout: Duration::from_secs(1),
-            user_agent: "model-port-test".to_owned(),
+            user_agent: "routepilot-test".to_owned(),
             pinned_clients: Arc::new(Mutex::new(HashMap::new())),
             request_timeout,
             stream_idle_timeout: Duration::from_secs(1),

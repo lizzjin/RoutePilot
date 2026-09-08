@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPOSE_FILE="${MODELPORT_COMPOSE_FILE:-$ROOT_DIR/docker-compose.yml}"
+COMPOSE_FILE="${ROUTEPILOT_COMPOSE_FILE:-$ROOT_DIR/docker-compose.yml}"
 
 usage() {
   cat <<'USAGE'
@@ -15,7 +15,7 @@ USAGE
 }
 
 die() {
-  printf '[modelport-database] ERROR: %s\n' "$*" >&2
+  printf '[routepilot-database] ERROR: %s\n' "$*" >&2
   exit 1
 }
 
@@ -35,7 +35,7 @@ declared_postgres_volume() {
   awk '
     /^  postgres:[[:space:]]*$/ { in_postgres = 1; next }
     in_postgres && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { exit }
-    in_postgres && $1 == "-" && $2 ~ /^modelport-postgres/ {
+    in_postgres && $1 == "-" && $2 ~ /^routepilot-postgres/ {
       split($2, parts, ":")
       print parts[1]
       exit
@@ -92,11 +92,11 @@ main() {
   failed_migrations="$(docker compose -f "$COMPOSE_FILE" exec -T postgres sh -c \
     'exec psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --tuples-only --no-align --command="select count(*) from _sqlx_migrations where not success"')"
   state_rows="$(docker compose -f "$COMPOSE_FILE" exec -T postgres sh -c \
-    'exec psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --tuples-only --no-align --command="select count(*) from modelport_state"')"
+    'exec psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --tuples-only --no-align --command="select count(*) from routepilot_state"')"
 
-  printf '[modelport-database] running image=%s server_major=%s volume=%s destination=%s\n' \
+  printf '[routepilot-database] running image=%s server_major=%s volume=%s destination=%s\n' \
     "$running_image" "$running_major" "$volume_name" "$volume_destination"
-  printf '[modelport-database] declared image=%s server_major=%s volume=%s\n' \
+  printf '[routepilot-database] declared image=%s server_major=%s volume=%s\n' \
     "$configured_image" "$configured_major" "$configured_volume"
 
   if [[ "$running_major" != "$configured_major" ]]; then
@@ -109,7 +109,7 @@ main() {
   [[ "$state_rows" =~ ^[0-9]+$ && "$state_rows" -ge 2 ]] \
     || die "durable auth/control state rows are incomplete"
 
-  printf '[modelport-database] alignment and migration preflight passed\n'
+  printf '[routepilot-database] alignment and migration preflight passed\n'
 }
 
 main "$@"

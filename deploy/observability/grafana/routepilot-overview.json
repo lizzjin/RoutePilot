@@ -3,7 +3,7 @@
     {
       "name": "DS_PROMETHEUS",
       "label": "Prometheus",
-      "description": "Prometheus data source containing ModelPort metrics",
+      "description": "Prometheus data source containing RoutePilot metrics",
       "type": "datasource",
       "pluginId": "prometheus",
       "pluginName": "Prometheus"
@@ -25,7 +25,7 @@
       }
     ]
   },
-  "description": "ModelPort v0.1.x Small-Team Beta official operational dashboard. No prompt or response content is queried.",
+  "description": "RoutePilot v0.1.x Small-Team Beta official operational dashboard. No prompt or response content is queried.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -39,9 +39,9 @@
       "tags": [],
       "targetBlank": true,
       "title": "Alert runbook",
-      "tooltip": "ModelPort observability runbook",
+      "tooltip": "RoutePilot observability runbook",
       "type": "link",
-      "url": "https://github.com/tiammomo/ModelPort/blob/main/docs/OBSERVABILITY_RUNBOOK.md"
+      "url": "https://github.com/lizzjin/RoutePilot/blob/main/docs/OBSERVABILITY_RUNBOOK.md"
     }
   ],
   "panels": [
@@ -112,7 +112,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max(up{job=\"modelport\"})",
+          "expr": "max(up{job=\"routepilot\"})",
           "instant": true,
           "legendFormat": "metrics",
           "range": false,
@@ -190,7 +190,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "min(modelport_gateway_ready)",
+          "expr": "min(routepilot_gateway_ready)",
           "instant": true,
           "legendFormat": "gateway",
           "range": false,
@@ -198,7 +198,7 @@
         },
         {
           "editorMode": "code",
-          "expr": "min(modelport_database_ready)",
+          "expr": "min(routepilot_database_ready)",
           "instant": true,
           "legendFormat": "database",
           "range": false,
@@ -248,7 +248,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(modelport_message_requests_total[5m]))",
+          "expr": "sum(rate(routepilot_message_requests_total[5m]))",
           "instant": false,
           "legendFormat": "request rate",
           "range": true,
@@ -315,7 +315,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(modelport_message_failures_total[5m])) / clamp_min(sum(rate(modelport_message_requests_total[5m])), 0.001)",
+          "expr": "sum(rate(routepilot_message_failures_total[5m])) / clamp_min(sum(rate(routepilot_message_requests_total[5m])), 0.001)",
           "instant": false,
           "legendFormat": "error ratio",
           "range": true,
@@ -381,7 +381,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(modelport_message_latency_ms_bucket[10m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(routepilot_message_latency_ms_bucket[10m])))",
           "instant": false,
           "legendFormat": "p95",
           "range": true,
@@ -443,7 +443,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(modelport_stream_permits_available)",
+          "expr": "sum(routepilot_stream_permits_available)",
           "instant": true,
           "legendFormat": "stream permits",
           "range": false,
@@ -451,7 +451,7 @@
         },
         {
           "editorMode": "code",
-          "expr": "sum(modelport_ledger_pending_finalizers)",
+          "expr": "sum(routepilot_ledger_pending_finalizers)",
           "instant": true,
           "legendFormat": "pending finalizers",
           "range": false,
@@ -530,7 +530,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (provider) (rate(modelport_message_requests_total[5m]))",
+          "expr": "sum by (provider) (rate(routepilot_message_requests_total[5m]))",
           "legendFormat": "{{provider}}",
           "range": true,
           "refId": "A"
@@ -622,21 +622,21 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (provider) (rate(modelport_message_failures_total[10m])) / clamp_min(sum by (provider) (rate(modelport_message_requests_total[10m])), 0.001)",
+          "expr": "sum by (provider) (rate(routepilot_message_failures_total[10m])) / clamp_min(sum by (provider) (rate(routepilot_message_requests_total[10m])), 0.001)",
           "legendFormat": "{{provider}}",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "min by (provider) (modelport_provider_available)",
+          "expr": "min by (provider) (routepilot_provider_available)",
           "legendFormat": "{{provider}} available",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "max by (provider) (modelport_provider_cooldown)",
+          "expr": "max by (provider) (routepilot_provider_cooldown)",
           "legendFormat": "{{provider}} cooldown",
           "range": true,
           "refId": "C"
@@ -714,28 +714,28 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "modelport_local_scheduler_running",
+          "expr": "routepilot_local_scheduler_running",
           "legendFormat": "running",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "modelport_local_scheduler_interactive_queued",
+          "expr": "routepilot_local_scheduler_interactive_queued",
           "legendFormat": "interactive queued",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "modelport_local_scheduler_batch_queued",
+          "expr": "routepilot_local_scheduler_batch_queued",
           "legendFormat": "batch queued",
           "range": true,
           "refId": "C"
         },
         {
           "editorMode": "code",
-          "expr": "modelport_local_scheduler_users_queued",
+          "expr": "routepilot_local_scheduler_users_queued",
           "legendFormat": "users queued",
           "range": true,
           "refId": "D"
@@ -814,7 +814,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (provider) (increase(modelport_message_cost_estimate_usd_total[1h]))",
+          "expr": "sum by (provider) (increase(routepilot_message_cost_estimate_usd_total[1h]))",
           "legendFormat": "{{provider}}",
           "range": true,
           "refId": "A"
@@ -891,14 +891,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "increase(modelport_ledger_reconciled_requests_total[1h])",
+          "expr": "increase(routepilot_ledger_reconciled_requests_total[1h])",
           "legendFormat": "requests",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "increase(modelport_ledger_reconciled_attempts_total[1h])",
+          "expr": "increase(routepilot_ledger_reconciled_attempts_total[1h])",
           "legendFormat": "attempts",
           "range": true,
           "refId": "B"
@@ -978,7 +978,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "modelport_ledger_operation_degraded",
+          "expr": "routepilot_ledger_operation_degraded",
           "format": "table",
           "instant": true,
           "legendFormat": "{{operation}}",
@@ -1076,7 +1076,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (route) (increase(modelport_inference_rejections_total{reason=\"quota_exceeded\"}[1h]))",
+          "expr": "sum by (route) (increase(routepilot_inference_rejections_total{reason=\"quota_exceeded\"}[1h]))",
           "legendFormat": "{{route}}",
           "range": true,
           "refId": "A"
@@ -1143,7 +1143,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max(modelport_database_pool_utilization_ratio)",
+          "expr": "max(routepilot_database_pool_utilization_ratio)",
           "instant": true,
           "legendFormat": "pool",
           "range": false,
@@ -1157,7 +1157,7 @@
   "refresh": "30s",
   "schemaVersion": 41,
   "tags": [
-    "modelport",
+    "routepilot",
     "small-team-beta"
   ],
   "templating": {
@@ -1169,8 +1169,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "ModelPort 小团队运维总览",
-  "uid": "modelport-small-team-beta",
+  "title": "RoutePilot 小团队运维总览",
+  "uid": "routepilot-small-team-beta",
   "version": 1,
   "weekStart": "monday"
 }

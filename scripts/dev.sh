@@ -7,5 +7,5 @@ source "$SCRIPT_DIR/lib.sh"
 
 load_env
 setup_cc_fallback
-log "starting ModelPort in foreground at $(base_url)"
+log "starting RoutePilot in foreground at $(base_url)"
 exec cargo run

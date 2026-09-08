@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible ModelPort problem
+description: Report a reproducible RoutePilot problem
 title: "[Bug]: "
 labels: ["bug"]
 body:

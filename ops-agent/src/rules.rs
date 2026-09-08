@@ -1,4 +1,4 @@
-use modelport_ops_protocol::{OpsObservation, OpsSeverity, OpsSnapshot};
+use routepilot_ops_protocol::{OpsObservation, OpsSeverity, OpsSnapshot};
 use serde_json::{Value, json};
 
 pub const RULE_SET_VERSION: &str = "ops-rules-v1";
@@ -52,7 +52,7 @@ fn readiness(snapshot: &OpsSnapshot) -> OpsObservation {
         } else {
             OpsSeverity::Sev1
         },
-        "ModelPort 无法接收受治理请求",
+        "RoutePilot 无法接收受治理请求",
         if active {
             "至少一个 fail-closed 依赖未就绪，网关当前不可安全接单。".to_owned()
         } else {
@@ -254,7 +254,7 @@ fn post_change(snapshot: &OpsSnapshot) -> OpsObservation {
 mod tests {
     use std::collections::BTreeMap;
 
-    use modelport_ops_protocol::{OpsAgentConfiguration, OpsLedgerHealth, OpsRequestWindow};
+    use routepilot_ops_protocol::{OpsAgentConfiguration, OpsLedgerHealth, OpsRequestWindow};
 
     use super::*;
 

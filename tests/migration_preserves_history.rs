@@ -5,13 +5,13 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 #[tokio::test]
 async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
-    let Ok(database_url) = std::env::var("MODELPORT_TEST_DATABASE_URL") else {
+    let Ok(database_url) = std::env::var("ROUTEPILOT_TEST_DATABASE_URL") else {
         return;
     };
     let mut connection = PgConnection::connect(&database_url)
         .await
-        .expect("connect to MODELPORT_TEST_DATABASE_URL");
-    let schema = format!("modelport_migration_{}", Uuid::new_v4().simple());
+        .expect("connect to ROUTEPILOT_TEST_DATABASE_URL");
+    let schema = format!("routepilot_migration_{}", Uuid::new_v4().simple());
     connection
         .execute(format!("CREATE SCHEMA {schema}").as_str())
         .await
@@ -40,7 +40,7 @@ async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
         .await?;
 
         sqlx::query(
-            "INSERT INTO modelport_gateway_requests (
+            "INSERT INTO routepilot_gateway_requests (
                 ledger_id, request_id,
                 organization_id, project_id, environment_id,
                 principal_id, client_protocol, requested_model, stream,
@@ -57,7 +57,7 @@ async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
         .execute(&mut connection)
         .await?;
         sqlx::query(
-            "INSERT INTO modelport_provider_attempts (
+            "INSERT INTO routepilot_provider_attempts (
                 attempt_id, request_ledger_id,
                 organization_id, project_id, environment_id,
                 provider_id, resolved_model, provider_protocol,
@@ -84,7 +84,7 @@ async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
         .await?;
         connection
             .execute(
-                "CREATE TABLE modelport_state (
+                "CREATE TABLE routepilot_state (
                     namespace TEXT PRIMARY KEY,
                     document JSONB NOT NULL,
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -93,7 +93,7 @@ async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
             .await?;
         connection
             .execute(
-                "INSERT INTO modelport_state (namespace, document)
+                "INSERT INTO routepilot_state (namespace, document)
                  VALUES ('auth', '{\"users\": [{\"id\": \"usr_legacy\"}]}'::jsonb)",
             )
             .await?;
@@ -119,7 +119,7 @@ async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
         .execute(&mut connection)
         .await?;
         sqlx::query(
-            "UPDATE modelport_gateway_requests
+            "UPDATE routepilot_gateway_requests
              SET api_key_id = 'key_legacy'
              WHERE ledger_id = 'ldr_legacy'",
         )
@@ -137,37 +137,37 @@ async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
                 retry_count,
                 fallback_from_provider,
                 latency_ms
-             FROM modelport_gateway_requests
+             FROM routepilot_gateway_requests
              WHERE ledger_id = 'ldr_legacy'",
         )
         .fetch_one(&mut connection)
         .await?;
         let attempt_count =
-            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM modelport_provider_attempts")
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM routepilot_provider_attempts")
                 .fetch_one(&mut connection)
                 .await?;
         let last_attempt = sqlx::query_as::<_, (i32, Option<String>, i64)>(
             "SELECT retry_count, fallback_from_provider, latency_ms
-             FROM modelport_provider_attempts
+             FROM routepilot_provider_attempts
              WHERE attempt_id = 'att_legacy_2'",
         )
         .fetch_one(&mut connection)
         .await?;
         let routing_table_exists = sqlx::query_scalar::<_, bool>(
-            "SELECT to_regclass('modelport_routing_decisions') IS NOT NULL",
+            "SELECT to_regclass('routepilot_routing_decisions') IS NOT NULL",
         )
         .fetch_one(&mut connection)
         .await?;
         let legacy_state = sqlx::query_as::<_, (serde_json::Value, i64)>(
             "SELECT document, revision
-             FROM modelport_state
+             FROM routepilot_state
              WHERE namespace = 'auth'",
         )
         .fetch_one(&mut connection)
         .await?;
         let legacy_quota_subject = sqlx::query_scalar::<_, Option<String>>(
             "SELECT quota_subject_id
-             FROM modelport_gateway_requests
+             FROM routepilot_gateway_requests
              WHERE ledger_id = 'ldr_legacy'",
         )
         .fetch_one(&mut connection)
@@ -218,7 +218,7 @@ async fn current_schema_migration_preserves_legacy_requests_and_attempts() {
 
 #[tokio::test]
 async fn embedded_migrations_preserve_restored_operational_row_counts() {
-    let Ok(database_url) = std::env::var("MODELPORT_MIGRATION_DRILL_DATABASE_URL") else {
+    let Ok(database_url) = std::env::var("ROUTEPILOT_MIGRATION_DRILL_DATABASE_URL") else {
         return;
     };
     let pool = PgPoolOptions::new()
@@ -227,12 +227,12 @@ async fn embedded_migrations_preserve_restored_operational_row_counts() {
         .await
         .expect("connect to restored migration-drill database");
     let requests_before =
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM modelport_gateway_requests")
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM routepilot_gateway_requests")
             .fetch_one(&pool)
             .await
             .expect("count requests before migration");
     let attempts_before =
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM modelport_provider_attempts")
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM routepilot_provider_attempts")
             .fetch_one(&pool)
             .await
             .expect("count attempts before migration");
@@ -243,18 +243,18 @@ async fn embedded_migrations_preserve_restored_operational_row_counts() {
         .expect("apply embedded migrations to restored database");
 
     let requests_after =
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM modelport_gateway_requests")
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM routepilot_gateway_requests")
             .fetch_one(&pool)
             .await
             .expect("count requests after migration");
     let attempts_after =
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM modelport_provider_attempts")
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM routepilot_provider_attempts")
             .fetch_one(&pool)
             .await
             .expect("count attempts after migration");
     let incomplete_backfill = sqlx::query_scalar::<_, i64>(
         "SELECT count(*)
-         FROM modelport_gateway_requests
+         FROM routepilot_gateway_requests
          WHERE username IS NULL
             OR request_path IS NULL
             OR traffic_class IS NULL
@@ -265,12 +265,12 @@ async fn embedded_migrations_preserve_restored_operational_row_counts() {
     .expect("verify required operational backfill");
     let content_derived_retained_fingerprints = sqlx::query_scalar::<_, i64>(
         "SELECT count(*)
-         FROM modelport_gateway_requests
+         FROM routepilot_gateway_requests
          WHERE request_id LIKE 'retained:%'
            AND request_fingerprint <> encode(
                sha256(
                    convert_to(
-                       'modelport-retained-request-fingerprint-v1:' || ledger_id,
+                       'routepilot-retained-request-fingerprint-v1:' || ledger_id,
                        'UTF8'
                    )
                ),

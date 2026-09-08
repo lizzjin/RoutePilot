@@ -75,37 +75,37 @@ jobs:
 
       - name: Validate Docker Compose manifest
         env:
-          MODELPORT_COMPOSE_ENV_FILE: deploy/docker/modelport.env.example
+          ROUTEPILOT_COMPOSE_ENV_FILE: deploy/docker/routepilot.env.example
         run: |
           release_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
-          grep -F "ghcr.io/tiammomo/modelport:${release_version}" deploy/release/compose.yml
-          grep -F "ghcr.io/tiammomo/modelport-dashboard:${release_version}" deploy/release/compose.yml
-          docker compose --env-file deploy/docker/modelport.env.example config --quiet
-          MODELPORT_COMPOSE_ENV_FILE="$PWD/deploy/docker/modelport.env.example" \
-          MODELPORT_CONFIG_FILE="$PWD/config.example.toml" \
+          grep -F "ghcr.io/lizzjin/routepilot:${release_version}" deploy/release/compose.yml
+          grep -F "ghcr.io/lizzjin/routepilot-dashboard:${release_version}" deploy/release/compose.yml
+          docker compose --env-file deploy/docker/routepilot.env.example config --quiet
+          ROUTEPILOT_COMPOSE_ENV_FILE="$PWD/deploy/docker/routepilot.env.example" \
+          ROUTEPILOT_CONFIG_FILE="$PWD/config.example.toml" \
             docker compose \
-              --env-file deploy/docker/modelport.env.example \
+              --env-file deploy/docker/routepilot.env.example \
               -f deploy/release/compose.yml config --quiet
-          runtime_env="${RUNNER_TEMP}/modelport-runtime.env"
+          runtime_env="${RUNNER_TEMP}/routepilot-runtime.env"
           database_ca="${RUNNER_TEMP}/database-ca.pem"
-          ownership_file="${RUNNER_TEMP}/modelport-ownership.toml"
+          ownership_file="${RUNNER_TEMP}/routepilot-ownership.toml"
           install -m 600 /dev/null "$runtime_env"
           install -m 600 /dev/null "$database_ca"
           printf '%s\n' 'ci-placeholder-ca' > "$database_ca"
           printf '%s\n' \
-            'MODELPORT_DATABASE_URL=postgres://modelport:ci-only@db.example:5432/modelport?sslmode=verify-full&sslrootcert=/run/modelport/database-ca.pem' \
-            'MODELPORT_AUTH_TOKEN=ci-router-token-with-sufficient-entropy' \
-            'MODELPORT_HEALTHCHECK_API_KEY=ci-healthcheck-key-with-sufficient-entropy' \
-            'MODELPORT_ADMIN_USERNAME=admin' \
-            'MODELPORT_ADMIN_PASSWORD=MpCi_7vN4qL9tR2xK6m' \
-            'MODELPORT_BACKUP_ADMIN_USERNAME=backup-admin' \
-            'MODELPORT_BACKUP_ADMIN_EMAIL=backup-admin@example.com' \
-            'MODELPORT_BACKUP_ADMIN_PASSWORD=MpCi_8zM5rT1wQ7xL4n' \
-            'MODELPORT_OIDC_ISSUER=https://identity.example.com' \
-            'MODELPORT_OIDC_CLIENT_ID=modelport-ci' \
-            'MODELPORT_OIDC_CLIENT_SECRET=ci-oidc-client-secret-with-sufficient-entropy' \
-            'MODELPORT_OIDC_REDIRECT_URI=https://modelport.example.com/admin/auth/oidc/callback' \
-            'MODELPORT_OIDC_AUTO_PROVISION=0' \
+            'ROUTEPILOT_DATABASE_URL=postgres://routepilot:ci-only@db.example:5432/routepilot?sslmode=verify-full&sslrootcert=/run/routepilot/database-ca.pem' \
+            'ROUTEPILOT_AUTH_TOKEN=ci-router-token-with-sufficient-entropy' \
+            'ROUTEPILOT_HEALTHCHECK_API_KEY=ci-healthcheck-key-with-sufficient-entropy' \
+            'ROUTEPILOT_ADMIN_USERNAME=admin' \
+            'ROUTEPILOT_ADMIN_PASSWORD=MpCi_7vN4qL9tR2xK6m' \
+            'ROUTEPILOT_BACKUP_ADMIN_USERNAME=backup-admin' \
+            'ROUTEPILOT_BACKUP_ADMIN_EMAIL=backup-admin@example.com' \
+            'ROUTEPILOT_BACKUP_ADMIN_PASSWORD=MpCi_8zM5rT1wQ7xL4n' \
+            'ROUTEPILOT_OIDC_ISSUER=https://identity.example.com' \
+            'ROUTEPILOT_OIDC_CLIENT_ID=routepilot-ci' \
+            'ROUTEPILOT_OIDC_CLIENT_SECRET=ci-oidc-client-secret-with-sufficient-entropy' \
+            'ROUTEPILOT_OIDC_REDIRECT_URI=https://routepilot.example.com/admin/auth/oidc/callback' \
+            'ROUTEPILOT_OIDC_AUTO_PROVISION=0' \
             'DEEPSEEK_ANTHROPIC_AUTH_TOKEN=ci-provider-token-with-sufficient-entropy' \
             > "$runtime_env"
           printf '%s\n' \
@@ -125,25 +125,25 @@ jobs:
             'security = "ci-security-oncall"' \
             'cloud_billing = "ci-finops-oncall"' \
             > "$ownership_file"
-          MODELPORT_IMAGE='modelport:ci@sha256:1111111111111111111111111111111111111111111111111111111111111111' \
-          MODELPORT_DASHBOARD_IMAGE='modelport-dashboard:ci@sha256:2222222222222222222222222222222222222222222222222222222222222222' \
-          MODELPORT_RUNTIME_ENV_FILE="$runtime_env" \
-          MODELPORT_CONFIG_FILE="$PWD/config.example.toml" \
-          MODELPORT_DATABASE_CA_FILE="$database_ca" \
-          MODELPORT_OWNERSHIP_FILE="$ownership_file" \
+          ROUTEPILOT_IMAGE='routepilot:ci@sha256:1111111111111111111111111111111111111111111111111111111111111111' \
+          ROUTEPILOT_DASHBOARD_IMAGE='routepilot-dashboard:ci@sha256:2222222222222222222222222222222222222222222222222222222222222222' \
+          ROUTEPILOT_RUNTIME_ENV_FILE="$runtime_env" \
+          ROUTEPILOT_CONFIG_FILE="$PWD/config.example.toml" \
+          ROUTEPILOT_DATABASE_CA_FILE="$database_ca" \
+          ROUTEPILOT_OWNERSHIP_FILE="$ownership_file" \
             ./scripts/production-preflight.sh
-          MODELPORT_IMAGE='modelport:ci@sha256:1111111111111111111111111111111111111111111111111111111111111111' \
-          MODELPORT_DASHBOARD_IMAGE='modelport-dashboard:ci@sha256:2222222222222222222222222222222222222222222222222222222222222222' \
-          MODELPORT_RUNTIME_ENV_FILE="$runtime_env" \
-          MODELPORT_CONFIG_FILE="$PWD/config.example.toml" \
-          MODELPORT_DATABASE_CA_FILE="$database_ca" \
-          MODELPORT_OWNERSHIP_FILE="$ownership_file" \
+          ROUTEPILOT_IMAGE='routepilot:ci@sha256:1111111111111111111111111111111111111111111111111111111111111111' \
+          ROUTEPILOT_DASHBOARD_IMAGE='routepilot-dashboard:ci@sha256:2222222222222222222222222222222222222222222222222222222222222222' \
+          ROUTEPILOT_RUNTIME_ENV_FILE="$runtime_env" \
+          ROUTEPILOT_CONFIG_FILE="$PWD/config.example.toml" \
+          ROUTEPILOT_DATABASE_CA_FILE="$database_ca" \
+          ROUTEPILOT_OWNERSHIP_FILE="$ownership_file" \
             docker compose -f deploy/production/compose.single.yml config --quiet
 
       - name: Validate Nginx and observability assets
         run: |
           python3 -m json.tool \
-            deploy/observability/grafana/modelport-overview.json >/dev/null
+            deploy/observability/grafana/routepilot-overview.json >/dev/null
           docker run --rm \
             --entrypoint nginx \
             -v "$PWD/deploy/docker/dashboard.nginx-main.conf:/etc/nginx/nginx.conf:ro" \
@@ -152,12 +152,12 @@ jobs:
           docker run --rm \
             --entrypoint promtool \
             -v "$PWD/deploy/observability/prometheus/prometheus.example.yml:/etc/prometheus/prometheus.yml:ro" \
-            -v "$PWD/deploy/observability/prometheus/modelport-alerts.yml:/etc/prometheus/rules/modelport-alerts.yml:ro" \
-            -v /dev/null:/run/secrets/modelport_metrics_key:ro \
+            -v "$PWD/deploy/observability/prometheus/routepilot-alerts.yml:/etc/prometheus/rules/routepilot-alerts.yml:ro" \
+            -v /dev/null:/run/secrets/routepilot_metrics_key:ro \
             prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
           docker run --rm \
             -v "$PWD/deploy/observability/prometheus/blackbox.example.yml:/etc/blackbox_exporter/config.yml:ro" \
-            -v /dev/null:/run/secrets/modelport_probe_key:ro \
+            -v /dev/null:/run/secrets/routepilot_probe_key:ro \
             prom/blackbox-exporter:v0.27.0 \
               --config.file=/etc/blackbox_exporter/config.yml \
               --config.check
@@ -175,13 +175,13 @@ jobs:
       postgres:
         image: postgres:18.4-alpine
         env:
-          POSTGRES_DB: modelport
-          POSTGRES_USER: modelport
+          POSTGRES_DB: routepilot
+          POSTGRES_USER: routepilot
           POSTGRES_PASSWORD: ci-postgres-password
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U modelport -d modelport"
+          --health-cmd "pg_isready -U routepilot -d routepilot"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -189,14 +189,14 @@ jobs:
     env:
       CI: true
       CARGO_TERM_COLOR: always
-      MODELPORT_BIND: 127.0.0.1:38082
-      MODELPORT_DATABASE_URL: postgres://modelport:ci-postgres-password@127.0.0.1:5432/modelport
-      MODELPORT_TEST_DATABASE_URL: postgres://modelport:ci-postgres-password@127.0.0.1:5432/modelport
-      MODELPORT_DATABASE_TLS_MODE: disable
-      MODELPORT_AUTH_TOKEN: ci-router-token-with-sufficient-entropy
-      MODELPORT_ADMIN_USERNAME: admin
-      MODELPORT_ADMIN_PASSWORD: MpCi_7vN4qL9tR2xK6m
-      MODELPORT_DEFAULT_PROVIDER: custom
+      ROUTEPILOT_BIND: 127.0.0.1:38082
+      ROUTEPILOT_DATABASE_URL: postgres://routepilot:ci-postgres-password@127.0.0.1:5432/routepilot
+      ROUTEPILOT_TEST_DATABASE_URL: postgres://routepilot:ci-postgres-password@127.0.0.1:5432/routepilot
+      ROUTEPILOT_DATABASE_TLS_MODE: disable
+      ROUTEPILOT_AUTH_TOKEN: ci-router-token-with-sufficient-entropy
+      ROUTEPILOT_ADMIN_USERNAME: admin
+      ROUTEPILOT_ADMIN_PASSWORD: MpCi_7vN4qL9tR2xK6m
+      ROUTEPILOT_DEFAULT_PROVIDER: custom
       CUSTOM_OPENAI_BASE_URL: http://127.0.0.1:38084/v1
       CUSTOM_OPENAI_API_KEY: ci-custom-provider-key-with-sufficient-entropy
       CUSTOM_OPENAI_MODEL: ci-model
@@ -245,24 +245,24 @@ jobs:
             enterprise_ledger::tests::postgres_operations_incident_queries_round_trip \
             -- --exact
 
-      - name: Build and start PostgreSQL-backed ModelPort
+      - name: Build and start PostgreSQL-backed RoutePilot
         run: |
-          cargo build --locked --bin model-port
-          export MODELPORT_CONFIG="${RUNNER_TEMP}/modelport-no-config.toml"
-          export MODELPORT_ENV_FILE="${RUNNER_TEMP}/modelport-no-env"
-          target/debug/model-port > "${RUNNER_TEMP}/modelport-e2e.log" 2>&1 &
-          echo "$!" > "${RUNNER_TEMP}/modelport-e2e.pid"
+          cargo build --locked --bin routepilot
+          export ROUTEPILOT_CONFIG="${RUNNER_TEMP}/routepilot-no-config.toml"
+          export ROUTEPILOT_ENV_FILE="${RUNNER_TEMP}/routepilot-no-env"
+          target/debug/routepilot > "${RUNNER_TEMP}/routepilot-e2e.log" 2>&1 &
+          echo "$!" > "${RUNNER_TEMP}/routepilot-e2e.pid"
           for _ in {1..80}; do
             if curl -fsS http://127.0.0.1:38082/livez >/dev/null; then
               exit 0
             fi
-            if ! kill -0 "$(cat "${RUNNER_TEMP}/modelport-e2e.pid")" 2>/dev/null; then
-              sed -n '1,200p' "${RUNNER_TEMP}/modelport-e2e.log"
+            if ! kill -0 "$(cat "${RUNNER_TEMP}/routepilot-e2e.pid")" 2>/dev/null; then
+              sed -n '1,200p' "${RUNNER_TEMP}/routepilot-e2e.log"
               exit 1
             fi
             sleep 0.25
           done
-          sed -n '1,200p' "${RUNNER_TEMP}/modelport-e2e.log"
+          sed -n '1,200p' "${RUNNER_TEMP}/routepilot-e2e.log"
           exit 1
 
       - name: Run dashboard E2E
@@ -271,8 +271,8 @@ jobs:
       - name: Stop backend
         if: always()
         run: |
-          if [[ -f "${RUNNER_TEMP}/modelport-e2e.pid" ]]; then
-            kill "$(cat "${RUNNER_TEMP}/modelport-e2e.pid")" 2>/dev/null || true
+          if [[ -f "${RUNNER_TEMP}/routepilot-e2e.pid" ]]; then
+            kill "$(cat "${RUNNER_TEMP}/routepilot-e2e.pid")" 2>/dev/null || true
           fi
 
       - name: Upload E2E diagnostics
@@ -281,7 +281,7 @@ jobs:
         with:
           name: postgres-dashboard-e2e-diagnostics
           path: |
-            ${{ runner.temp }}/modelport-e2e.log
+            ${{ runner.temp }}/routepilot-e2e.log
             dashboard/playwright-report
             dashboard/test-results
           if-no-files-found: ignore

@@ -4,7 +4,7 @@
 -- Retention only de-identifies terminal rows: after the configured user-usage
 -- window, user_id/team_id are removed or replaced while the already
 -- pseudonymous quota_subject_id and financial evidence remain available.
-CREATE TABLE modelport_usage_reservations (
+CREATE TABLE routepilot_usage_reservations (
     reservation_id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
@@ -25,15 +25,15 @@ CREATE TABLE modelport_usage_reservations (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     terminal_at TIMESTAMPTZ,
-    CONSTRAINT modelport_usage_reservations_request_unique UNIQUE (
+    CONSTRAINT routepilot_usage_reservations_request_unique UNIQUE (
         organization_id,
         project_id,
         environment_id,
         request_ledger_id
     ),
-    CONSTRAINT modelport_usage_reservations_state_check
+    CONSTRAINT routepilot_usage_reservations_state_check
         CHECK (state IN ('reserved', 'settled', 'released')),
-    CONSTRAINT modelport_usage_reservations_amounts_check CHECK (
+    CONSTRAINT routepilot_usage_reservations_amounts_check CHECK (
         reserved_requests BETWEEN 0 AND 1
         AND reserved_tokens >= 0
         AND reserved_cost_microunits >= 0
@@ -42,7 +42,7 @@ CREATE TABLE modelport_usage_reservations (
         AND actual_cost_microunits >= 0
     ),
     FOREIGN KEY (organization_id, project_id, environment_id, request_ledger_id)
-        REFERENCES modelport_gateway_requests (
+        REFERENCES routepilot_gateway_requests (
             organization_id,
             project_id,
             environment_id,
@@ -51,14 +51,14 @@ CREATE TABLE modelport_usage_reservations (
         ON DELETE RESTRICT
 );
 
-CREATE INDEX modelport_usage_reservations_subject_open_idx
-    ON modelport_usage_reservations (quota_subject_id, created_at)
+CREATE INDEX routepilot_usage_reservations_subject_open_idx
+    ON routepilot_usage_reservations (quota_subject_id, created_at)
     WHERE state = 'reserved' AND quota_subject_id IS NOT NULL;
 
-CREATE INDEX modelport_usage_reservations_team_open_idx
-    ON modelport_usage_reservations (team_id, created_at)
+CREATE INDEX routepilot_usage_reservations_team_open_idx
+    ON routepilot_usage_reservations (team_id, created_at)
     WHERE state = 'reserved' AND team_id IS NOT NULL;
 
-CREATE INDEX modelport_usage_reservations_user_open_idx
-    ON modelport_usage_reservations (user_id, created_at)
+CREATE INDEX routepilot_usage_reservations_user_open_idx
+    ON routepilot_usage_reservations (user_id, created_at)
     WHERE state = 'reserved';

@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     http::HeaderMap,
 };
-use modelport_ops_protocol::{
+use routepilot_ops_protocol::{
     OpsAgentConfiguration, OpsAgentConfigurationUpdate, OpsAgentConfigurationView, OpsHeartbeat,
     OpsIncidentFeedbackInput, OpsIncidentList, OpsIncidentStatus, OpsIncidentStatusUpdate,
     OpsModelCandidate, OpsObservation, OpsSnapshot,
@@ -25,7 +25,7 @@ fn require_ops_agent(state: &AppState, headers: &HeaderMap) -> Result<ClientIden
     let identity = authenticate_client(state, headers)?;
     if !is_ops_agent_identity(&identity) {
         return Err(AppError::Forbidden(
-            "a service-account key with purpose modelport_ops_agent is required".to_owned(),
+            "a service-account key with purpose routepilot_ops_agent is required".to_owned(),
         ));
     }
     Ok(identity)
@@ -33,7 +33,7 @@ fn require_ops_agent(state: &AppState, headers: &HeaderMap) -> Result<ClientIden
 
 fn is_ops_agent_identity(identity: &ClientIdentity) -> bool {
     identity.principal_type == "service_account"
-        && identity.purpose.as_deref() == Some("modelport_ops_agent")
+        && identity.purpose.as_deref() == Some("routepilot_ops_agent")
 }
 
 pub(super) async fn snapshot(
@@ -55,7 +55,7 @@ pub(super) async fn snapshot(
             Err(_) => {
                 degraded_ledger_operations.push("ops_runtime_snapshot".to_owned());
                 (
-                    modelport_ops_protocol::OpsRequestWindow {
+                    routepilot_ops_protocol::OpsRequestWindow {
                         window_seconds: 300,
                         ..Default::default()
                     },
@@ -282,7 +282,7 @@ pub(super) async fn admin_incident_detail(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(incident_id): Path<String>,
-) -> Result<Json<modelport_ops_protocol::OpsIncidentDetail>, AppError> {
+) -> Result<Json<routepilot_ops_protocol::OpsIncidentDetail>, AppError> {
     require_admin_user(&state, &headers)?;
     Ok(Json(state.ledger.ops_incident_detail(&incident_id).await?))
 }
@@ -345,12 +345,12 @@ mod tests {
         let mut identity = ControlStore::legacy_identity();
         assert!(!is_ops_agent_identity(&identity));
         identity.principal_type = "service_account".to_owned();
-        identity.purpose = Some("modelport_ops_agent".to_owned());
+        identity.purpose = Some("routepilot_ops_agent".to_owned());
         assert!(is_ops_agent_identity(&identity));
         identity.purpose = Some("other_agent".to_owned());
         assert!(!is_ops_agent_identity(&identity));
         identity.principal_type = "user".to_owned();
-        identity.purpose = Some("modelport_ops_agent".to_owned());
+        identity.purpose = Some("routepilot_ops_agent".to_owned());
         assert!(!is_ops_agent_identity(&identity));
         assert!(matches!(
             ensure_inference_identity(&identity),

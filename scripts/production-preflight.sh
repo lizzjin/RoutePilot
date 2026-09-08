@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 die() {
-  printf '[modelport-production] ERROR: %s\n' "$*" >&2
+  printf '[routepilot-production] ERROR: %s\n' "$*" >&2
   exit 1
 }
 
@@ -28,19 +28,19 @@ main() {
   command -v readlink >/dev/null 2>&1 || die "readlink is required"
   command -v stat >/dev/null 2>&1 || die "stat is required"
 
-  local runtime_env="${MODELPORT_RUNTIME_ENV_FILE:-}"
-  local config_file="${MODELPORT_CONFIG_FILE:-}"
-  local database_ca="${MODELPORT_DATABASE_CA_FILE:-}"
-  local ownership_file="${MODELPORT_OWNERSHIP_FILE:-}"
+  local runtime_env="${ROUTEPILOT_RUNTIME_ENV_FILE:-}"
+  local config_file="${ROUTEPILOT_CONFIG_FILE:-}"
+  local database_ca="${ROUTEPILOT_DATABASE_CA_FILE:-}"
+  local ownership_file="${ROUTEPILOT_OWNERSHIP_FILE:-}"
   local runtime_real mode owner_uid current_uid
 
-  require_file "MODELPORT_RUNTIME_ENV_FILE" "$runtime_env"
-  require_file "MODELPORT_CONFIG_FILE" "$config_file"
-  require_file "MODELPORT_DATABASE_CA_FILE" "$database_ca"
-  require_file "MODELPORT_OWNERSHIP_FILE" "$ownership_file"
+  require_file "ROUTEPILOT_RUNTIME_ENV_FILE" "$runtime_env"
+  require_file "ROUTEPILOT_CONFIG_FILE" "$config_file"
+  require_file "ROUTEPILOT_DATABASE_CA_FILE" "$database_ca"
+  require_file "ROUTEPILOT_OWNERSHIP_FILE" "$ownership_file"
   [[ -s "$database_ca" ]] || die "database CA file must not be empty"
-  require_digest_image "MODELPORT_IMAGE" "${MODELPORT_IMAGE:-}"
-  require_digest_image "MODELPORT_DASHBOARD_IMAGE" "${MODELPORT_DASHBOARD_IMAGE:-}"
+  require_digest_image "ROUTEPILOT_IMAGE" "${ROUTEPILOT_IMAGE:-}"
+  require_digest_image "ROUTEPILOT_DASHBOARD_IMAGE" "${ROUTEPILOT_DASHBOARD_IMAGE:-}"
   "$ROOT_DIR/scripts/operations-ownership-preflight.sh" "$ownership_file"
 
   runtime_real="$(readlink -f "$runtime_env")"
@@ -88,18 +88,18 @@ for number, raw in enumerate(env_path.read_text(encoding="utf-8").splitlines(), 
     values[key] = value
 
 required = {
-    "MODELPORT_DATABASE_URL",
-    "MODELPORT_AUTH_TOKEN",
-    "MODELPORT_HEALTHCHECK_API_KEY",
-    "MODELPORT_ADMIN_USERNAME",
-    "MODELPORT_ADMIN_PASSWORD",
-    "MODELPORT_BACKUP_ADMIN_USERNAME",
-    "MODELPORT_BACKUP_ADMIN_EMAIL",
-    "MODELPORT_BACKUP_ADMIN_PASSWORD",
-    "MODELPORT_OIDC_ISSUER",
-    "MODELPORT_OIDC_CLIENT_ID",
-    "MODELPORT_OIDC_CLIENT_SECRET",
-    "MODELPORT_OIDC_REDIRECT_URI",
+    "ROUTEPILOT_DATABASE_URL",
+    "ROUTEPILOT_AUTH_TOKEN",
+    "ROUTEPILOT_HEALTHCHECK_API_KEY",
+    "ROUTEPILOT_ADMIN_USERNAME",
+    "ROUTEPILOT_ADMIN_PASSWORD",
+    "ROUTEPILOT_BACKUP_ADMIN_USERNAME",
+    "ROUTEPILOT_BACKUP_ADMIN_EMAIL",
+    "ROUTEPILOT_BACKUP_ADMIN_PASSWORD",
+    "ROUTEPILOT_OIDC_ISSUER",
+    "ROUTEPILOT_OIDC_CLIENT_ID",
+    "ROUTEPILOT_OIDC_CLIENT_SECRET",
+    "ROUTEPILOT_OIDC_REDIRECT_URI",
 }
 missing = sorted(key for key in required if not values.get(key))
 if missing:
@@ -109,29 +109,29 @@ for key in required:
     if "placeholder" in value.lower() or value.startswith("replace-with-"):
         raise SystemExit(f"runtime env contains a placeholder for {key}")
 
-database = urlparse(values["MODELPORT_DATABASE_URL"])
+database = urlparse(values["ROUTEPILOT_DATABASE_URL"])
 if database.scheme not in {"postgres", "postgresql"} or not database.hostname:
-    raise SystemExit("MODELPORT_DATABASE_URL must be a PostgreSQL URL with a hostname")
+    raise SystemExit("ROUTEPILOT_DATABASE_URL must be a PostgreSQL URL with a hostname")
 query = parse_qs(database.query)
 if query.get("sslmode") != ["verify-full"]:
-    raise SystemExit("MODELPORT_DATABASE_URL must set sslmode=verify-full")
-if query.get("sslrootcert") != ["/run/modelport/database-ca.pem"]:
+    raise SystemExit("ROUTEPILOT_DATABASE_URL must set sslmode=verify-full")
+if query.get("sslrootcert") != ["/run/routepilot/database-ca.pem"]:
     raise SystemExit(
-        "MODELPORT_DATABASE_URL must set "
-        "sslrootcert=/run/modelport/database-ca.pem"
+        "ROUTEPILOT_DATABASE_URL must set "
+        "sslrootcert=/run/routepilot/database-ca.pem"
     )
 
-issuer = urlparse(values["MODELPORT_OIDC_ISSUER"])
-redirect = urlparse(values["MODELPORT_OIDC_REDIRECT_URI"])
+issuer = urlparse(values["ROUTEPILOT_OIDC_ISSUER"])
+redirect = urlparse(values["ROUTEPILOT_OIDC_REDIRECT_URI"])
 if issuer.scheme != "https" or not issuer.hostname:
-    raise SystemExit("MODELPORT_OIDC_ISSUER must be an absolute HTTPS URL")
+    raise SystemExit("ROUTEPILOT_OIDC_ISSUER must be an absolute HTTPS URL")
 if redirect.scheme != "https" or not redirect.hostname:
-    raise SystemExit("MODELPORT_OIDC_REDIRECT_URI must be an absolute HTTPS URL")
+    raise SystemExit("ROUTEPILOT_OIDC_REDIRECT_URI must be an absolute HTTPS URL")
 if redirect.path != "/admin/auth/oidc/callback" or redirect.query or redirect.fragment:
     raise SystemExit(
-        "MODELPORT_OIDC_REDIRECT_URI must use /admin/auth/oidc/callback without query or fragment"
+        "ROUTEPILOT_OIDC_REDIRECT_URI must use /admin/auth/oidc/callback without query or fragment"
     )
-if values.get("MODELPORT_OIDC_AUTO_PROVISION", "0") not in {"0", "false", "False"}:
+if values.get("ROUTEPILOT_OIDC_AUTO_PROVISION", "0") not in {"0", "false", "False"}:
     raise SystemExit("production OIDC auto-provision must remain disabled")
 
 config = tomllib.loads(config_path.read_text(encoding="utf-8"))
@@ -151,7 +151,7 @@ if missing_provider:
     )
 
 print(
-    "[modelport-production] preflight passed: "
+    "[routepilot-production] preflight passed: "
     f"required_keys={len(required)} provider_credential_refs={len(credential_envs)}"
 )
 PY

@@ -1,7 +1,7 @@
-# Minimal, self-contained ModelPort configuration.
+# Minimal, self-contained RoutePilot configuration.
 #
 # Copy this file to `config.toml`, set the referenced secrets in the process
-# environment, then run `model-port config validate`. In TOML mode, add every
+# environment, then run `routepilot config validate`. In TOML mode, add every
 # optional Provider explicitly and keep its secrets in environment variables;
 # see docs/CONFIGURATION.md.
 
@@ -14,7 +14,7 @@ max_request_body_bytes = 33554432
 max_concurrent_requests = 64
 
 [auth]
-token_env = "MODELPORT_AUTH_TOKEN"
+token_env = "ROUTEPILOT_AUTH_TOKEN"
 
 # DeepSeek's Anthropic-compatible endpoint keeps the client contract intact.
 [providers.deepseek]
@@ -89,7 +89,7 @@ policy_version = "builtin-v1"
 activation_percent = 0
 
 [routing.groups.general]
-aliases = ["modelport-auto"]
+aliases = ["routepilot-auto"]
 default_profile = "balanced"
 
 [[routing.groups.general.candidates]]

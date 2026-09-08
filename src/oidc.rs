@@ -32,7 +32,7 @@ use crate::{
 };
 
 pub const OIDC_START_URL: &str = "/admin/auth/oidc/start";
-pub const OIDC_FLOW_COOKIE: &str = "modelport_oidc_flow";
+pub const OIDC_FLOW_COOKIE: &str = "routepilot_oidc_flow";
 
 const DEFAULT_LABEL: &str = "Single sign-on";
 const DEFAULT_USERNAME_CLAIM: &str = "preferred_username";
@@ -257,7 +257,7 @@ impl OidcService {
                 inner,
                 allow_insecure_loopback,
             },
-            cookie_secure: env_flag("MODELPORT_ADMIN_COOKIE_SECURE"),
+            cookie_secure: env_flag("ROUTEPILOT_ADMIN_COOKIE_SECURE"),
         })
     }
 
@@ -493,10 +493,10 @@ impl OidcService {
 
 impl OidcConfig {
     fn from_env() -> Result<Option<Self>, AppError> {
-        let issuer = env_optional("MODELPORT_OIDC_ISSUER");
-        let client_id = env_optional("MODELPORT_OIDC_CLIENT_ID");
-        let client_secret = env_optional("MODELPORT_OIDC_CLIENT_SECRET");
-        let redirect_uri = env_optional("MODELPORT_OIDC_REDIRECT_URI");
+        let issuer = env_optional("ROUTEPILOT_OIDC_ISSUER");
+        let client_id = env_optional("ROUTEPILOT_OIDC_CLIENT_ID");
+        let client_secret = env_optional("ROUTEPILOT_OIDC_CLIENT_SECRET");
+        let redirect_uri = env_optional("ROUTEPILOT_OIDC_REDIRECT_URI");
         let any_configured = issuer.is_some()
             || client_id.is_some()
             || client_secret.is_some()
@@ -506,65 +506,67 @@ impl OidcConfig {
         }
 
         let issuer = issuer.ok_or_else(|| {
-            AppError::Config("MODELPORT_OIDC_ISSUER is required when OIDC is configured".to_owned())
+            AppError::Config(
+                "ROUTEPILOT_OIDC_ISSUER is required when OIDC is configured".to_owned(),
+            )
         })?;
         let client_id = client_id.ok_or_else(|| {
             AppError::Config(
-                "MODELPORT_OIDC_CLIENT_ID is required when OIDC is configured".to_owned(),
+                "ROUTEPILOT_OIDC_CLIENT_ID is required when OIDC is configured".to_owned(),
             )
         })?;
         let redirect_uri = redirect_uri.ok_or_else(|| {
             AppError::Config(
-                "MODELPORT_OIDC_REDIRECT_URI is required when OIDC is configured".to_owned(),
+                "ROUTEPILOT_OIDC_REDIRECT_URI is required when OIDC is configured".to_owned(),
             )
         })?;
         if client_secret.as_deref().is_some_and(is_placeholder_value) {
             return Err(AppError::Config(
-                "MODELPORT_OIDC_CLIENT_SECRET must not be a placeholder".to_owned(),
+                "ROUTEPILOT_OIDC_CLIENT_SECRET must not be a placeholder".to_owned(),
             ));
         }
-        let allow_insecure_loopback = env_flag("MODELPORT_OIDC_ALLOW_INSECURE_HTTP");
+        let allow_insecure_loopback = env_flag("ROUTEPILOT_OIDC_ALLOW_INSECURE_HTTP");
         let issuer_url =
-            validate_config_url(&issuer, allow_insecure_loopback, "MODELPORT_OIDC_ISSUER")?;
+            validate_config_url(&issuer, allow_insecure_loopback, "ROUTEPILOT_OIDC_ISSUER")?;
         if issuer_url.query().is_some() || issuer_url.fragment().is_some() {
             return Err(AppError::Config(
-                "MODELPORT_OIDC_ISSUER must not contain a query or fragment".to_owned(),
+                "ROUTEPILOT_OIDC_ISSUER must not contain a query or fragment".to_owned(),
             ));
         }
         let redirect_url = validate_config_url(
             &redirect_uri,
             allow_insecure_loopback,
-            "MODELPORT_OIDC_REDIRECT_URI",
+            "ROUTEPILOT_OIDC_REDIRECT_URI",
         )?;
         if redirect_url.path() != "/admin/auth/oidc/callback"
             || redirect_url.query().is_some()
             || redirect_url.fragment().is_some()
         {
             return Err(AppError::Config(
-                "MODELPORT_OIDC_REDIRECT_URI must use path /admin/auth/oidc/callback without a query or fragment"
+                "ROUTEPILOT_OIDC_REDIRECT_URI must use path /admin/auth/oidc/callback without a query or fragment"
                     .to_owned(),
             ));
         }
-        if redirect_url.scheme() == "https" && !env_flag("MODELPORT_ADMIN_COOKIE_SECURE") {
+        if redirect_url.scheme() == "https" && !env_flag("ROUTEPILOT_ADMIN_COOKIE_SECURE") {
             return Err(AppError::Config(
-                "MODELPORT_ADMIN_COOKIE_SECURE=1 is required for an HTTPS OIDC redirect URI"
+                "ROUTEPILOT_ADMIN_COOKIE_SECURE=1 is required for an HTTPS OIDC redirect URI"
                     .to_owned(),
             ));
         }
 
         let label =
-            env_optional("MODELPORT_OIDC_LABEL").unwrap_or_else(|| DEFAULT_LABEL.to_owned());
+            env_optional("ROUTEPILOT_OIDC_LABEL").unwrap_or_else(|| DEFAULT_LABEL.to_owned());
         if label.len() > 80 || label.chars().any(char::is_control) {
             return Err(AppError::Config(
-                "MODELPORT_OIDC_LABEL must be at most 80 characters".to_owned(),
+                "ROUTEPILOT_OIDC_LABEL must be at most 80 characters".to_owned(),
             ));
         }
-        let username_claim = env_optional("MODELPORT_OIDC_USERNAME_CLAIM")
+        let username_claim = env_optional("ROUTEPILOT_OIDC_USERNAME_CLAIM")
             .unwrap_or_else(|| DEFAULT_USERNAME_CLAIM.to_owned());
-        let email_claim = env_optional("MODELPORT_OIDC_EMAIL_CLAIM")
+        let email_claim = env_optional("ROUTEPILOT_OIDC_EMAIL_CLAIM")
             .unwrap_or_else(|| DEFAULT_EMAIL_CLAIM.to_owned());
-        validate_claim_name(&username_claim, "MODELPORT_OIDC_USERNAME_CLAIM")?;
-        validate_claim_name(&email_claim, "MODELPORT_OIDC_EMAIL_CLAIM")?;
+        validate_claim_name(&username_claim, "ROUTEPILOT_OIDC_USERNAME_CLAIM")?;
+        validate_claim_name(&email_claim, "ROUTEPILOT_OIDC_EMAIL_CLAIM")?;
 
         Ok(Some(Self {
             issuer,
@@ -572,7 +574,7 @@ impl OidcConfig {
             client_secret,
             redirect_uri,
             label,
-            auto_provision: env_flag("MODELPORT_OIDC_AUTO_PROVISION"),
+            auto_provision: env_flag("ROUTEPILOT_OIDC_AUTO_PROVISION"),
             username_claim,
             email_claim,
             allow_insecure_loopback,
@@ -630,7 +632,7 @@ fn validate_config_url(
         .map_err(|_| AppError::Config(format!("{variable} must be an absolute URL")))?;
     if !url_is_allowed(&url, allow_insecure_loopback) {
         return Err(AppError::Config(format!(
-            "{variable} must use HTTPS; loopback HTTP requires MODELPORT_OIDC_ALLOW_INSECURE_HTTP=1"
+            "{variable} must use HTTPS; loopback HTTP requires ROUTEPILOT_OIDC_ALLOW_INSECURE_HTTP=1"
         )));
     }
     Ok(url)

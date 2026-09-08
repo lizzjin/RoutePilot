@@ -16,10 +16,10 @@ fi
 
 source_revision="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 source_state="clean"
-modelport_version="$(
+routepilot_version="$(
   sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -n 1
 )"
-if [[ -z "$modelport_version" ]]; then
+if [[ -z "$routepilot_version" ]]; then
   die "could not read package version from Cargo.toml"
 fi
 build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -30,40 +30,40 @@ if [[ -n "$(git -C "$ROOT_DIR" status --porcelain=v1)" ]]; then
   fi
 fi
 
-log "building ModelPort images version=$modelport_version revision=$source_revision source_state=$source_state"
+log "building RoutePilot images version=$routepilot_version revision=$source_revision source_state=$source_state"
 common_args=(
-  --build-arg "MODELPORT_VERSION=$modelport_version"
-  --build-arg "MODELPORT_SOURCE_REVISION=$source_revision"
-  --build-arg "MODELPORT_SOURCE_STATE=$source_state"
-  --build-arg "MODELPORT_BUILD_DATE=$build_date"
+  --build-arg "ROUTEPILOT_VERSION=$routepilot_version"
+  --build-arg "ROUTEPILOT_SOURCE_REVISION=$source_revision"
+  --build-arg "ROUTEPILOT_SOURCE_STATE=$source_state"
+  --build-arg "ROUTEPILOT_BUILD_DATE=$build_date"
 )
 
 docker build \
   "${common_args[@]}" \
   --file "$ROOT_DIR/Dockerfile" \
-  --tag modelport:local \
+  --tag routepilot:local \
   "$ROOT_DIR"
 docker build \
   "${common_args[@]}" \
   --file "$ROOT_DIR/dashboard/Dockerfile" \
-  --tag modelport-dashboard:local \
+  --tag routepilot-dashboard:local \
   "$ROOT_DIR"
 docker build \
   "${common_args[@]}" \
   --file "$ROOT_DIR/ops-agent/Dockerfile" \
-  --tag modelport-ops-agent:local \
+  --tag routepilot-ops-agent:local \
   "$ROOT_DIR"
 
-for image in modelport:local modelport-dashboard:local modelport-ops-agent:local; do
+for image in routepilot:local routepilot-dashboard:local routepilot-ops-agent:local; do
   image_id="$(docker image inspect "$image" --format '{{.Id}}')"
   image_revision="$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
-  image_state="$(docker image inspect "$image" --format '{{index .Config.Labels "io.modelport.source-state"}}')"
+  image_state="$(docker image inspect "$image" --format '{{index .Config.Labels "io.routepilot.source-state"}}')"
   image_version="$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
 
-  if [[ "$image_revision" != "$source_revision" || "$image_state" != "$source_state" || "$image_version" != "$modelport_version" ]]; then
+  if [[ "$image_revision" != "$source_revision" || "$image_state" != "$source_state" || "$image_version" != "$routepilot_version" ]]; then
     die "$image provenance labels do not match the requested source state"
   fi
   log "built $image id=$image_id version=$image_version revision=$image_revision source_state=$image_state"
 done
 
-log "start these source-built images with: MODELPORT_LOCAL_BUILD=1 scripts/compose-up.sh"
+log "start these source-built images with: ROUTEPILOT_LOCAL_BUILD=1 scripts/compose-up.sh"

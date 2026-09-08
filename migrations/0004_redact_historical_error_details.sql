@@ -1,4 +1,4 @@
-CREATE FUNCTION pg_temp.modelport_safe_error(error_text text)
+CREATE FUNCTION pg_temp.routepilot_safe_error(error_text text)
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
@@ -33,10 +33,10 @@ AS $$
     END
 $$;
 
-UPDATE modelport_gateway_requests
-SET error_message = pg_temp.modelport_safe_error(error_message)
+UPDATE routepilot_gateway_requests
+SET error_message = pg_temp.routepilot_safe_error(error_message)
 WHERE error_message IS NOT NULL;
 
-UPDATE modelport_provider_attempts
-SET error_message = pg_temp.modelport_safe_error(error_message)
+UPDATE routepilot_provider_attempts
+SET error_message = pg_temp.routepilot_safe_error(error_message)
 WHERE error_message IS NOT NULL;

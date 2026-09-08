@@ -1,4 +1,4 @@
-# Maintained ModelPort side of contracts/local-qwen-provider-v1.json in
+# Maintained RoutePilot side of contracts/local-qwen-provider-v1.json in
 # local-inference-stack. Copy this file to config.toml; do not edit it in place.
 default_provider = "local_qwen"
 provider_order = ["local_qwen"]
@@ -9,7 +9,7 @@ max_request_body_bytes = 33554432
 max_concurrent_requests = 64
 
 [auth]
-token_env = "MODELPORT_AUTH_TOKEN"
+token_env = "ROUTEPILOT_AUTH_TOKEN"
 
 [providers.local_qwen]
 display_name = "Qwen3.5-9B Q5_K_M (local)"

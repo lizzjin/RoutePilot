@@ -8,10 +8,10 @@ source "$SCRIPT_DIR/lib.sh"
 if [[ -f "$ENV_FILE" ]]; then
   load_env
 else
-  MODELPORT_BIND="${MODELPORT_BIND:-127.0.0.1:38082}"
+  ROUTEPILOT_BIND="${ROUTEPILOT_BIND:-127.0.0.1:38082}"
 fi
 
-log "bind: $MODELPORT_BIND"
+log "bind: $ROUTEPILOT_BIND"
 log "pid file: $PID_FILE"
 log "log file: $LOG_FILE"
 
@@ -40,11 +40,11 @@ if health_ok; then
   log "liveness: ok"
   curl_local -fsS -m 3 "$(base_url)/livez"
   printf '\n'
-  if [[ -n "${MODELPORT_AUTH_TOKEN:-}" ]] && command -v node >/dev/null 2>&1; then
+  if [[ -n "${ROUTEPILOT_AUTH_TOKEN:-}" ]] && command -v node >/dev/null 2>&1; then
     readyz_file="$(mktemp)"
     trap 'rm -f "$readyz_file"' EXIT
     if curl_local -fsS -m 3 \
-      -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+      -H "x-api-key: $ROUTEPILOT_AUTH_TOKEN" \
       "$(base_url)/readyz" > "$readyz_file" 2>/dev/null; then
       recharge_summary="$(
         node -e '

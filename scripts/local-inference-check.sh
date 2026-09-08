@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STACK_DIR="${LOCAL_INFERENCE_STACK_DIR:-}"
-MODELPORT_CONFIG_PATH=""
+ROUTEPILOT_CONFIG_PATH=""
 RELEASE=0
 JSON=0
 
@@ -15,7 +15,7 @@ Usage:
 Options:
   --stack-dir <path>       local-inference-stack checkout. May also be supplied
                            through LOCAL_INFERENCE_STACK_DIR.
-  --config <path>          ModelPort config, relative to this checkout unless
+  --config <path>          RoutePilot config, relative to this checkout unless
                            absolute (default: config.toml).
   --release                Also check clean worktrees and the pinned gateway
                            source revision.
@@ -36,7 +36,7 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --config)
       [[ "$#" -ge 2 ]] || { printf '%s\n' '--config requires a path' >&2; exit 2; }
-      MODELPORT_CONFIG_PATH="$2"
+      ROUTEPILOT_CONFIG_PATH="$2"
       shift 2
       ;;
     --release)
@@ -86,11 +86,11 @@ fi
 
 arguments=(
   "$CHECKER"
-  --modelport-project "$ROOT_DIR"
+  --routepilot-project "$ROOT_DIR"
   --contract "$CONTRACT"
 )
-if [[ -n "$MODELPORT_CONFIG_PATH" ]]; then
-  arguments+=(--modelport-config "$MODELPORT_CONFIG_PATH")
+if [[ -n "$ROUTEPILOT_CONFIG_PATH" ]]; then
+  arguments+=(--routepilot-config "$ROUTEPILOT_CONFIG_PATH")
 fi
 if [[ "$RELEASE" -eq 1 ]]; then
   arguments+=(--release)

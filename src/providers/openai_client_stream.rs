@@ -218,7 +218,7 @@ pub(crate) fn anthropic_stream_to_openai(
                                 json!({
                                     "tool_calls": [{
                                         "index": tool_index,
-                                        "id": block.get("id").and_then(Value::as_str).unwrap_or("call_modelport"),
+                                        "id": block.get("id").and_then(Value::as_str).unwrap_or("call_routepilot"),
                                         "type": "function",
                                         "function": {
                                             "name": block.get("name").and_then(Value::as_str).unwrap_or("tool"),
@@ -438,7 +438,7 @@ pub(crate) fn openai_complete_to_stream(
                 .enumerate()
                 .map(|(index, call)| json!({
                     "index": index,
-                    "id": call.get("id").cloned().unwrap_or_else(|| Value::String("call_modelport".to_owned())),
+                    "id": call.get("id").cloned().unwrap_or_else(|| Value::String("call_routepilot".to_owned())),
                     "type": "function",
                     "function": call.get("function").cloned().unwrap_or_else(|| json!({
                         "name": "tool",

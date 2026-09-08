@@ -130,8 +130,8 @@ impl EffectiveCatalog {
                 }
                 alias_rows.push(json!({
                     "alias": alias,
-                    "target": format!("modelport-router:{alias}"),
-                    "resolvedProvider": "modelport-router",
+                    "target": format!("routepilot-router:{alias}"),
+                    "resolvedProvider": "routepilot-router",
                     "resolvedModel": alias,
                     "candidateCount": candidates.len(),
                 }));

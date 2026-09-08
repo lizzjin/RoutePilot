@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib.sh"
-COMPOSE_FILE="${MODELPORT_COMPOSE_FILE:-$ROOT_DIR/docker-compose.yml}"
+COMPOSE_FILE="${ROUTEPILOT_COMPOSE_FILE:-$ROOT_DIR/docker-compose.yml}"
 
 mode="runtime"
 upstream=0
@@ -30,7 +30,7 @@ Usage:
 Modes:
   --setup        Check Linux, Docker Compose, local files, and required values
                  before the first container pull/build or start. Set
-                 MODELPORT_COMPOSE_FILE to select the manifest. Does not start
+                 ROUTEPILOT_COMPOSE_FILE to select the manifest. Does not start
                  services.
   --development  Check the pinned Rust/Node toolchain and Linux C compiler.
                  Does not require local configuration or running services.
@@ -99,7 +99,7 @@ check_linux_platform() {
       ok "Linux environment detected (architecture=$architecture)"
     fi
   else
-    fail "ModelPort development and maintained scripts require Linux; detected ${kernel:-unknown}"
+    fail "RoutePilot development and maintained scripts require Linux; detected ${kernel:-unknown}"
   fi
 
   case "$architecture" in
@@ -160,9 +160,9 @@ load_doctor_env() {
     ok "loaded env file: $ENV_FILE"
   fi
 
-  MODELPORT_BIND="${MODELPORT_BIND:-127.0.0.1:38082}"
-  MODELPORT_AUTH_TOKEN="${MODELPORT_AUTH_TOKEN:-${ANTHROPIC_AUTH_TOKEN:-}}"
-  export MODELPORT_BIND MODELPORT_AUTH_TOKEN
+  ROUTEPILOT_BIND="${ROUTEPILOT_BIND:-127.0.0.1:38082}"
+  ROUTEPILOT_AUTH_TOKEN="${ROUTEPILOT_AUTH_TOKEN:-${ANTHROPIC_AUTH_TOKEN:-}}"
+  export ROUTEPILOT_BIND ROUTEPILOT_AUTH_TOKEN
 }
 
 check_env_is_ignored() {
@@ -178,7 +178,7 @@ check_env_is_ignored() {
       fail ".env is not ignored by git"
     fi
   else
-    warn "custom MODELPORT_ENV_FILE is used; verify it is not committed: $ENV_FILE"
+    warn "custom ROUTEPILOT_ENV_FILE is used; verify it is not committed: $ENV_FILE"
   fi
 
   if git -C "$ROOT_DIR" check-ignore -q config.toml; then
@@ -226,8 +226,8 @@ config_has_provider() {
 }
 
 check_provider_env() {
-  check_required_value MODELPORT_BIND
-  check_required_secret MODELPORT_AUTH_TOKEN
+  check_required_value ROUTEPILOT_BIND
+  check_required_secret ROUTEPILOT_AUTH_TOKEN
 
   if config_has_provider deepseek; then
     if is_placeholder_key; then
@@ -253,14 +253,14 @@ check_provider_env() {
     fi
   fi
 
-  if [[ "${ANTHROPIC_AUTH_TOKEN:-}" == "$MODELPORT_AUTH_TOKEN" ]]; then
-    ok "ANTHROPIC_AUTH_TOKEN matches MODELPORT_AUTH_TOKEN"
+  if [[ "${ANTHROPIC_AUTH_TOKEN:-}" == "$ROUTEPILOT_AUTH_TOKEN" ]]; then
+    ok "ANTHROPIC_AUTH_TOKEN matches ROUTEPILOT_AUTH_TOKEN"
   else
-    fail "ANTHROPIC_AUTH_TOKEN must match MODELPORT_AUTH_TOKEN"
+    fail "ANTHROPIC_AUTH_TOKEN must match ROUTEPILOT_AUTH_TOKEN"
   fi
 
   if [[ "${ANTHROPIC_BASE_URL:-}" == "$(base_url)" ]]; then
-    ok "ANTHROPIC_BASE_URL points to ModelPort"
+    ok "ANTHROPIC_BASE_URL points to RoutePilot"
   else
     warn "ANTHROPIC_BASE_URL is '${ANTHROPIC_BASE_URL:-unset}', expected '$(base_url)' for local VS Code"
   fi
@@ -278,9 +278,9 @@ check_provider_env() {
 
 check_compose_values() {
   check_provider_env
-  check_required_value MODELPORT_ADMIN_USERNAME
-  check_required_secret MODELPORT_ADMIN_PASSWORD
-  check_required_secret MODELPORT_POSTGRES_PASSWORD
+  check_required_value ROUTEPILOT_ADMIN_USERNAME
+  check_required_secret ROUTEPILOT_ADMIN_PASSWORD
+  check_required_secret ROUTEPILOT_POSTGRES_PASSWORD
 }
 
 check_compose_setup() {
@@ -402,18 +402,18 @@ check_development_tools() {
 
 check_static_config() {
   local body_file
-  local modelport_container
+  local routepilot_container
   local -a validate_command
   body_file="$(mktemp)"
   temp_files+=("$body_file")
 
-  modelport_container="$(
-    docker compose -f "$COMPOSE_FILE" ps -q modelport 2>/dev/null || true
+  routepilot_container="$(
+    docker compose -f "$COMPOSE_FILE" ps -q routepilot 2>/dev/null || true
   )"
-  if [[ -n "$modelport_container" ]]; then
+  if [[ -n "$routepilot_container" ]]; then
     validate_command=(
       docker compose -f "$COMPOSE_FILE"
-      exec -T modelport model-port config validate
+      exec -T routepilot routepilot config validate
     )
   else
     validate_command=("$SCRIPT_DIR/config-validate.sh")
@@ -449,7 +449,7 @@ check_gateway() {
     curl_local -sS -m 5 \
       -o "$body_file" \
       -w '%{http_code}' \
-      -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+      -H "x-api-key: $ROUTEPILOT_AUTH_TOKEN" \
       "$(base_url)/readyz" || true
   )"
 
@@ -464,7 +464,7 @@ check_gateway() {
     curl_local -sS -m 5 \
       -o "$body_file" \
       -w '%{http_code}' \
-      -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+      -H "x-api-key: $ROUTEPILOT_AUTH_TOKEN" \
       "$(base_url)/v1/models" || true
   )"
 
@@ -479,11 +479,11 @@ check_gateway() {
     curl_local -sS -m 5 \
       -o "$body_file" \
       -w '%{http_code}' \
-      -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+      -H "x-api-key: $ROUTEPILOT_AUTH_TOKEN" \
       "$(base_url)/metrics" || true
   )"
 
-  if [[ "$status" == "200" ]] && grep -q '^modelport_uptime_seconds ' "$body_file"; then
+  if [[ "$status" == "200" ]] && grep -q '^routepilot_uptime_seconds ' "$body_file"; then
     ok "authenticated /metrics returned Prometheus text"
   else
     fail "authenticated /metrics returned HTTP ${status:-unknown} or invalid body"
@@ -510,7 +510,7 @@ check_database_alignment() {
 
   body_file="$(mktemp)"
   temp_files+=("$body_file")
-  if MODELPORT_COMPOSE_FILE="$COMPOSE_FILE" \
+  if ROUTEPILOT_COMPOSE_FILE="$COMPOSE_FILE" \
     "$SCRIPT_DIR/database-preflight.sh" >"$body_file" 2>&1; then
     ok "running PostgreSQL image, volume, migrations, and durable state are aligned"
   else
@@ -529,7 +529,7 @@ check_vscode_settings_text() {
   fi
 
   if grep -Fq '"ANTHROPIC_BASE_URL"' "$settings_file" && grep -Fq "$(base_url)" "$settings_file"; then
-    ok "VS Code settings points ANTHROPIC_BASE_URL to ModelPort"
+    ok "VS Code settings points ANTHROPIC_BASE_URL to RoutePilot"
   else
     warn "VS Code settings may not point ANTHROPIC_BASE_URL to $(base_url)"
   fi
@@ -593,10 +593,10 @@ check_upstream_message() {
     curl_local -sS -m 60 \
       -o "$body_file" \
       -w '%{http_code}' \
-      -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+      -H "x-api-key: $ROUTEPILOT_AUTH_TOKEN" \
       -H 'Content-Type: application/json' \
       "$(base_url)/v1/messages" \
-      -d "$(printf '{"model":"%s","max_tokens":128,"messages":[{"role":"user","content":"用一句话回复：ModelPort doctor OK。"}]}' "$model")" || true
+      -d "$(printf '{"model":"%s","max_tokens":128,"messages":[{"role":"user","content":"用一句话回复：RoutePilot doctor OK。"}]}' "$model")" || true
   )"
 
   if [[ "$status" =~ ^[0-9]+$ && "$status" -ge 200 && "$status" -lt 300 ]]; then
@@ -634,9 +634,9 @@ case "$mode" in
 esac
 
 if [[ "$failures" -gt 0 ]]; then
-  printf '\nModelPort doctor (%s) failed: %d failure(s), %d warning(s).\n' \
+  printf '\nRoutePilot doctor (%s) failed: %d failure(s), %d warning(s).\n' \
     "$mode" "$failures" "$warnings" >&2
   exit 1
 fi
 
-printf '\nModelPort doctor (%s) passed: %d warning(s).\n' "$mode" "$warnings"
+printf '\nRoutePilot doctor (%s) passed: %d warning(s).\n' "$mode" "$warnings"

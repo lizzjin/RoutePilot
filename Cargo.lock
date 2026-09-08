@@ -1400,7 +1400,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "model-port"
+name = "routepilot"
 version = "0.1.0"
 dependencies = [
  "argon2",
@@ -1409,7 +1409,7 @@ dependencies = [
  "futures-util",
  "httpdate",
  "jsonschema",
- "modelport-ops-protocol",
+ "routepilot-ops-protocol",
  "openidconnect",
  "rand_core 0.6.4",
  "reqwest",
@@ -1428,12 +1428,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "modelport-ops-agent"
+name = "routepilot-ops-agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
- "modelport-ops-protocol",
+ "routepilot-ops-protocol",
  "reqwest",
  "serde_json",
  "sha2",
@@ -1445,7 +1445,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "modelport-ops-protocol"
+name = "routepilot-ops-protocol"
 version = "0.1.0"
 dependencies = [
  "serde",

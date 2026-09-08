@@ -472,7 +472,7 @@ mod tests {
             "account-a".to_owned(),
             TestCredential {
                 id: "account-a".to_owned(),
-                api_key_env: "MODELPORT_TEST_MISSING_CREDENTIAL".to_owned(),
+                api_key_env: "ROUTEPILOT_TEST_MISSING_CREDENTIAL".to_owned(),
             },
         );
 

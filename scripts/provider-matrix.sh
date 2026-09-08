@@ -16,7 +16,7 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/provider-matrix.sh [options]
 
-Runs real compatibility checks through the local ModelPort gateway.
+Runs real compatibility checks through the local RoutePilot gateway.
 Secrets are read from .env but never printed.
 
 Options:
@@ -129,7 +129,7 @@ fetch_model_catalog() {
   body_file="$(mktemp)"
   tmp_files+=("$body_file")
   curl_local -fsS -m 10 \
-    -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+    -H "x-api-key: $ROUTEPILOT_AUTH_TOKEN" \
     "$(base_url)/v1/models" > "$body_file"
 
   while IFS=$'\t' read -r model provider provider_id; do
@@ -222,8 +222,8 @@ check_non_stream() {
     curl_local -sS -m "$timeout_secs" \
       -o "$body_file" \
       -w '%{http_code}' \
-      -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
-      -H 'x-modelport-traffic-class: synthetic' \
+      -H "x-api-key: $ROUTEPILOT_AUTH_TOKEN" \
+      -H 'x-routepilot-traffic-class: synthetic' \
       -H 'Content-Type: application/json' \
       "$(base_url)/v1/messages" \
       -d "$(request_payload "$model" false)" || true
@@ -260,8 +260,8 @@ check_stream() {
     curl_local -N -sS -m "$timeout_secs" \
       -o "$body_file" \
       -w '%{http_code}' \
-      -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
-      -H 'x-modelport-traffic-class: synthetic' \
+      -H "x-api-key: $ROUTEPILOT_AUTH_TOKEN" \
+      -H 'x-routepilot-traffic-class: synthetic' \
       -H 'Content-Type: application/json' \
       "$(base_url)/v1/messages" \
       -d "$(request_payload "$model" true)" || true
@@ -306,7 +306,7 @@ if [[ "${#models[@]}" -eq 0 ]]; then
 fi
 
 if ! health_ok; then
-  die "ModelPort is not healthy at $(base_url). Run scripts/start.sh first."
+  die "RoutePilot is not healthy at $(base_url). Run scripts/start.sh first."
 fi
 
 log "checking provider compatibility through $(base_url)"
@@ -388,8 +388,8 @@ NODE
 fi
 
 if [[ "$failures" -gt 0 ]]; then
-  printf '\nModelPort provider matrix failed: %d failed check(s).\n' "$failures" >&2
+  printf '\nRoutePilot provider matrix failed: %d failed check(s).\n' "$failures" >&2
   exit 1
 fi
 
-printf '\nModelPort provider matrix passed for %d model(s).\n' "${#models[@]}"
+printf '\nRoutePilot provider matrix passed for %d model(s).\n' "${#models[@]}"

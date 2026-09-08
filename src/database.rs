@@ -11,28 +11,28 @@ const DEFAULT_POOL_SIZE: u32 = 16;
 const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 
 pub(crate) fn database_url() -> Option<String> {
-    non_empty_env("MODELPORT_DATABASE_URL")
+    non_empty_env("ROUTEPILOT_DATABASE_URL")
 }
 
 pub(crate) fn enterprise_database_url() -> Option<String> {
-    non_empty_env("MODELPORT_ENTERPRISE_DATABASE_URL").or_else(database_url)
+    non_empty_env("ROUTEPILOT_ENTERPRISE_DATABASE_URL").or_else(database_url)
 }
 
 pub(crate) fn enterprise_mode_enabled() -> Result<bool, AppError> {
     parse_flag(
-        "MODELPORT_ENTERPRISE_MODE",
-        non_empty_env("MODELPORT_ENTERPRISE_MODE").as_deref(),
+        "ROUTEPILOT_ENTERPRISE_MODE",
+        non_empty_env("ROUTEPILOT_ENTERPRISE_MODE").as_deref(),
     )
 }
 
 pub(crate) fn validate_configuration() -> Result<(), AppError> {
-    let enterprise_mode = non_empty_env("MODELPORT_ENTERPRISE_MODE");
+    let enterprise_mode = non_empty_env("ROUTEPILOT_ENTERPRISE_MODE");
     let control_url = database_url();
-    let ledger_url = non_empty_env("MODELPORT_ENTERPRISE_DATABASE_URL");
-    let tls_mode = non_empty_env("MODELPORT_DATABASE_TLS_MODE");
-    let max_connections = non_empty_env("MODELPORT_DATABASE_MAX_CONNECTIONS");
-    let min_connections = non_empty_env("MODELPORT_DATABASE_MIN_CONNECTIONS");
-    let acquire_timeout = non_empty_env("MODELPORT_DATABASE_ACQUIRE_TIMEOUT_SECS");
+    let ledger_url = non_empty_env("ROUTEPILOT_ENTERPRISE_DATABASE_URL");
+    let tls_mode = non_empty_env("ROUTEPILOT_DATABASE_TLS_MODE");
+    let max_connections = non_empty_env("ROUTEPILOT_DATABASE_MAX_CONNECTIONS");
+    let min_connections = non_empty_env("ROUTEPILOT_DATABASE_MIN_CONNECTIONS");
+    let acquire_timeout = non_empty_env("ROUTEPILOT_DATABASE_ACQUIRE_TIMEOUT_SECS");
     validate_values(DatabaseValidationValues {
         enterprise_mode: enterprise_mode.as_deref(),
         control_url: control_url.as_deref(),
@@ -56,48 +56,52 @@ struct DatabaseValidationValues<'a> {
 }
 
 fn validate_values(values: DatabaseValidationValues<'_>) -> Result<(), AppError> {
-    let enterprise = parse_flag("MODELPORT_ENTERPRISE_MODE", values.enterprise_mode)?;
+    let enterprise = parse_flag("ROUTEPILOT_ENTERPRISE_MODE", values.enterprise_mode)?;
 
     if values.control_url.is_none() {
         return Err(AppError::Config(
-            "MODELPORT_DATABASE_URL is required; current releases use PostgreSQL for all runtime state"
+            "ROUTEPILOT_DATABASE_URL is required; current releases use PostgreSQL for all runtime state"
                 .to_owned(),
         ));
     }
     if let Some(url) = values.control_url {
-        validate_database_url("MODELPORT_DATABASE_URL", url)?;
+        validate_database_url("ROUTEPILOT_DATABASE_URL", url)?;
     }
     if let Some(url) = values.ledger_url {
-        validate_database_url("MODELPORT_ENTERPRISE_DATABASE_URL", url)?;
+        validate_database_url("ROUTEPILOT_ENTERPRISE_DATABASE_URL", url)?;
     }
 
     ssl_mode_for(values.tls_mode, enterprise)?;
 
-    let max_connections =
-        parse_optional_u32("MODELPORT_DATABASE_MAX_CONNECTIONS", values.max_connections)?
-            .unwrap_or(DEFAULT_POOL_SIZE);
+    let max_connections = parse_optional_u32(
+        "ROUTEPILOT_DATABASE_MAX_CONNECTIONS",
+        values.max_connections,
+    )?
+    .unwrap_or(DEFAULT_POOL_SIZE);
     if max_connections == 0 {
         return Err(AppError::Config(
-            "MODELPORT_DATABASE_MAX_CONNECTIONS must be at least 1".to_owned(),
+            "ROUTEPILOT_DATABASE_MAX_CONNECTIONS must be at least 1".to_owned(),
         ));
     }
-    let min_connections =
-        parse_optional_u32("MODELPORT_DATABASE_MIN_CONNECTIONS", values.min_connections)?
-            .unwrap_or(0);
+    let min_connections = parse_optional_u32(
+        "ROUTEPILOT_DATABASE_MIN_CONNECTIONS",
+        values.min_connections,
+    )?
+    .unwrap_or(0);
     if min_connections > max_connections {
         return Err(AppError::Config(
-            "MODELPORT_DATABASE_MIN_CONNECTIONS must not exceed MODELPORT_DATABASE_MAX_CONNECTIONS"
+            "ROUTEPILOT_DATABASE_MIN_CONNECTIONS must not exceed ROUTEPILOT_DATABASE_MAX_CONNECTIONS"
                 .to_owned(),
         ));
     }
     let acquire_timeout = parse_optional_u64(
-        "MODELPORT_DATABASE_ACQUIRE_TIMEOUT_SECS",
+        "ROUTEPILOT_DATABASE_ACQUIRE_TIMEOUT_SECS",
         values.acquire_timeout,
     )?
     .unwrap_or(DEFAULT_ACQUIRE_TIMEOUT_SECS);
     if acquire_timeout == 0 {
         return Err(AppError::Config(
-            "MODELPORT_DATABASE_ACQUIRE_TIMEOUT_SECS must be at least 1".to_owned(),
+            "ROUTEPILOT_DATABASE_ACQUIRE_TIMEOUT_SECS must be at least 1".to_owned(),
         ));
     }
     Ok(())
@@ -109,14 +113,14 @@ pub(crate) async fn connect_pool(
 ) -> Result<PgPool, AppError> {
     let enterprise = enterprise_mode_enabled()?;
     let max_connections = max_connections
-        .or_else(|| env_u32("MODELPORT_DATABASE_MAX_CONNECTIONS"))
+        .or_else(|| env_u32("ROUTEPILOT_DATABASE_MAX_CONNECTIONS"))
         .unwrap_or(DEFAULT_POOL_SIZE)
         .max(1);
-    let min_connections = env_u32("MODELPORT_DATABASE_MIN_CONNECTIONS")
+    let min_connections = env_u32("ROUTEPILOT_DATABASE_MIN_CONNECTIONS")
         .unwrap_or(0)
         .min(max_connections);
     let acquire_timeout = Duration::from_secs(
-        env_u64("MODELPORT_DATABASE_ACQUIRE_TIMEOUT_SECS")
+        env_u64("ROUTEPILOT_DATABASE_ACQUIRE_TIMEOUT_SECS")
             .unwrap_or(DEFAULT_ACQUIRE_TIMEOUT_SECS)
             .max(1),
     );
@@ -141,7 +145,7 @@ fn connect_options(database_url: &str, enterprise: bool) -> Result<PgConnectOpti
         ));
     }
     PgConnectOptions::from_str(database_url)
-        .map(|options| options.ssl_mode(ssl_mode).application_name("modelport"))
+        .map(|options| options.ssl_mode(ssl_mode).application_name("routepilot"))
         .map_err(|_| {
             AppError::Config(
                 "invalid PostgreSQL connection URL; verify its scheme, encoded credentials, host, port, and database name"
@@ -151,7 +155,7 @@ fn connect_options(database_url: &str, enterprise: bool) -> Result<PgConnectOpti
 }
 
 fn configured_ssl_mode(enterprise: bool) -> Result<PgSslMode, AppError> {
-    let configured = non_empty_env("MODELPORT_DATABASE_TLS_MODE");
+    let configured = non_empty_env("ROUTEPILOT_DATABASE_TLS_MODE");
     ssl_mode_for(configured.as_deref(), enterprise)
 }
 
@@ -165,7 +169,8 @@ fn ssl_mode_for(configured: Option<&str>, enterprise: bool) -> Result<PgSslMode,
         })
     {
         return Err(AppError::Config(
-            "MODELPORT_ENTERPRISE_MODE requires MODELPORT_DATABASE_TLS_MODE=verify-full".to_owned(),
+            "ROUTEPILOT_ENTERPRISE_MODE requires ROUTEPILOT_DATABASE_TLS_MODE=verify-full"
+                .to_owned(),
         ));
     }
     let mode = configured
@@ -189,7 +194,7 @@ fn parse_ssl_mode(value: &str) -> Result<PgSslMode, AppError> {
         "verify-ca" | "verify_ca" => Ok(PgSslMode::VerifyCa),
         "verify-full" | "verify_full" => Ok(PgSslMode::VerifyFull),
         _ => Err(AppError::Config(format!(
-            "invalid MODELPORT_DATABASE_TLS_MODE={value:?}; expected disable, allow, prefer, require, verify-ca, or verify-full"
+            "invalid ROUTEPILOT_DATABASE_TLS_MODE={value:?}; expected disable, allow, prefer, require, verify-ca, or verify-full"
         ))),
     }
 }
@@ -201,7 +206,7 @@ pub(crate) fn redact_database_url(url: &str) -> String {
     let Some((userinfo, host)) = rest.split_once('@') else {
         return format!("{scheme}://{rest}");
     };
-    let username = userinfo.split(':').next().unwrap_or("modelport");
+    let username = userinfo.split(':').next().unwrap_or("routepilot");
     format!("{scheme}://{username}:<redacted>@{host}")
 }
 
@@ -303,7 +308,7 @@ mod tests {
 
     #[test]
     fn connection_options_apply_the_enterprise_tls_policy() {
-        let url = "postgres://modelport:secret@db.example:5432/modelport";
+        let url = "postgres://routepilot:secret@db.example:5432/routepilot";
         assert!(matches!(
             connect_options(url, true).unwrap().get_ssl_mode(),
             PgSslMode::VerifyFull
@@ -316,28 +321,30 @@ mod tests {
 
     #[test]
     fn database_url_redaction_preserves_target_but_not_password() {
-        let redacted = redact_database_url("postgres://alice:secret@db:5432/modelport");
-        assert_eq!(redacted, "postgres://alice:<redacted>@db:5432/modelport");
+        let redacted = redact_database_url("postgres://alice:secret@db:5432/routepilot");
+        assert_eq!(redacted, "postgres://alice:<redacted>@db:5432/routepilot");
         assert!(!redacted.contains("secret"));
     }
 
     #[test]
     fn deployment_values_reject_invalid_flags_and_pool_numbers() {
-        assert!(parse_flag("MODELPORT_ENTERPRISE_MODE", Some("maybe")).is_err());
-        assert!(parse_flag("MODELPORT_ENTERPRISE_MODE", Some("yes")).unwrap());
-        assert!(parse_optional_u32("MODELPORT_DATABASE_MAX_CONNECTIONS", Some("many")).is_err());
-        assert!(parse_optional_u64("MODELPORT_DATABASE_ACQUIRE_TIMEOUT_SECS", Some("-1")).is_err());
+        assert!(parse_flag("ROUTEPILOT_ENTERPRISE_MODE", Some("maybe")).is_err());
+        assert!(parse_flag("ROUTEPILOT_ENTERPRISE_MODE", Some("yes")).unwrap());
+        assert!(parse_optional_u32("ROUTEPILOT_DATABASE_MAX_CONNECTIONS", Some("many")).is_err());
+        assert!(
+            parse_optional_u64("ROUTEPILOT_DATABASE_ACQUIRE_TIMEOUT_SECS", Some("-1")).is_err()
+        );
     }
 
     #[test]
     fn database_url_validation_never_echoes_a_secret() {
         let error = validate_database_url(
-            "MODELPORT_DATABASE_URL",
-            "not-postgres://alice:super-secret@db/modelport",
+            "ROUTEPILOT_DATABASE_URL",
+            "not-postgres://alice:super-secret@db/routepilot",
         )
         .unwrap_err()
         .to_string();
-        assert!(error.contains("MODELPORT_DATABASE_URL"));
+        assert!(error.contains("ROUTEPILOT_DATABASE_URL"));
         assert!(!error.contains("super-secret"));
     }
 
@@ -349,11 +356,11 @@ mod tests {
         })
         .unwrap_err()
         .to_string();
-        assert!(missing_database.contains("MODELPORT_DATABASE_URL"));
+        assert!(missing_database.contains("ROUTEPILOT_DATABASE_URL"));
 
         let weak_tls = validate_values(DatabaseValidationValues {
             enterprise_mode: Some("1"),
-            control_url: Some("postgres://modelport:secret@db:5432/modelport"),
+            control_url: Some("postgres://routepilot:secret@db:5432/routepilot"),
             tls_mode: Some("disable"),
             ..DatabaseValidationValues::default()
         })
@@ -366,7 +373,7 @@ mod tests {
     #[test]
     fn deployment_rejects_inconsistent_pool_bounds() {
         let error = validate_values(DatabaseValidationValues {
-            control_url: Some("postgres://modelport:secret@db:5432/modelport"),
+            control_url: Some("postgres://routepilot:secret@db:5432/routepilot"),
             max_connections: Some("4"),
             min_connections: Some("5"),
             ..DatabaseValidationValues::default()
@@ -377,7 +384,7 @@ mod tests {
 
         assert!(
             validate_values(DatabaseValidationValues {
-                control_url: Some("postgres://modelport:secret@db:5432/modelport"),
+                control_url: Some("postgres://routepilot:secret@db:5432/routepilot"),
                 max_connections: Some("16"),
                 min_connections: Some("2"),
                 acquire_timeout: Some("10"),

@@ -1,5 +1,5 @@
 modules:
-  modelport_ready:
+  routepilot_ready:
     prober: http
     timeout: 5s
     http:
@@ -9,4 +9,4 @@ modules:
       preferred_ip_protocol: ip4
       authorization:
         type: Bearer
-        credentials_file: /run/secrets/modelport_probe_key
+        credentials_file: /run/secrets/routepilot_probe_key

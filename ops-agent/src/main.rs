@@ -4,8 +4,8 @@ use std::{env, net::SocketAddr, path::Path, str::FromStr, sync::Arc, time::Durat
 
 use anyhow::{Context, Result, bail};
 use axum::{Json, Router, extract::State, routing::get};
-use modelport_ops_protocol::{OpsAgentConfiguration, OpsHeartbeat, OpsObservation, OpsSnapshot};
 use reqwest::Client;
+use routepilot_ops_protocol::{OpsAgentConfiguration, OpsHeartbeat, OpsObservation, OpsSnapshot};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool, sqlite::SqliteConnectOptions};
@@ -29,39 +29,39 @@ struct Config {
 
 impl Config {
     fn from_env() -> Result<Self> {
-        let mode = value("MODELPORT_OPS_MODE", "disabled");
+        let mode = value("ROUTEPILOT_OPS_MODE", "disabled");
         if !matches!(
             mode.as_str(),
             "disabled" | "replay" | "shadow" | "read_only"
         ) {
-            bail!("MODELPORT_OPS_MODE must be disabled, replay, shadow, or read_only");
+            bail!("ROUTEPILOT_OPS_MODE must be disabled, replay, shadow, or read_only");
         }
-        let interval_seconds = value("MODELPORT_OPS_INTERVAL_SECONDS", "300")
+        let interval_seconds = value("ROUTEPILOT_OPS_INTERVAL_SECONDS", "300")
             .parse::<u64>()
-            .context("MODELPORT_OPS_INTERVAL_SECONDS must be an integer")?
+            .context("ROUTEPILOT_OPS_INTERVAL_SECONDS must be an integer")?
             .clamp(10, 3_600);
-        let api_key = env::var("MODELPORT_OPS_API_KEY").unwrap_or_default();
+        let api_key = env::var("ROUTEPILOT_OPS_API_KEY").unwrap_or_default();
         if mode != "disabled" && api_key.trim().is_empty() {
-            bail!("MODELPORT_OPS_API_KEY is required unless the agent is disabled");
+            bail!("ROUTEPILOT_OPS_API_KEY is required unless the agent is disabled");
         }
         Ok(Self {
-            base_url: value("MODELPORT_OPS_BASE_URL", "http://modelport:38082")
+            base_url: value("ROUTEPILOT_OPS_BASE_URL", "http://routepilot:38082")
                 .trim_end_matches('/')
                 .to_owned(),
             api_key,
             mode,
             interval: Duration::from_secs(interval_seconds),
-            bind: value("MODELPORT_OPS_BIND", "0.0.0.0:38083")
+            bind: value("ROUTEPILOT_OPS_BIND", "0.0.0.0:38083")
                 .parse()
-                .context("MODELPORT_OPS_BIND must be a socket address")?,
+                .context("ROUTEPILOT_OPS_BIND must be a socket address")?,
             spool_path: value(
-                "MODELPORT_OPS_SPOOL_PATH",
-                "/var/lib/modelport-ops/spool.sqlite",
+                "ROUTEPILOT_OPS_SPOOL_PATH",
+                "/var/lib/routepilot-ops/spool.sqlite",
             ),
-            webhook_url: env::var("MODELPORT_OPS_WEBHOOK_URL")
+            webhook_url: env::var("ROUTEPILOT_OPS_WEBHOOK_URL")
                 .ok()
                 .filter(|url| !url.trim().is_empty()),
-            model_api_key: env::var("MODELPORT_OPS_MODEL_API_KEY").unwrap_or_default(),
+            model_api_key: env::var("ROUTEPILOT_OPS_MODEL_API_KEY").unwrap_or_default(),
         })
     }
 }
@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "modelport_ops_agent=info".into()),
+                .unwrap_or_else(|_| "routepilot_ops_agent=info".into()),
         )
         .init();
     let config = Arc::new(Config::from_env()?);
@@ -112,7 +112,7 @@ async fn main() -> Result<()> {
         .route("/readyz", get(readyz))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
-    info!(bind = %config.bind, mode = %config.mode, "ModelPort operations agent started");
+    info!(bind = %config.bind, mode = %config.mode, "RoutePilot operations agent started");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
@@ -387,7 +387,7 @@ async fn request_model_analysis(
             "messages": [
                 {
                     "role": "system",
-                    "content": "你是 ModelPort 只读运维诊断助手。只能依据给定的脱敏事实回答，不得臆测密钥、提示词或用户内容，不得声称已执行操作。用简洁中文给出：可能原因、验证步骤、建议动作和风险；明确区分事实与推断。"
+                    "content": "你是 RoutePilot 只读运维诊断助手。只能依据给定的脱敏事实回答，不得臆测密钥、提示词或用户内容，不得声称已执行操作。用简洁中文给出：可能原因、验证步骤、建议动作和风险；明确区分事实与推断。"
                 },
                 {
                     "role": "user",
@@ -510,7 +510,7 @@ async fn send_webhook_once(state: &AppState, observation: &OpsObservation, accep
         return;
     }
     let payload = json!({
-        "schemaVersion": "modelport.ops.webhook.v1",
+        "schemaVersion": "routepilot.ops.webhook.v1",
         "eventKey": observation.event_key,
         "severity": observation.severity,
         "title": observation.title,
@@ -565,7 +565,7 @@ async fn queue_depth(pool: &SqlitePool) -> Result<u64> {
 async fn livez() -> Json<Value> {
     Json(json!({
         "status": "ok",
-        "service": "modelport-ops-agent",
+        "service": "routepilot-ops-agent",
         "version": VERSION,
     }))
 }
@@ -644,7 +644,7 @@ mod tests {
     #[tokio::test]
     async fn sqlite_spool_deduplicates_identical_observation() {
         let path = std::env::temp_dir().join(format!(
-            "modelport-ops-spool-{}-{}.sqlite",
+            "routepilot-ops-spool-{}-{}.sqlite",
             std::process::id(),
             uuid::Uuid::new_v4().simple()
         ));
@@ -652,7 +652,7 @@ mod tests {
         let observation = OpsObservation {
             event_key: "test:event".to_owned(),
             detector_type: "test".to_owned(),
-            severity: modelport_ops_protocol::OpsSeverity::Sev4,
+            severity: routepilot_ops_protocol::OpsSeverity::Sev4,
             title: "test".to_owned(),
             summary: "test".to_owned(),
             affected_scope: json!({}),
@@ -673,7 +673,7 @@ mod tests {
         let mut observation = OpsObservation {
             event_key: "provider:availability".to_owned(),
             detector_type: "provider_health".to_owned(),
-            severity: modelport_ops_protocol::OpsSeverity::Sev3,
+            severity: routepilot_ops_protocol::OpsSeverity::Sev3,
             title: "provider degraded".to_owned(),
             summary: "one provider is unavailable".to_owned(),
             affected_scope: json!({ "provider": "local_vllm" }),
@@ -714,7 +714,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let path = std::env::temp_dir().join(format!(
-            "modelport-ops-analysis-{}-{}.sqlite",
+            "routepilot-ops-analysis-{}-{}.sqlite",
             std::process::id(),
             uuid::Uuid::new_v4().simple()
         ));
@@ -737,7 +737,7 @@ mod tests {
         let observation = OpsObservation {
             event_key: "provider:availability".to_owned(),
             detector_type: "provider_health".to_owned(),
-            severity: modelport_ops_protocol::OpsSeverity::Sev3,
+            severity: routepilot_ops_protocol::OpsSeverity::Sev3,
             title: "provider degraded".to_owned(),
             summary: "one local provider is unavailable".to_owned(),
             affected_scope: json!({ "provider": "local_vllm" }),

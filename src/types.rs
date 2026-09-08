@@ -224,7 +224,7 @@ pub fn openai_response_to_anthropic(
         .unwrap_or(0);
 
     Ok(json!({
-        "id": format!("msg_{}", response.get("id").and_then(Value::as_str).unwrap_or("modelport")),
+        "id": format!("msg_{}", response.get("id").and_then(Value::as_str).unwrap_or("routepilot")),
         "type": "message",
         "role": "assistant",
         "model": requested_model,
@@ -428,9 +428,9 @@ fn tool_result_to_text(block: &Value) -> String {
     let content = content_to_text(block.get("content").unwrap_or(&Value::Null));
     if block.get("is_error").and_then(Value::as_bool) == Some(true) {
         if content.is_empty() {
-            "ModelPort tool execution error".to_owned()
+            "RoutePilot tool execution error".to_owned()
         } else {
-            format!("ModelPort tool execution error:\n{content}")
+            format!("RoutePilot tool execution error:\n{content}")
         }
     } else {
         content
@@ -583,7 +583,7 @@ mod tests {
                         "tool_use_id": "toolu_read_manifest",
                         "content": [{
                             "type": "text",
-                            "text": "name = \"model-port\""
+                            "text": "name = \"routepilot\""
                         }]
                     }]
                 }
@@ -617,7 +617,7 @@ mod tests {
         assert_eq!(arguments["path"], "Cargo.toml");
         assert_eq!(body["messages"][2]["role"], "tool");
         assert_eq!(body["messages"][2]["tool_call_id"], "toolu_read_manifest");
-        assert_eq!(body["messages"][2]["content"], "name = \"model-port\"");
+        assert_eq!(body["messages"][2]["content"], "name = \"routepilot\"");
     }
 
     #[test]
@@ -1091,7 +1091,7 @@ mod tests {
 
         assert_eq!(
             body["messages"][1]["content"],
-            "ModelPort tool execution error:\nfile not found"
+            "RoutePilot tool execution error:\nfile not found"
         );
     }
 

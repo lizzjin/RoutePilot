@@ -2,19 +2,19 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${MODELPORT_ENV_FILE:-$ROOT_DIR/.env}"
-RUNTIME_DIR="${MODELPORT_RUNTIME_DIR:-$ROOT_DIR/.modelport}"
-PID_FILE="${MODELPORT_PID_FILE:-$RUNTIME_DIR/model-port.pid}"
-LOG_FILE="${MODELPORT_LOG_FILE:-$RUNTIME_DIR/model-port.log}"
-RELEASE_BIN="$ROOT_DIR/target/release/model-port"
-DEBUG_BIN="$ROOT_DIR/target/debug/model-port"
+ENV_FILE="${ROUTEPILOT_ENV_FILE:-$ROOT_DIR/.env}"
+RUNTIME_DIR="${ROUTEPILOT_RUNTIME_DIR:-$ROOT_DIR/.routepilot}"
+PID_FILE="${ROUTEPILOT_PID_FILE:-$RUNTIME_DIR/routepilot.pid}"
+LOG_FILE="${ROUTEPILOT_LOG_FILE:-$RUNTIME_DIR/routepilot.log}"
+RELEASE_BIN="$ROOT_DIR/target/release/routepilot"
+DEBUG_BIN="$ROOT_DIR/target/debug/routepilot"
 
 log() {
-  printf '[modelport] %s\n' "$*"
+  printf '[routepilot] %s\n' "$*"
 }
 
 die() {
-  printf '[modelport] ERROR: %s\n' "$*" >&2
+  printf '[routepilot] ERROR: %s\n' "$*" >&2
   exit 1
 }
 
@@ -28,9 +28,9 @@ load_env() {
   source "$ENV_FILE"
   set +a
 
-  MODELPORT_BIND="${MODELPORT_BIND:-127.0.0.1:38082}"
-  MODELPORT_AUTH_TOKEN="${MODELPORT_AUTH_TOKEN:-${ANTHROPIC_AUTH_TOKEN:-}}"
-  export MODELPORT_BIND MODELPORT_AUTH_TOKEN MODELPORT_ENV_FILE="$ENV_FILE"
+  ROUTEPILOT_BIND="${ROUTEPILOT_BIND:-127.0.0.1:38082}"
+  ROUTEPILOT_AUTH_TOKEN="${ROUTEPILOT_AUTH_TOKEN:-${ANTHROPIC_AUTH_TOKEN:-}}"
+  export ROUTEPILOT_BIND ROUTEPILOT_AUTH_TOKEN ROUTEPILOT_ENV_FILE="$ENV_FILE"
 }
 
 require_runtime_dir() {
@@ -38,7 +38,7 @@ require_runtime_dir() {
 }
 
 base_url() {
-  printf 'http://%s' "$MODELPORT_BIND"
+  printf 'http://%s' "$ROUTEPILOT_BIND"
 }
 
 curl_local() {
@@ -60,14 +60,14 @@ pid_from_file() {
 
 project_pids() {
   ps -eo pid=,comm=,args= | awk -v root="$ROOT_DIR" '
-    $2 == "model-port" && (index($0, root "/target/debug/model-port") || index($0, root "/target/release/model-port") || index($0, "./target/debug/model-port") || index($0, "./target/release/model-port")) {
+    $2 == "routepilot" && (index($0, root "/target/debug/routepilot") || index($0, root "/target/release/routepilot") || index($0, "./target/debug/routepilot") || index($0, "./target/release/routepilot")) {
       print $1
     }
   '
 }
 
 listen_pids() {
-  local port="${MODELPORT_BIND##*:}"
+  local port="${ROUTEPILOT_BIND##*:}"
   ss -ltnp 2>/dev/null | awk -v port=":$port" '
     index($4, port) && match($0, /pid=[0-9]+/) {
       print substr($0, RSTART + 4, RLENGTH - 4)
@@ -127,11 +127,11 @@ wait_for_health() {
 }
 
 auth_header_args() {
-  if [[ -z "${MODELPORT_AUTH_TOKEN:-}" ]]; then
-    die "MODELPORT_AUTH_TOKEN or ANTHROPIC_AUTH_TOKEN is required"
+  if [[ -z "${ROUTEPILOT_AUTH_TOKEN:-}" ]]; then
+    die "ROUTEPILOT_AUTH_TOKEN or ANTHROPIC_AUTH_TOKEN is required"
   fi
 
-  printf '%s\n' "-H" "x-api-key: $MODELPORT_AUTH_TOKEN"
+  printf '%s\n' "-H" "x-api-key: $ROUTEPILOT_AUTH_TOKEN"
 }
 
 default_upstream_model() {

@@ -2,16 +2,16 @@
 # Default docker compose usage does not need Caddy.
 #
 # Example:
-#   modelport.local {
-#     import modelport_proxy
+#   routepilot.local {
+#     import routepilot_proxy
 #   }
 #
 # For plain LAN HTTP while testing:
 #   :8080 {
-#     import modelport_proxy
+#     import routepilot_proxy
 #   }
 
-(modelport_proxy) {
+(routepilot_proxy) {
   encode zstd gzip
 
   reverse_proxy dashboard:8080

@@ -1,4 +1,4 @@
-CREATE TABLE modelport_routing_decisions (
+CREATE TABLE routepilot_routing_decisions (
     decision_id TEXT PRIMARY KEY,
     request_ledger_id TEXT NOT NULL UNIQUE,
     organization_id TEXT NOT NULL,
@@ -19,23 +19,23 @@ CREATE TABLE modelport_routing_decisions (
     session_affinity BOOLEAN NOT NULL DEFAULT false,
     shadow_disagreement BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT modelport_routing_decisions_request_fk
+    CONSTRAINT routepilot_routing_decisions_request_fk
         FOREIGN KEY (
             organization_id,
             project_id,
             environment_id,
             request_ledger_id
         )
-        REFERENCES modelport_gateway_requests (
+        REFERENCES routepilot_gateway_requests (
             organization_id,
             project_id,
             environment_id,
             ledger_id
         )
         ON DELETE CASCADE,
-    CONSTRAINT modelport_routing_decisions_profile_check
+    CONSTRAINT routepilot_routing_decisions_profile_check
         CHECK (routing_profile IN ('explicit', 'quality', 'balanced', 'economy', 'latency')),
-    CONSTRAINT modelport_routing_decisions_mode_check
+    CONSTRAINT routepilot_routing_decisions_mode_check
         CHECK (
             routing_mode IN (
                 'static',
@@ -45,7 +45,7 @@ CREATE TABLE modelport_routing_decisions (
                 'active'
             )
         ),
-    CONSTRAINT modelport_routing_decisions_bounds_check
+    CONSTRAINT routepilot_routing_decisions_bounds_check
         CHECK (
             candidate_count BETWEEN 1 AND 256
             AND selected_score BETWEEN 0 AND 2
@@ -61,8 +61,8 @@ CREATE TABLE modelport_routing_decisions (
         )
 );
 
-CREATE INDEX modelport_routing_decisions_tenant_created_idx
-    ON modelport_routing_decisions (
+CREATE INDEX routepilot_routing_decisions_tenant_created_idx
+    ON routepilot_routing_decisions (
         organization_id,
         project_id,
         environment_id,
@@ -70,7 +70,7 @@ CREATE INDEX modelport_routing_decisions_tenant_created_idx
         decision_id DESC
     );
 
-CREATE TABLE modelport_routing_feedback (
+CREATE TABLE routepilot_routing_feedback (
     feedback_id TEXT PRIMARY KEY,
     decision_id TEXT NOT NULL,
     source TEXT NOT NULL,
@@ -78,20 +78,20 @@ CREATE TABLE modelport_routing_feedback (
     score SMALLINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     FOREIGN KEY (decision_id)
-        REFERENCES modelport_routing_decisions (decision_id)
+        REFERENCES routepilot_routing_decisions (decision_id)
         ON DELETE CASCADE,
-    CONSTRAINT modelport_routing_feedback_source_check
+    CONSTRAINT routepilot_routing_feedback_source_check
         CHECK (source IN ('user', 'application', 'evaluation')),
-    CONSTRAINT modelport_routing_feedback_outcome_check
+    CONSTRAINT routepilot_routing_feedback_outcome_check
         CHECK (outcome IN ('accepted', 'rejected', 'correct', 'incorrect', 'partial')),
-    CONSTRAINT modelport_routing_feedback_score_check
+    CONSTRAINT routepilot_routing_feedback_score_check
         CHECK (score IS NULL OR score BETWEEN 0 AND 100),
-    CONSTRAINT modelport_routing_feedback_bounds_check
+    CONSTRAINT routepilot_routing_feedback_bounds_check
         CHECK (
             length(feedback_id) BETWEEN 1 AND 80
             AND length(decision_id) BETWEEN 1 AND 80
         )
 );
 
-CREATE INDEX modelport_routing_feedback_decision_created_idx
-    ON modelport_routing_feedback (decision_id, created_at DESC);
+CREATE INDEX routepilot_routing_feedback_decision_created_idx
+    ON routepilot_routing_feedback (decision_id, created_at DESC);

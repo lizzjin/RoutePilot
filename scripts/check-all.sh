@@ -67,10 +67,10 @@ check_shell_lint() {
 
   if command -v shellcheck >/dev/null 2>&1; then
     run_check "running ShellCheck for ${#files[@]} script(s)" shellcheck "${files[@]}"
-  elif [[ "${CI:-}" == "true" || "${MODELPORT_REQUIRE_SHELLCHECK:-0}" == "1" ]]; then
+  elif [[ "${CI:-}" == "true" || "${ROUTEPILOT_REQUIRE_SHELLCHECK:-0}" == "1" ]]; then
     die "shellcheck is required in CI/release mode but was not found"
   else
-    log "ShellCheck skipped: install shellcheck or set MODELPORT_REQUIRE_SHELLCHECK=1 to enforce it"
+    log "ShellCheck skipped: install shellcheck or set ROUTEPILOT_REQUIRE_SHELLCHECK=1 to enforce it"
   fi
 }
 
@@ -84,7 +84,7 @@ npm_has_script() {
 }
 
 prepare_dashboard_dependencies() {
-  if [[ "${CI:-}" == "true" || "${MODELPORT_CHECK_NPM_CI:-0}" == "1" || ! -d "$ROOT_DIR/dashboard/node_modules" ]]; then
+  if [[ "${CI:-}" == "true" || "${ROUTEPILOT_CHECK_NPM_CI:-0}" == "1" || ! -d "$ROOT_DIR/dashboard/node_modules" ]]; then
     run_check "installing locked dashboard dependencies" \
       npm --prefix "$ROOT_DIR/dashboard" ci --no-audit --no-fund
     return
@@ -189,10 +189,10 @@ validate_env_example() {
     env -i \
       HOME="$CHECK_TMP_DIR/home" \
       PATH="$PATH" \
-      MODELPORT_CONFIG="$CHECK_TMP_DIR/no-config.toml" \
-      MODELPORT_ENV_FILE="$sanitized_file" \
-      MODELPORT_DATABASE_URL="postgres://modelport:ci-validation@db.example:5432/modelport" \
-      "$ROOT_DIR/target/debug/model-port" config validate
+      ROUTEPILOT_CONFIG="$CHECK_TMP_DIR/no-config.toml" \
+      ROUTEPILOT_ENV_FILE="$sanitized_file" \
+      ROUTEPILOT_DATABASE_URL="postgres://routepilot:ci-validation@db.example:5432/routepilot" \
+      "$ROOT_DIR/target/debug/routepilot" config validate
 }
 
 write_config_validation_env() {
@@ -206,7 +206,7 @@ write_config_validation_env() {
         print key "=ci-validation-secret-" FNR
       }
     }
-    END { print "MODELPORT_ALLOW_PRIVATE_PROVIDER_URLS=1" }
+    END { print "ROUTEPILOT_ALLOW_PRIVATE_PROVIDER_URLS=1" }
   ' "$config_file" > "$destination_file"
 }
 
@@ -216,19 +216,19 @@ validate_config_examples() {
   local env_example
   local config_examples=(
     "$ROOT_DIR/config.example.toml"
-    "$ROOT_DIR/deploy/local-inference/modelport.local-qwen.toml"
+    "$ROOT_DIR/deploy/local-inference/routepilot.local-qwen.toml"
   )
   local env_examples=(
     "$ROOT_DIR/.env.example"
-    "$ROOT_DIR/deploy/docker/modelport.env.example"
-    "$ROOT_DIR/deploy/systemd/modelport.env.example"
+    "$ROOT_DIR/deploy/docker/routepilot.env.example"
+    "$ROOT_DIR/deploy/systemd/routepilot.env.example"
   )
 
-  CHECK_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/modelport-check.XXXXXX")"
+  CHECK_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/routepilot-check.XXXXXX")"
   mkdir -p "$CHECK_TMP_DIR/home"
 
   run_check "building the configuration validator" \
-    cargo build --locked --quiet --bin model-port
+    cargo build --locked --quiet --bin routepilot
 
   for env_example in "${env_examples[@]}"; do
     if [[ ! -f "$env_example" ]]; then
@@ -247,10 +247,10 @@ validate_config_examples() {
       env -i \
         HOME="$CHECK_TMP_DIR/home" \
         PATH="$PATH" \
-        MODELPORT_CONFIG="$config_example" \
-        MODELPORT_ENV_FILE="$config_env_file" \
-        MODELPORT_DATABASE_URL="postgres://modelport:ci-validation@db.example:5432/modelport" \
-        "$ROOT_DIR/target/debug/model-port" config validate
+        ROUTEPILOT_CONFIG="$config_example" \
+        ROUTEPILOT_ENV_FILE="$config_env_file" \
+        ROUTEPILOT_DATABASE_URL="postgres://routepilot:ci-validation@db.example:5432/routepilot" \
+        "$ROOT_DIR/target/debug/routepilot" config validate
   done
 }
 

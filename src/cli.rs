@@ -71,7 +71,7 @@ fn parse_command(args: &[String]) -> Result<Command, AppError> {
             Ok(Command::RestoreBackup(path.clone()))
         }
         _ => Err(AppError::InvalidRequest(format!(
-            "unknown command `{}`; run `model-port --help`",
+            "unknown command `{}`; run `routepilot --help`",
             args.join(" ")
         ))),
     }
@@ -90,7 +90,7 @@ fn validate_config() -> Result<(), AppError> {
         .filter(|issue| issue.severity == ConfigIssueSeverity::Warning)
         .count();
 
-    println!("ModelPort configuration");
+    println!("RoutePilot configuration");
     println!("  bind: {}", config.bind_addr);
     println!("  default_provider: {}", config.default_provider);
     println!("  providers: {}", config.provider_order.join(", "));
@@ -117,7 +117,7 @@ fn validate_config() -> Result<(), AppError> {
         )));
     }
 
-    println!("ModelPort configuration valid: {warnings} warning(s).");
+    println!("RoutePilot configuration valid: {warnings} warning(s).");
     Ok(())
 }
 
@@ -139,7 +139,7 @@ fn export_backup(path: &str) -> Result<(), AppError> {
     let control_store = JsonStore::open("control")?;
     let backup = LocalBackupFile {
         schema_version: 1,
-        service: "model-port".to_owned(),
+        service: "routepilot".to_owned(),
         generated_at: now_millis().to_string(),
         contains_secrets: true,
         auth_store_path: auth_store.location(),
@@ -152,7 +152,7 @@ fn export_backup(path: &str) -> Result<(), AppError> {
             .unwrap_or_else(default_control_json),
     };
     write_json_file(Path::new(path), &serde_json::to_value(backup)?)?;
-    println!("ModelPort backup written to {path}");
+    println!("RoutePilot backup written to {path}");
     Ok(())
 }
 
@@ -171,7 +171,7 @@ fn validate_backup(path: &str) -> Result<(), AppError> {
         .map(Vec::len)
         .unwrap_or(0);
     println!(
-        "ModelPort backup valid: {user_count} user(s), {api_key_count} API key record(s), contains_secrets={}",
+        "RoutePilot backup valid: {user_count} user(s), {api_key_count} API key record(s), contains_secrets={}",
         backup.contains_secrets
     );
     Ok(())
@@ -190,7 +190,7 @@ fn restore_backup(path: &str) -> Result<(), AppError> {
         (&control_store, control_current.revision, &backup.control),
     )?;
     println!(
-        "ModelPort backup restored to {} and {}",
+        "RoutePilot backup restored to {} and {}",
         auth_store.location(),
         control_store.location()
     );
@@ -200,9 +200,9 @@ fn restore_backup(path: &str) -> Result<(), AppError> {
 fn load_backup(path: &str) -> Result<LocalBackupFile, AppError> {
     let raw = fs::read_to_string(path)?;
     let backup: LocalBackupFile = serde_json::from_str(&raw)?;
-    if backup.schema_version != 1 || backup.service != "model-port" {
+    if backup.schema_version != 1 || backup.service != "routepilot" {
         return Err(AppError::InvalidRequest(
-            "not a supported ModelPort backup".to_owned(),
+            "not a supported RoutePilot backup".to_owned(),
         ));
     }
     if !backup.auth.get("users").is_some_and(Value::is_array) {
@@ -252,7 +252,7 @@ fn now_millis() -> u64 {
 
 fn print_usage() {
     println!(
-        "Usage:\n  model-port\n  model-port --version\n  model-port config validate\n  model-port backup export <path>\n  model-port backup validate <path>\n  model-port backup restore <path> --yes\n\nCommands:\n  --version                Print release and source-build identity\n  config validate          Load and validate configuration without starting the server\n  backup export <path>     Export auth/control definitions with hashed auth material\n  backup validate <path>   Validate a logical auth/control backup file\n  backup restore <path> --yes\n                           Restore auth/control definitions after saving current values"
+        "Usage:\n  routepilot\n  routepilot --version\n  routepilot config validate\n  routepilot backup export <path>\n  routepilot backup validate <path>\n  routepilot backup restore <path> --yes\n\nCommands:\n  --version                Print release and source-build identity\n  config validate          Load and validate configuration without starting the server\n  backup export <path>     Export auth/control definitions with hashed auth material\n  backup validate <path>   Validate a logical auth/control backup file\n  backup restore <path> --yes\n                           Restore auth/control definitions after saving current values"
     );
 }
 

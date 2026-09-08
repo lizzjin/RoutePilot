@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPOSE_FILE="${MODELPORT_COMPOSE_FILE:-$ROOT_DIR/docker-compose.yml}"
+COMPOSE_FILE="${ROUTEPILOT_COMPOSE_FILE:-$ROOT_DIR/docker-compose.yml}"
 
 die() {
-  printf '[modelport-compose] ERROR: %s\n' "$*" >&2
+  printf '[routepilot-compose] ERROR: %s\n' "$*" >&2
   exit 1
 }
 
@@ -17,7 +17,7 @@ declared_postgres_volume() {
   awk '
     /^  postgres:[[:space:]]*$/ { in_postgres = 1; next }
     in_postgres && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { exit }
-    in_postgres && $1 == "-" && $2 ~ /^modelport-postgres/ {
+    in_postgres && $1 == "-" && $2 ~ /^routepilot-postgres/ {
       split($2, parts, ":")
       print parts[1]
       exit
@@ -51,7 +51,7 @@ ensure_default_network() {
   fi
 
   docker network create "$network_name" >/dev/null
-  printf '[modelport-compose] created external network: %s\n' "$network_name"
+  printf '[routepilot-compose] created external network: %s\n' "$network_name"
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -64,23 +64,23 @@ state check must pass before Compose may recreate any service. An external-
 database profile skips that local-volume check; run its documented production
 preflight first.
 
-Set MODELPORT_COMPOSE_FILE to select a manifest; it defaults to the root
+Set ROUTEPILOT_COMPOSE_FILE to select a manifest; it defaults to the root
 source-build profile.
 
-Set MODELPORT_LOCAL_BUILD=1 after scripts/build-container.sh to use the local
+Set ROUTEPILOT_LOCAL_BUILD=1 after scripts/build-container.sh to use the local
 backend, dashboard, and optional operations-agent images without pulling GHCR.
 USAGE
   exit 0
 fi
 
-if [[ "${MODELPORT_LOCAL_BUILD:-0}" == "1" ]]; then
-  local_images=(modelport:local modelport-dashboard:local)
+if [[ "${ROUTEPILOT_LOCAL_BUILD:-0}" == "1" ]]; then
+  local_images=(routepilot:local routepilot-dashboard:local)
   if [[ ",${COMPOSE_PROFILES:-}," == *,ops-agent,* ]]; then
-    local_images+=(modelport-ops-agent:local)
+    local_images+=(routepilot-ops-agent:local)
   else
     for requested_service in "$@"; do
       if [[ "$requested_service" == "ops-agent" ]]; then
-        local_images+=(modelport-ops-agent:local)
+        local_images+=(routepilot-ops-agent:local)
         break
       fi
     done
@@ -89,10 +89,10 @@ if [[ "${MODELPORT_LOCAL_BUILD:-0}" == "1" ]]; then
     docker image inspect "$local_image" >/dev/null 2>&1 \
       || die "missing $local_image; run scripts/build-container.sh first"
   done
-  export MODELPORT_IMAGE=modelport:local
-  export MODELPORT_DASHBOARD_IMAGE=modelport-dashboard:local
-  export MODELPORT_OPS_AGENT_IMAGE=modelport-ops-agent:local
-  export MODELPORT_PULL_POLICY=never
+  export ROUTEPILOT_IMAGE=routepilot:local
+  export ROUTEPILOT_DASHBOARD_IMAGE=routepilot-dashboard:local
+  export ROUTEPILOT_OPS_AGENT_IMAGE=routepilot-ops-agent:local
+  export ROUTEPILOT_PULL_POLICY=never
 fi
 
 if compose_has_service postgres; then
@@ -106,17 +106,17 @@ if compose_has_service postgres; then
     expected_volume="${project_name}_${target_volume}"
     legacy_volumes="$(
       docker volume ls --format '{{.Name}}' \
-        | awk -v prefix="${project_name}_modelport-postgres" -v expected="$expected_volume" \
+        | awk -v prefix="${project_name}_routepilot-postgres" -v expected="$expected_volume" \
             'index($0, prefix) == 1 && $0 != expected { print }'
     )"
     if [[ -n "$legacy_volumes" ]]; then
-      printf '[modelport-compose] legacy PostgreSQL volume(s) detected:\n%s\n' \
+      printf '[routepilot-compose] legacy PostgreSQL volume(s) detected:\n%s\n' \
         "$legacy_volumes" >&2
       die "refusing a stopped-database major-version cutover; follow docs/POSTGRESQL_MIGRATION.md"
     fi
   fi
 else
-  printf '[modelport-compose] external PostgreSQL profile: local database-volume preflight skipped\n'
+  printf '[routepilot-compose] external PostgreSQL profile: local database-volume preflight skipped\n'
 fi
 
 ensure_default_network

@@ -11,7 +11,7 @@ runtime health are process-local. Treating a team as a tenant would overload a
 billing/policy grouping with ownership and isolation semantics it was not
 designed to provide.
 
-ModelPort also runs the data plane, control plane, and background behavior in
+RoutePilot also runs the data plane, control plane, and background behavior in
 one process. Immediately splitting the project into microservices would add
 network and deployment failure modes before the internal boundaries are ready.
 

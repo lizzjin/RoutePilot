@@ -1,6 +1,6 @@
 # Tool Use Compatibility
 
-ModelPort accepts Anthropic Tool Use and the scoped OpenAI Chat Completions
+RoutePilot accepts Anthropic Tool Use and the scoped OpenAI Chat Completions
 function-tool contract at its client edges. A typed Exchange IR maps either
 edge to Anthropic or OpenAI-compatible Providers. This document describes the
 implemented adapters, validation gates, capability metadata, and known limits;
@@ -30,7 +30,7 @@ The configured `deepseek` provider uses DeepSeek's official Anthropic base URL
 Anthropic thinking blocks. Requests entering through `/v1/chat/completions`
 cannot round-trip those blocks in later OpenAI assistant/tool messages, while
 DeepSeek enables thinking by default and requires previous thinking blocks to
-be replayed. ModelPort therefore sends `thinking.type=disabled` only on this
+be replayed. RoutePilot therefore sends `thinking.type=disabled` only on this
 OpenAI-to-DeepSeek-Anthropic bridge. This also makes named/required tool choice
 and the following tool-result turn compatible. Other Anthropic providers and
 native Anthropic requests are unchanged.
@@ -49,7 +49,7 @@ native Anthropic requests are unchanged.
 | user `tool_result` | `role=tool`, matching `tool_call_id` |
 
 In best-effort conversion, `tool_result.is_error=true` is represented inside
-the OpenAI tool-role content with a stable `ModelPort tool execution error`
+the OpenAI tool-role content with a stable `RoutePilot tool execution error`
 marker so a local model does not lose the failure signal. Strict fidelity still
 rejects this conversion because Chat Completions has no exact `is_error` field.
 
@@ -81,13 +81,13 @@ The gateway rejects malformed Tool Use before contacting a provider:
 Provider capability checks then reject Tool Use entirely, reject tool choice,
 or reject an explicitly enabled parallel-call request when that provider says it
 cannot support it. For an OpenAI-compatible provider declaring
-`parallel_tool_calls=false`, ModelPort also injects the upstream parameter when
+`parallel_tool_calls=false`, RoutePilot also injects the upstream parameter when
 the client omitted a preference. Strict response validation verifies that the
 upstream did not return multiple calls anyway.
 
 ## Streaming
 
-For `/v1/messages`, ModelPort emits Anthropic-style events:
+For `/v1/messages`, RoutePilot emits Anthropic-style events:
 
 - `content_block_start` for text or tool blocks;
 - `content_block_delta` with `text_delta` or `input_json_delta`;
@@ -124,7 +124,7 @@ terminal block signal. Buffered stream mode validates before emitting blocks.
 The live handshake requires a non-204 2xx response with
 `text/event-stream`. Native Anthropic completion requires `message_stop`;
 OpenAI-compatible completion requires `[DONE]` or `finish_reason`, after which
-ModelPort emits the terminal form expected by the originating client protocol.
+RoutePilot emits the terminal form expected by the originating client protocol.
 EOF without that signal is an error, not a successful partial Tool Use result.
 
 With `buffer_stream_text=true`, the OpenAI-compatible adapter awaits and maps a
@@ -161,7 +161,7 @@ before a malformed or hallucinated call reaches the tool executor.
 
 `repair_invalid_arguments=true` is a separate, opt-in reliability policy for a
 strict OpenAI-compatible provider. It applies only to non-stream Anthropic
-Messages responses rejected by the declared JSON Schema. ModelPort schedules
+Messages responses rejected by the declared JSON Schema. RoutePilot schedules
 one same-provider retry as a normal ledger attempt and sends a fixed correction
 instruction that contains no tool arguments, validation paths, or Provider
 body. A second failure is not repaired again. Live streams are excluded because
@@ -203,7 +203,7 @@ without changing gateway limits:
 scripts/tool-use-acceptance.sh --upstream --max-tokens 2048
 ```
 
-`MODELPORT_TOOL_USE_MAX_TOKENS` provides the equivalent environment override.
+`ROUTEPILOT_TOOL_USE_MAX_TOKENS` provides the equivalent environment override.
 
 The streaming acceptance check concatenates all `input_json_delta.partial_json`
 fragments before parsing them. Providers may split a valid JSON string at any

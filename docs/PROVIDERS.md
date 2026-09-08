@@ -1,6 +1,6 @@
 # Providers
 
-ModelPort routes to hosted APIs and separately managed local inference
+RoutePilot routes to hosted APIs and separately managed local inference
 runtimes. It does not load model weights.
 
 Two facts must remain separate:
@@ -12,10 +12,10 @@ Two facts must remain separate:
 A model appearing in `/v1/models` proves neither account entitlement nor
 runtime compatibility.
 
-ModelPort also embeds a versioned adaptation catalog under
+RoutePilot also embeds a versioned adaptation catalog under
 `catalog/provider-adaptations-v1.json`. It records exact-model context/output
 metadata, input modalities, tri-state Tool Use/reasoning capabilities,
-reasoning dialect/efforts, and replay constraints for the Providers ModelPort
+reasoning dialect/efforts, and replay constraints for the Providers RoutePilot
 already exposes. This catalog is owned and reviewed in this repository; it is
 not synchronized from another project at runtime. Entries start `unverified`
 until a separate real-provider acceptance process records evidence. Discovery
@@ -34,7 +34,7 @@ ID returned by the account or runtime.
 | `deepseek` | Anthropic | `deepseek-v4-flash` | `DEEPSEEK_ANTHROPIC_*` |
 | `deepseek_openai` | OpenAI-compatible | `deepseek-v4-flash` | `DEEPSEEK_OPENAI_*` |
 | `anthropic` | Anthropic | `claude-fable-5` | `ANTHROPIC_API_KEY`, `ANTHROPIC_UPSTREAM_*` |
-| `openai` | OpenAI-compatible | `gpt-5.5` | `MODELPORT_OPENAI_*` |
+| `openai` | OpenAI-compatible | `gpt-5.5` | `ROUTEPILOT_OPENAI_*` |
 | `openrouter` | OpenAI-compatible | `openrouter/auto` | `OPENROUTER_*` |
 | `gemini` | OpenAI-compatible | `gemini-3.5-flash` | `GEMINI_*` |
 | `xai` | OpenAI-compatible | `grok-3` | `XAI_*` |
@@ -45,11 +45,11 @@ ID returned by the account or runtime.
 | `mistral` | OpenAI-compatible | `mistral-large-latest` | `MISTRAL_*` |
 | `ark` | OpenAI-compatible | `doubao-seed-1-6-250615` | `ARK_*` |
 | `mimo` | OpenAI-compatible | `mimo-v2.5-pro` | `MIMO_OPENAI_*` |
-| `ollama` | OpenAI-compatible | `llama3.1` | `MODELPORT_ENABLE_OLLAMA`, `OLLAMA_*` |
-| `local_sglang` | OpenAI-compatible | `local-model` | `MODELPORT_ENABLE_LOCAL_SGLANG`, `SGLANG_*` |
-| `local_vllm` | OpenAI-compatible | `local-model` | `MODELPORT_ENABLE_LOCAL_VLLM`, `VLLM_*` |
-| `local_llamacpp` | OpenAI-compatible | `local-model` | `MODELPORT_ENABLE_LOCAL_LLAMACPP`, `LLAMACPP_*` |
-| `custom` | OpenAI-compatible | `default` | `MODELPORT_ENABLE_CUSTOM`, `CUSTOM_OPENAI_*` |
+| `ollama` | OpenAI-compatible | `llama3.1` | `ROUTEPILOT_ENABLE_OLLAMA`, `OLLAMA_*` |
+| `local_sglang` | OpenAI-compatible | `local-model` | `ROUTEPILOT_ENABLE_LOCAL_SGLANG`, `SGLANG_*` |
+| `local_vllm` | OpenAI-compatible | `local-model` | `ROUTEPILOT_ENABLE_LOCAL_VLLM`, `VLLM_*` |
+| `local_llamacpp` | OpenAI-compatible | `local-model` | `ROUTEPILOT_ENABLE_LOCAL_LLAMACPP`, `LLAMACPP_*` |
+| `custom` | OpenAI-compatible | `default` | `ROUTEPILOT_ENABLE_CUSTOM`, `CUSTOM_OPENAI_*` |
 
 The complete field and environment contract is in
 [Configuration](CONFIGURATION.md#provider-environment-pattern).
@@ -75,13 +75,13 @@ model traffic and is only for a controlled internal network.
 ## CPA: Codex And Claude Account Adapter
 
 CPA means [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) in this
-project. It is an optional internal credential/account adapter, not ModelPort's
+project. It is an optional internal credential/account adapter, not RoutePilot's
 public gateway and not a second source of policy truth:
 
 ```text
 Codex / Claude Code / SDK
             |
-         ModelPort
+         RoutePilot
      auth, policy, route,
    quota, evidence, billing
             |
@@ -95,24 +95,24 @@ OpenAI protocol   Anthropic protocol
    CPA OAuth/account pool
 ```
 
-ModelPort deliberately exposes two Provider IDs:
+RoutePilot deliberately exposes two Provider IDs:
 
 - `cpa_codex` sends OpenAI-compatible requests to CPA's `/v1` client API;
 - `cpa_claude` sends Anthropic requests to CPA's `/v1/messages` client API;
 - both can discover the shared CPA catalog through `GET /v1/models`;
-- both may use the same CPA `api-keys` value, but their ModelPort health,
+- both may use the same CPA `api-keys` value, but their RoutePilot health,
   routing, evidence, and model allowlists remain separate.
 
 Minimal host configuration:
 
 ```env
-MODELPORT_ENABLE_CPA_CODEX=1
+ROUTEPILOT_ENABLE_CPA_CODEX=1
 CPA_CODEX_BASE_URL=http://127.0.0.1:8317/v1
 CPA_CODEX_API_KEY=replace-with-cpa-client-api-key
 CPA_CODEX_MODEL=gpt-5.3-codex
 CPA_CODEX_MODELS=gpt-5.3-codex
 
-MODELPORT_ENABLE_CPA_CLAUDE=1
+ROUTEPILOT_ENABLE_CPA_CLAUDE=1
 CPA_CLAUDE_BASE_URL=http://127.0.0.1:8317
 CPA_CLAUDE_API_KEY=replace-with-cpa-client-api-key
 CPA_CLAUDE_MODEL=claude-sonnet-4-6
@@ -132,16 +132,16 @@ unknown-model passthrough, and reject a management API URL.
 
 Keep the trust boundary narrow:
 
-- clients connect only to ModelPort; do not publish CPA port `8317`;
-- ModelPort stores only CPA's client API key; CPA owns OAuth tokens and auth
+- clients connect only to RoutePilot; do not publish CPA port `8317`;
+- RoutePilot stores only CPA's client API key; CPA owns OAuth tokens and auth
   files;
 - leave CPA remote management disabled unless it has a separate administrative
   trust path;
 - bind CPA to loopback for systemd or a private Docker network for containers;
-- ModelPort permits CPA HTTP only for loopback, a single-label internal service
+- RoutePilot permits CPA HTTP only for loopback, a single-label internal service
   name, or `host.docker.internal`; a public CPA hostname still requires HTTPS.
 
-ModelPort owns Provider-level retry, fallback, cooldown, quota, and accounting.
+RoutePilot owns Provider-level retry, fallback, cooldown, quota, and accounting.
 CPA should initially use `request-retry: 0` and a bounded
 `max-retry-credentials: 1`. The upstream CPA template's `0` value means
 unbounded legacy credential traversal, so it is not a safe production default
@@ -153,7 +153,7 @@ CPA candidates enter smart routing only after direct non-stream, stream, Tool
 Use, and error-path acceptance. CPA model discovery reports availability; it
 does not authorize a model or prove subscription eligibility.
 
-LiteLLM is not a runtime dependency in this topology. ModelPort may learn from
+LiteLLM is not a runtime dependency in this topology. RoutePilot may learn from
 its Provider abstraction, normalized errors, routing, and cost-governance
 ideas, but adding a second gateway hop would split policy, retry, and
 observability ownership.
@@ -194,7 +194,7 @@ OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
 ```
 
 The runtime owns model loading, tokenizer, context capacity, and generation
-limits. ModelPort owns routing, policy, aliases, pricing estimates, and stored
+limits. RoutePilot owns routing, policy, aliases, pricing estimates, and stored
 usage. Local pricing is internal chargeback, not a Provider invoice.
 
 Advanced reasoning, sampling, exact token-count forwarding, stream

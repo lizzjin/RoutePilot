@@ -28,21 +28,21 @@ The check rejects Node/npm or other tools resolved from Windows-mounted
 ## Backend
 
 The local backend does not start PostgreSQL for you. Before `scripts/dev.sh`,
-make sure the `MODELPORT_DATABASE_URL` copied from `.env.example` is reachable.
+make sure the `ROUTEPILOT_DATABASE_URL` copied from `.env.example` is reachable.
 For a disposable loopback-only development database, one option is:
 
 ```bash
-docker run -d --rm --name modelport-dev-postgres \
+docker run -d --rm --name routepilot-dev-postgres \
   -p 127.0.0.1:5432:5432 \
-  -e POSTGRES_DB=modelport \
-  -e POSTGRES_USER=modelport \
+  -e POSTGRES_DB=routepilot \
+  -e POSTGRES_USER=routepilot \
   -e POSTGRES_PASSWORD=change-this-db-password \
   postgres:18.4-alpine
 ```
 
 This password is deliberately development-only and matches `.env.example`.
 Use a unique secret for any persistent or shared environment. Stop the
-disposable database with `docker stop modelport-dev-postgres`.
+disposable database with `docker stop routepilot-dev-postgres`.
 
 ```bash
 cp .env.example .env
@@ -60,14 +60,14 @@ scripts/restart.sh
 scripts/stop.sh
 ```
 
-The scripts keep PID/log files below `.modelport/` and never require committing
+The scripts keep PID/log files below `.routepilot/` and never require committing
 the local `.env`. Before launching a stopped service, `scripts/start.sh` reuses
-`target/release/model-port` only when it is newer than `src/`, `Cargo.toml`,
+`target/release/routepilot` only when it is newer than `src/`, `Cargo.toml`,
 `Cargo.lock`, and `rust-toolchain.toml`; otherwise it rebuilds with
 `cargo build --release --locked`. `scripts/config-validate.sh` uses the same
-freshness helper. Set `MODELPORT_FORCE_BUILD=1` to bypass the cache explicitly.
+freshness helper. Set `ROUTEPILOT_FORCE_BUILD=1` to bypass the cache explicitly.
 
-`model-port config validate` and normal server startup call the same application
+`routepilot config validate` and normal server startup call the same application
 checks and deployment-environment preflight. Add a regression test whenever a
 new configuration, database/TLS, lease, proxy, or origin error should fail
 closed; do not rely on the CLI wrapper alone. Preflight is intentionally
@@ -87,7 +87,7 @@ paths to `127.0.0.1:38082`. For browser development, prefer this same-origin
 proxy. Mock mode is UI-only and must not be used as evidence of backend behavior:
 
 ```bash
-VITE_MODELPORT_MOCK=1 npm run dev
+VITE_ROUTEPILOT_MOCK=1 npm run dev
 ```
 
 ## Test Layers
@@ -135,7 +135,7 @@ check is kept separate from the deterministic repository check script. Project
 exceptions live in `.cargo/audit.toml` and must document the exact dependency
 path, why the affected operation is unreachable, and the condition for removing
 the exception. `RUSTSEC-2023-0071` is currently limited to the transitive
-`openidconnect -> rsa` dependency: ModelPort verifies provider-signed ID tokens
+`openidconnect -> rsa` dependency: RoutePilot verifies provider-signed ID tokens
 with public JWKs and does not perform the vulnerable RSA private-key operation.
 
 Install the Playwright browser and OS dependencies using Playwright's supported

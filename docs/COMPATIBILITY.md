@@ -1,6 +1,6 @@
 # Small-Team Beta Compatibility Matrix
 
-This matrix is the support boundary for ModelPort v0.1.x. “Tier 1” means the
+This matrix is the support boundary for RoutePilot v0.1.x. “Tier 1” means the
 project's release gate exercises install, startup, migration, smoke,
 backup/restore, upgrade, and rollback for that combination. It is not an
 availability SLA or certification.
@@ -48,7 +48,7 @@ experimental path must never become a silent production fallback.
 
 - Native Windows or macOS service installation.
 - Public Internet multi-tenancy, untrusted tenant isolation, or a maintainer-
-  hosted ModelPort service.
+  hosted RoutePilot service.
 - Multiple active backend replicas, zero-downtime/rolling upgrades, automatic
   failover, or distributed sessions/rate limits/stream permits.
 - OpenAI Responses, realtime, embeddings, image/audio APIs, a chat UI, model

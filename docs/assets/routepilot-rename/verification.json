@@ -1,0 +1,105 @@
+{
+  "date": "2026-09-08",
+  "branch": "codex/routepilot-ui-redesign",
+  "head": "b847b0b948968b6ddde95611809fc2e9a6099159",
+  "frontend": {
+    "node": "24.19.0",
+    "check": "passed",
+    "unitTests": 109,
+    "testFiles": 29
+  },
+  "rust": {
+    "toolchain": "1.96.0",
+    "tests": 451,
+    "postgres": "fresh isolated database; serial execution",
+    "format": "passed",
+    "clippy": "passed; two documented per-function argument-count expectations"
+  },
+  "browser": {
+    "tests": 31,
+    "singleFullRun": true,
+    "passed": true
+  },
+  "storage": {
+    "migrations": 13,
+    "tables": 18,
+    "backupRoundTrip": "auth/control JSON equality after restore to a separate database",
+    "legacyBackup": "rejected"
+  },
+  "contracts": {
+    "legacyCsrfStatus": 403,
+    "currentCsrfStatus": 200,
+    "cookie": "routepilot_admin_session"
+  },
+  "configuration": {
+    "envExamples": 3,
+    "tomlExamples": 2,
+    "compose": [
+      "development",
+      "release",
+      "production"
+    ],
+    "nginx": "passed",
+    "productionPreflight": "passed on Linux",
+    "prometheusRules": 20,
+    "bashScripts": 27,
+    "markdownLinks": "passed"
+  },
+  "visuals": {
+    "historicalRecaptures": 20,
+    "currentRecaptures": 39,
+    "rasterOcrCount": 219,
+    "legacyHits": 0,
+    "layoutIssues": 0
+  },
+  "paidUpstreamCalls": false,
+  "published": false,
+  "pushed": false,
+  "committed": false,
+  "images": {
+    "command": "scripts/build-container.sh --allow-dirty",
+    "passed": true,
+    "artifacts": [
+      {
+        "tag": "routepilot:local",
+        "id": "sha256:9bcade375af874643021e79a86f6f88848818f24f8eef6bf1613743e75bc735a",
+        "revision": "b847b0b948968b6ddde95611809fc2e9a6099159",
+        "sourceState": "dirty"
+      },
+      {
+        "tag": "routepilot-dashboard:local",
+        "id": "sha256:b306c82790c20729a513f219a8c30a1eb8b8a0039ca506286d7d40f78b4ee213",
+        "revision": "b847b0b948968b6ddde95611809fc2e9a6099159",
+        "sourceState": "dirty"
+      },
+      {
+        "tag": "routepilot-ops-agent:local",
+        "id": "sha256:9f45f7c8a7590933c0fcf2aff639a6eaa99366cdc3c45dcc8ec78d6df59c5af4",
+        "revision": "b847b0b948968b6ddde95611809fc2e9a6099159",
+        "sourceState": "dirty"
+      }
+    ],
+    "combinedRuntimeLogin": "passed",
+    "runtimeReadiness": "passed"
+  },
+  "workspace": {
+    "path": "/Users/zijinli/RoutePilot",
+    "baselinePathsMissing": [],
+    "originalIndexUnchanged": true,
+    "frontendBuildAfterMove": "passed",
+    "rustDockerBuilderAfterMove": "passed (cache reused)",
+    "mockPreview": "http://127.0.0.1:33012/dashboard",
+    "mockLoginAndSettings": "passed",
+    "appTaskPathBinding": "reopen the new directory in the app"
+  },
+  "finalNameScan": {
+    "maintainedFiles": 615,
+    "legacyContentOrPathHits": 0,
+    "excludes": [
+      "Git internals",
+      "third-party dependencies",
+      "build caches",
+      "external recovery backup"
+    ]
+  }
+}

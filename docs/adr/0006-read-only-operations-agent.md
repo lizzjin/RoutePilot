@@ -5,7 +5,7 @@
 
 ## Context
 
-ModelPort already exposes health, metrics, request evidence, budgets, Provider
+RoutePilot already exposes health, metrics, request evidence, budgets, Provider
 state, and a durable request ledger. Operators still have to correlate those
 surfaces manually. A general-purpose autonomous agent would increase risk: it
 could execute commands, expose request content to a model, or change routing
@@ -17,16 +17,16 @@ The first operations agent is a separate Rust process and optional container.
 It has one job: turn bounded, non-content operational facts into durable,
 reviewable incidents.
 
-- ModelPort remains the policy and data boundary. The agent has no PostgreSQL
+- RoutePilot remains the policy and data boundary. The agent has no PostgreSQL
   connection and uses `/internal/ops/v1` with a dedicated expiring service
-  account whose exact purpose is `modelport_ops_agent`.
+  account whose exact purpose is `routepilot_ops_agent`.
 - Detection is deterministic and versioned. The MVP evaluates readiness and
   storage, Provider health, request anomalies, budget capacity, ledger backlog,
   and post-change verification.
 - Prompt, response, tool arguments, secrets, raw Provider bodies, and arbitrary
   logs are not sent to the agent or persisted as incident evidence.
 - A bounded SQLite spool stores observations awaiting delivery. PostgreSQL in
-  ModelPort is the authoritative incident ledger.
+  RoutePilot is the authoritative incident ledger.
 - Repeated evidence is hash-deduplicated. Recovery is accepted only from the
   same deterministic event key. Administrators may acknowledge, mitigate,
   monitor, or suppress an event, but cannot manually claim it recovered.

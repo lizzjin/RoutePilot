@@ -3,21 +3,21 @@
 本页是普通运维人员的执行入口。架构约束以
 [ADR-0005](adr/0005-forty-user-hybrid-routing-baseline.md) 为准。
 
-本页生产基线假定启用 `MODELPORT_ENTERPRISE_MODE=1`，因此高风险写入强制双人
+本页生产基线假定启用 `ROUTEPILOT_ENTERPRISE_MODE=1`，因此高风险写入强制双人
 审批。默认 Small-Team 模式未启用 Enterprise 或
-`MODELPORT_REQUIRE_DUAL_APPROVAL=1` 时，管理员可在 CSRF 防护和审计记录下直接
+`ROUTEPILOT_REQUIRE_DUAL_APPROVAL=1` 时，管理员可在 CSRF 防护和审计记录下直接
 执行，治理变更单仍可自愿使用。
 
 ## 现在是什么状态
 
 第一阶段仍然只有：
 
-- 1 个 ModelPort 实例；
+- 1 个 RoutePilot 实例；
 - 1 个本地 Qwen GPU 节点；
 - 审核通过后才能接入的云 Provider；
 - 1 个 Dashboard 应用，严格分为用户自助视图与管理员治理控制台。
 
-当前不能宣称 ModelPort 高可用。40 人并发准入、四种路由模式、项目预算硬限制、双人审批
+当前不能宣称 RoutePilot 高可用。40 人并发准入、四种路由模式、项目预算硬限制、双人审批
 和生产级 Service Account 已进入稳定 API 与自动化验收；生产数据库切换、密钥轮换和真实
 云 Provider 开通仍必须取得第二名管理员批准并在维护窗口执行。
 
@@ -32,8 +32,8 @@
 - 本页 Enterprise 基线下，高风险变更的载荷先做 SHA-256 摘要，必须由两名不同
   管理员批准。
 
-全新企业库首次启动必须同时提供 `MODELPORT_ADMIN_*` 与
-`MODELPORT_BACKUP_ADMIN_*` 两组不同账号，系统在一次持久化写入中创建 Owner 和 Backup，
+全新企业库首次启动必须同时提供 `ROUTEPILOT_ADMIN_*` 与
+`ROUTEPILOT_BACKUP_ADMIN_*` 两组不同账号，系统在一次持久化写入中创建 Owner 和 Backup，
 避免单管理员无法批准新增 Backup 的死锁。数据库已有用户时不会再次引导或覆盖账号。
 
 Linux/WSL2 中运行不产生真实模型请求的容量基线：
@@ -80,7 +80,7 @@ archive="$(./scripts/backup-compose.sh create)"
 ### 3. 单实例生产模板不自带数据库
 
 [`deploy/production/compose.single.yml`](../deploy/production/compose.single.yml)
-只启动一个 ModelPort 和 Dashboard，生产数据库必须使用外部托管 PostgreSQL。运行环境
+只启动一个 RoutePilot 和 Dashboard，生产数据库必须使用外部托管 PostgreSQL。运行环境
 由 Secret Manager 写入仓库外、权限 `0600` 的短期文件；生产配置禁止挂载项目 `.env`。
 
 该模板目前用于评审和迁移演练。在托管数据库、TLS CA、镜像 Digest、密钥注入与回滚
@@ -93,21 +93,21 @@ archive="$(./scripts/backup-compose.sh create)"
 ## 投产前必须完成
 
 - [ ] 选定平台 Owner 和 Backup，确定维护窗口与回滚负责人。
-- [ ] 轮换曾出现在终端或旧备份中的 ModelPort、Provider、数据库凭证。
+- [ ] 轮换曾出现在终端或旧备份中的 RoutePilot、Provider、数据库凭证。
 - [x] PostgreSQL 16 备份已在隔离 PostgreSQL 18.4 完成逻辑恢复演练。
 - [ ] 确认托管 PostgreSQL `verify-full`、PITR、RPO 5 分钟、RTO 30 分钟。
-- [ ] 使用固定 Digest 的 ModelPort 与 Dashboard 镜像。
+- [ ] 使用固定 Digest 的 RoutePilot 与 Dashboard 镜像。
 - [ ] 运行 `scripts/check-all.sh`，并确保 CI 的 ShellCheck 门禁通过。
-- [ ] 运行 ModelPort Provider/Tool Use 验收和 `local-inference-stack standard`。
+- [ ] 运行 RoutePilot Provider/Tool Use 验收和 `local-inference-stack standard`。
 - [x] 运行 `scripts/capacity-acceptance.sh`，确认 40 人准入不变量。
 - [ ] 保存不含 Prompt、回复、工具参数和密钥的验收证据。
 
 ## 第一阶段不做什么
 
-- 不启动第二个 ModelPort；
+- 不启动第二个 RoutePilot；
 - 不在没有维护窗口时迁移真实数据库；
 - 不在仓库脚本中实现 Secret Manager；
-- 不让 ModelPort 执行 Shell、数据库查询或业务工具；
+- 不让 RoutePilot 执行 Shell、数据库查询或业务工具；
 - 不允许用户配置任意 OpenAI-compatible URL；
 - 不绕过本页 Enterprise 基线强制的双人审批执行数据库、密钥、外发、身份或生产
   模型变更。

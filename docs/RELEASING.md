@@ -1,6 +1,6 @@
-# Releasing ModelPort
+# Releasing RoutePilot
 
-ModelPort uses semantic versions shared by the Rust backend and dashboard. A
+RoutePilot uses semantic versions shared by the Rust backend and dashboard. A
 release tag is `v<version>`, matching `Cargo.toml` and
 `dashboard/package.json`. SemVer prerelease suffixes such as `-rc.1` are
 supported. Build-metadata suffixes such as `+build.1` are intentionally rejected
@@ -42,7 +42,7 @@ Then run:
 ```bash
 scripts/check-all.sh
 git diff --check
-git tag -s vX.Y.Z -m "ModelPort vX.Y.Z"
+git tag -s vX.Y.Z -m "RoutePilot vX.Y.Z"
 git push origin main vX.Y.Z
 ```
 
@@ -77,13 +77,13 @@ Consumers should verify checksums and GitHub attestations:
 
 ```bash
 sha256sum --check SHA256SUMS
-gh attestation verify model-port-vX.Y.Z-linux-amd64.tar.gz \
-  --repo tiammomo/ModelPort
-docker pull ghcr.io/tiammomo/modelport:X.Y.Z
+gh attestation verify routepilot-vX.Y.Z-linux-amd64.tar.gz \
+  --repo lizzjin/RoutePilot
+docker pull ghcr.io/lizzjin/routepilot:X.Y.Z
 cosign verify \
-  --certificate-identity-regexp='https://github.com/tiammomo/ModelPort/.github/workflows/release.yml@refs/tags/vX[.]Y[.]Z' \
+  --certificate-identity-regexp='https://github.com/lizzjin/RoutePilot/.github/workflows/release.yml@refs/tags/vX[.]Y[.]Z' \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-  ghcr.io/tiammomo/modelport@sha256:<digest>
+  ghcr.io/lizzjin/routepilot@sha256:<digest>
 ```
 
 For container provenance, verify the immutable digest rather than relying only
@@ -106,7 +106,7 @@ Application rollback and database rollback are separate decisions.
   JSON state. Roll back by restoring the previous database and application
   together.
 - The PostgreSQL 18 Compose baseline uses a new
-  `modelport_modelport-postgres-18` volume and the versioned
+  `routepilot_routepilot-postgres-18` volume and the versioned
   `/var/lib/postgresql/18/docker` data directory. It intentionally does not
   reuse the old PostgreSQL 16 volume. Back up the old deployment before
   upgrading, follow [the migration runbook](POSTGRESQL_MIGRATION.md), and do not

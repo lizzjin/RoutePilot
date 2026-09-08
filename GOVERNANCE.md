@@ -1,10 +1,10 @@
 # Governance
 
-ModelPort is an open-source project maintained by `@tiammomo`.
+RoutePilot is an open-source project maintained by `@tiammomo`.
 
 ## Roles
 
-- **Users** operate ModelPort and provide reproducible feedback.
+- **Users** operate RoutePilot and provide reproducible feedback.
 - **Contributors** submit documentation, tests, code, or review.
 - **Maintainers** triage issues, review changes, manage security reports, and
   publish releases.

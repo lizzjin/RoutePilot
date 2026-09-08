@@ -1,6 +1,6 @@
 # Changelog
 
-All notable ModelPort changes are recorded here. The project follows
+All notable RoutePilot changes are recorded here. The project follows
 [Semantic Versioning](https://semver.org/) once a version is published.
 
 ## [Unreleased]
@@ -44,7 +44,7 @@ All notable ModelPort changes are recorded here. The project follows
   learning documents were consolidated into maintained references.
 - PostgreSQL is mandatory for every runtime deployment.
 - The default Compose and CI database is PostgreSQL 18.4, using the PostgreSQL
-  18 versioned data directory and a new `modelport-postgres-18` named volume.
+  18 versioned data directory and a new `routepilot-postgres-18` named volume.
 - The dashboard runtime uses the current Nginx 1.30.4 stable security release.
 - Dashboard, logs, quotas, audit, and management statistics use relational
   operational rows instead of process estimates or control-document arrays.
@@ -73,8 +73,8 @@ Migration `0005_current_operational_schema.sql` now preserves existing
 normalized request/attempt rows, backfills conservative operational defaults,
 and derives request-level Provider/retry snapshots from historical attempts.
 Back up PostgreSQL and run a restore drill before upgrading. Compose still uses
-the PostgreSQL 18 volume `modelport_modelport-postgres-18`; export any older
+the PostgreSQL 18 volume `routepilot_routepilot-postgres-18`; export any older
 volume before removing it.
 
-[Unreleased]: https://github.com/tiammomo/ModelPort/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/tiammomo/ModelPort/releases/tag/v0.1.0
+[Unreleased]: https://github.com/lizzjin/RoutePilot/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/lizzjin/RoutePilot/releases/tag/v0.1.0

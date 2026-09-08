@@ -1,0 +1,22 @@
+{
+  "date": "2026-09-08",
+  "node": "24.19.0",
+  "frontendCheck": "passed",
+  "unitTestFiles": 29,
+  "unitTests": 109,
+  "fullE2E": {
+    "passed": 30
+  },
+  "afterGuardStabilization": {
+    "existingTargetedPassed": 6,
+    "additionalAssociatedKeyTestPassed": 1
+  },
+  "routeScreenshots": 39,
+  "widths": [
+    1440,
+    1024,
+    390
+  ],
+  "paidUpstreamCalls": false,
+  "backendImage": "routepilot-ui-e2e:local (existing local image, build revision not verified)"
+}

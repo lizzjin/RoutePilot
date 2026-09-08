@@ -1,6 +1,6 @@
-# Contributing To ModelPort
+# Contributing To RoutePilot
 
-ModelPort prioritizes a reliable Anthropic-compatible text path, explicit
+RoutePilot prioritizes a reliable Anthropic-compatible text path, explicit
 security boundaries, and low operational cost for a single host or small team.
 Changes should preserve that scope and distinguish implemented behavior from
 provider-specific verification or future proposals.
@@ -26,8 +26,8 @@ scripts/doctor.sh --development
 not install Rust, Node.js, npm, Docker, or Playwright browsers.
 
 ```bash
-git clone git@github.com:tiammomo/ModelPort.git
-cd ModelPort
+git clone git@github.com:lizzjin/RoutePilot.git
+cd RoutePilot
 cp .env.example .env
 cp config.example.toml config.toml
 # replace required placeholders; never commit this file
@@ -79,7 +79,7 @@ ordinary pull requests should prefer mock-backed checks.
   configuration.
 - Add tests for split SSE frames, errors after headers, Tool Use causality,
   request/response bounds, redirect behavior, and secret redaction.
-- Do not log or commit API keys, session/API tokens, `.env`, `.modelport/`,
+- Do not log or commit API keys, session/API tokens, `.env`, `.routepilot/`,
   complete backups, raw prompts/responses, or large base64/multipart payloads.
 - Secret-bearing types need redacted `Debug` behavior and regression tests; a
   later derived/debug wrapper can silently undo that boundary.

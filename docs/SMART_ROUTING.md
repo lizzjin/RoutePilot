@@ -1,6 +1,6 @@
 # Smart Routing
 
-ModelPort implements an opt-in, policy-aware router for logical model aliases.
+RoutePilot implements an opt-in, policy-aware router for logical model aliases.
 It adds adaptive candidate selection without changing the contract for explicit
 `provider:model`, static aliases, exact models, or prefix routing.
 
@@ -61,9 +61,9 @@ contain at most 128 groups and 256 candidates per group.
 The restart/reload-time overrides are:
 
 ```env
-MODELPORT_SMART_ROUTING_MODE=shadow
-MODELPORT_SMART_ROUTING_PROFILE=balanced
-MODELPORT_SMART_ROUTING_ACTIVATION_PERCENT=0
+ROUTEPILOT_SMART_ROUTING_MODE=shadow
+ROUTEPILOT_SMART_ROUTING_PROFILE=balanced
+ROUTEPILOT_SMART_ROUTING_ACTIVATION_PERCENT=0
 ```
 
 ## Request Contract
@@ -71,12 +71,12 @@ MODELPORT_SMART_ROUTING_ACTIVATION_PERCENT=0
 Smart aliases work on both inference edges. Clients may optionally send:
 
 ```http
-X-ModelPort-Routing-Profile: quality
-X-ModelPort-Session-Id: application-session-reference
+X-RoutePilot-Routing-Profile: quality
+X-RoutePilot-Session-Id: application-session-reference
 ```
 
 Profiles are `quality`, `balanced`, `economy`, and `latency`. The session value
-is limited to 128 ASCII non-control bytes. ModelPort hashes it together with
+is limited to 128 ASCII non-control bytes. RoutePilot hashes it together with
 the authenticated principal before routing; raw session values are neither
 logged nor stored. Reusing it keeps affinity and canary assignment stable for
 that principal. Without it, active-mode bucketing uses a principal-scoped
@@ -121,7 +121,7 @@ and attached feedback instead of leaving orphaned storage.
 
 Administrators can inspect current process state through
 `GET /admin/router/status`. Prometheus exposes
-`modelport_routing_decisions_total{mode,profile,provider}`. Request logs include
+`routepilot_routing_decisions_total{mode,profile,provider}`. Request logs include
 the decision ID and selected/recommended route in structured backend logs.
 
 Recommended rollout:
@@ -132,7 +132,7 @@ Recommended rollout:
    Provider cooldown by profile for at least one representative traffic cycle.
 4. Switch to `active` at a small percentage such as `5`, then increase through
    explicit reviewed changes.
-5. Set `MODELPORT_SMART_ROUTING_MODE=shadow` or `off` and reload/restart to stop
+5. Set `ROUTEPILOT_SMART_ROUTING_MODE=shadow` or `off` and reload/restart to stop
    adaptive selection. `off` keeps direct smart-alias calls on their configured
    baseline order; explicit routes remain available throughout.
 

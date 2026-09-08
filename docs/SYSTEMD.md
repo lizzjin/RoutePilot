@@ -10,13 +10,13 @@ Build and install the backend:
 
 ```bash
 scripts/build-release.sh
-sudo install -m 0755 target/release/model-port /usr/local/bin/model-port
-sudo install -d -m 0750 /etc/modelport
-sudo install -m 0640 deploy/systemd/modelport.env.example /etc/modelport/modelport.env
-sudo install -m 0644 deploy/systemd/modelport.service /etc/systemd/system/modelport.service
+sudo install -m 0755 target/release/routepilot /usr/local/bin/routepilot
+sudo install -d -m 0750 /etc/routepilot
+sudo install -m 0640 deploy/systemd/routepilot.env.example /etc/routepilot/routepilot.env
+sudo install -m 0644 deploy/systemd/routepilot.service /etc/systemd/system/routepilot.service
 ```
 
-Edit `/etc/modelport/modelport.env` and replace every required placeholder. The
+Edit `/etc/routepilot/routepilot.env` and replace every required placeholder. The
 file contains router, admin, database, and provider credentials; restrict access
 to administrators.
 
@@ -24,8 +24,8 @@ Then enable the unit:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now modelport
-sudo systemctl status modelport
+sudo systemctl enable --now routepilot
+sudo systemctl status routepilot
 ```
 
 ## State Layout
@@ -33,17 +33,17 @@ sudo systemctl status modelport
 The unit uses:
 
 ```text
-StateDirectory=modelport
-WorkingDirectory=/var/lib/modelport
-MODELPORT_STATE_DIR=/var/lib/modelport
+StateDirectory=routepilot
+WorkingDirectory=/var/lib/routepilot
+ROUTEPILOT_STATE_DIR=/var/lib/routepilot
 ```
 
-systemd creates `/var/lib/modelport` for the dynamic service user with mode
+systemd creates `/var/lib/routepilot` for the dynamic service user with mode
 `0700`. Runtime state is stored in mandatory PostgreSQL; the directory remains
 useful for explicit backup files and a consistent working directory.
 PostgreSQL access uses SQLx with rustls and embedded migrations. For a remote
 production database, set
-`MODELPORT_ENTERPRISE_MODE=1`, `MODELPORT_DATABASE_TLS_MODE=verify-full`, and a
+`ROUTEPILOT_ENTERPRISE_MODE=1`, `ROUTEPILOT_DATABASE_TLS_MODE=verify-full`, and a
 trusted `sslrootcert` in the database URL. Test connectivity and migration
 permissions before starting the service.
 
@@ -53,11 +53,11 @@ Validate using the same environment file without shell-expanding or printing
 its values:
 
 ```bash
-sudo systemctl stop modelport
+sudo systemctl stop routepilot
 sudo systemd-run --wait --pipe --collect \
-  --property=EnvironmentFile=/etc/modelport/modelport.env \
-  /usr/local/bin/model-port config validate
-sudo systemctl start modelport
+  --property=EnvironmentFile=/etc/routepilot/routepilot.env \
+  /usr/local/bin/routepilot config validate
+sudo systemctl start routepilot
 ```
 
 This transient command runs as root but only reads configuration. For policies
@@ -68,9 +68,9 @@ the environment file into an issue.
 Logs and health:
 
 ```bash
-sudo journalctl -u modelport -f
+sudo journalctl -u routepilot -f
 curl -fsS http://127.0.0.1:38082/livez
-curl -fsS -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+curl -fsS -H "x-api-key: $ROUTEPILOT_AUTH_TOKEN" \
   http://127.0.0.1:38082/readyz
 ```
 
@@ -80,40 +80,40 @@ and returns authenticated diagnostics; it does not gate on every Provider. See
 
 ## Reverse Proxy And Dashboard
 
-Keep `MODELPORT_BIND=127.0.0.1:38082` when Nginx/Caddy runs on the same host.
+Keep `ROUTEPILOT_BIND=127.0.0.1:38082` when Nginx/Caddy runs on the same host.
 Expose one HTTPS origin that serves the dashboard and proxies `/admin`, `/v1`,
 `/livez`, `/readyz`, `/health`, and `/metrics` to the backend.
 
 Set:
 
 ```env
-MODELPORT_ADMIN_COOKIE_SECURE=1
-MODELPORT_ALLOWED_ORIGINS=https://modelport.example.com
-MODELPORT_TRUSTED_PROXIES=127.0.0.1,::1
+ROUTEPILOT_ADMIN_COOKIE_SECURE=1
+ROUTEPILOT_ALLOWED_ORIGINS=https://routepilot.example.com
+ROUTEPILOT_TRUSTED_PROXIES=127.0.0.1,::1
 ```
 
-`MODELPORT_ALLOWED_ORIGINS` validates dashboard writes; it does not enable
+`ROUTEPILOT_ALLOWED_ORIGINS` validates dashboard writes; it does not enable
 browser CORS. A same-origin proxy is the supported layout.
 
 Preserve the original Host authority including a non-default port. For Nginx,
 use `proxy_set_header Host $http_host`; `$host` may drop the port and cause the
 Origin/Host write check to fail. A single-hop proxy should overwrite
-`X-Forwarded-For` with `$remote_addr`. ModelPort accepts forwarded headers only
-from `MODELPORT_TRUSTED_PROXIES` and removes trusted hops from the right-hand end
+`X-Forwarded-For` with `$remote_addr`. RoutePilot accepts forwarded headers only
+from `ROUTEPILOT_TRUSTED_PROXIES` and removes trusted hops from the right-hand end
 of the chain, so configure every trusted hop explicitly.
 
 ## Backup And Upgrade
 
 ```bash
-sudo systemctl stop modelport
+sudo systemctl stop routepilot
 sudo systemd-run --wait --pipe --collect \
-  --property=EnvironmentFile=/etc/modelport/modelport.env \
-  /usr/local/bin/model-port backup export /var/lib/modelport/backup.json
+  --property=EnvironmentFile=/etc/routepilot/routepilot.env \
+  /usr/local/bin/routepilot backup export /var/lib/routepilot/backup.json
 sudo systemd-run --wait --pipe --collect \
-  --property=EnvironmentFile=/etc/modelport/modelport.env \
-  /usr/local/bin/model-port backup validate /var/lib/modelport/backup.json
-sudo install -m 0755 target/release/model-port /usr/local/bin/model-port
-sudo systemctl start modelport
+  --property=EnvironmentFile=/etc/routepilot/routepilot.env \
+  /usr/local/bin/routepilot backup validate /var/lib/routepilot/backup.json
+sudo install -m 0755 target/release/routepilot /usr/local/bin/routepilot
+sudo systemctl start routepilot
 ```
 
 The transient CLI receives the service EnvironmentFile. It runs as root for this

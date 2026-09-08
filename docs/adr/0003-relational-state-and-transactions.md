@@ -36,7 +36,7 @@ historical mutation.
 
 ## Decision
 
-ModelPort uses normalized PostgreSQL tables through SQLx with Tokio, Rustls,
+RoutePilot uses normalized PostgreSQL tables through SQLx with Tokio, Rustls,
 connection pooling, explicit timeouts, and embedded versioned migrations.
 PostgreSQL is authoritative for request/attempt lifecycle, usage accounting,
 budgets, and audit history. Low-frequency identity and control definitions may
@@ -70,7 +70,7 @@ The current operational migration is an evidence-preserving contract:
    final Provider/retry snapshots.
 3. Apply the same migration during the planned production cutover.
 4. Retain the pre-upgrade backup according to the operator's recovery policy;
-   ModelPort never fabricates prompt content, usage, pricing, or identity facts
+   RoutePilot never fabricates prompt content, usage, pricing, or identity facts
    that were absent from the older schema.
 
 ## Consequences

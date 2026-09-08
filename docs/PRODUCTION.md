@@ -23,7 +23,7 @@ name of a fail-closed configuration switch, not an enterprise-readiness claim.
 
 The accepted forty-user hybrid-routing target is defined in
 [ADR-0005](adr/0005-forty-user-hybrid-routing-baseline.md). Its first phase
-still uses one ModelPort instance. Routing modes, per-user queue fairness,
+still uses one RoutePilot instance. Routing modes, per-user queue fairness,
 managed secrets, and active-active operation remain target behavior until their
 individual implementation and acceptance gates pass.
 
@@ -33,11 +33,11 @@ individual implementation and acceptance gates pass.
 - [ ] Back up PostgreSQL and apply migrations to an isolated restored copy.
 - [ ] Use PostgreSQL TLS `verify-full` for a remote production database.
 - [ ] Set unique administrator, router, database, and Provider credentials.
-- [ ] Enable `MODELPORT_ENTERPRISE_MODE=1` and resolve every guardrail failure.
+- [ ] Enable `ROUTEPILOT_ENTERPRISE_MODE=1` and resolve every guardrail failure.
 - [ ] Configure secure cookies, exact HTTPS origins, exact trusted proxy CIDRs,
       enabled CSRF protection, and private backend/database ports.
-- [ ] Set `MODELPORT_REQUIRE_CONTROL_API_KEYS=1`.
-- [ ] Issue a dedicated scoped `MODELPORT_HEALTHCHECK_API_KEY`; never place it
+- [ ] Set `ROUTEPILOT_REQUIRE_CONTROL_API_KEYS=1`.
+- [ ] Issue a dedicated scoped `ROUTEPILOT_HEALTHCHECK_API_KEY`; never place it
       in Compose, Prometheus rules, Grafana variables, or alert annotations.
 - [ ] Verify backup creation, restore drill, encryption, off-host replication,
       retention, and deletion ownership.
@@ -113,7 +113,7 @@ pass supports only the exact model, path, account conditions, and commit tested.
 
 ## Reliability Objectives
 
-ModelPort does not publish a universal end-to-end SLO because Provider
+RoutePilot does not publish a universal end-to-end SLO because Provider
 availability and local inference capacity dominate results. Each operator
 should define:
 

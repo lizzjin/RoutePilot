@@ -1,0 +1,6874 @@
+{
+  "baseline": "b847b0b948968b6ddde95611809fc2e9a6099159",
+  "routes": [
+    {
+      "route": "/dashboard",
+      "file": "dashboard/src/pages/DashboardPage.tsx",
+      "texts": [
+        {
+          "line": 142,
+          "text": "至"
+        },
+        {
+          "line": 197,
+          "text": "运行状态"
+        },
+        {
+          "line": 200,
+          "text": "基于 Provider 健康记录定位异常请求和上游账号问题。"
+        },
+        {
+          "line": 211,
+          "text": "可用 Provider"
+        },
+        {
+          "line": 212,
+          "text": "/"
+        },
+        {
+          "line": 213,
+          "text": "基于当前运行健康记录"
+        },
+        {
+          "line": 216,
+          "text": "最近异常"
+        },
+        {
+          "line": 218,
+          "text": "最近"
+        },
+        {
+          "line": 218,
+          "text": "条记录；不等同于协议错误"
+        },
+        {
+          "line": 221,
+          "text": "当前首选路由"
+        },
+        {
+          "line": 243,
+          "text": "查看详情"
+        },
+        {
+          "line": 255,
+          "text": "查看请求日志"
+        },
+        {
+          "line": 256,
+          "text": "管理模型与渠道"
+        },
+        {
+          "line": 257,
+          "text": "最近流式"
+        },
+        {
+          "line": 266,
+          "text": "上游渠道状态"
+        },
+        {
+          "line": 279,
+          "text": "等待充值"
+        },
+        {
+          "line": 286,
+          "text": "%"
+        },
+        {
+          "line": 293,
+          "text": "暂无 Provider"
+        },
+        {
+          "line": 314,
+          "text": "按平台拆分"
+        },
+        {
+          "line": 315,
+          "text": "请求 · Token · 费用 · 健康状态"
+        },
+        {
+          "line": 318,
+          "text": "个可用"
+        },
+        {
+          "line": 339,
+          "text": "等待充值"
+        },
+        {
+          "line": 359,
+          "text": "请求"
+        },
+        {
+          "line": 363,
+          "text": "Token"
+        },
+        {
+          "line": 367,
+          "text": "费用"
+        },
+        {
+          "line": 390,
+          "text": "模型分布"
+        },
+        {
+          "line": 431,
+          "text": "模型"
+        },
+        {
+          "line": 432,
+          "text": "请求"
+        },
+        {
+          "line": 433,
+          "text": "Token"
+        },
+        {
+          "line": 434,
+          "text": "费用"
+        },
+        {
+          "line": 471,
+          "text": "Token 使用趋势"
+        },
+        {
+          "line": 507,
+          "text": "最近使用"
+        },
+        {
+          "line": 508,
+          "text": "近"
+        },
+        {
+          "line": 508,
+          "text": "条"
+        },
+        {
+          "line": 512,
+          "text": "暂无请求记录"
+        },
+        {
+          "line": 528,
+          "text": "tokens"
+        },
+        {
+          "line": 536,
+          "text": "查看全部"
+        },
+        {
+          "line": 567,
+          "text": "快捷操作"
+        },
+        {
+          "line": 617,
+          "text": "我的工作台"
+        },
+        {
+          "line": 619,
+          "text": "这里仅展示你的请求记录，以及所选密钥当前可访问的模型目录。"
+        },
+        {
+          "line": 625,
+          "text": "模型目录使用的 API Key"
+        },
+        {
+          "line": 626,
+          "text": "服务端会应用该密钥的模型、Provider 与项目策略；IP 限制由实际客户端验证。"
+        },
+        {
+          "line": 636,
+          "text": "（"
+        },
+        {
+          "line": 636,
+          "text": "）"
+        },
+        {
+          "line": 642,
+          "text": "创建或检查密钥"
+        },
+        {
+          "line": 653,
+          "text": "所选密钥可访问模型"
+        },
+        {
+          "line": 656,
+          "text": "正在重新验证权限…"
+        },
+        {
+          "line": 661,
+          "text": "由服务端按密钥与项目策略计算"
+        },
+        {
+          "line": 673,
+          "text": "已加载的最近记录"
+        },
+        {
+          "line": 675,
+          "text": "不包含其他用户的调用或管理活动"
+        },
+        {
+          "line": 694,
+          "text": "完成首次受治理请求"
+        },
+        {
+          "line": 696,
+          "text": "清单由当前运行状态自动判断；保存配置不等于凭证已解析或连接已验证。"
+        },
+        {
+          "line": 699,
+          "text": "/"
+        },
+        {
+          "line": 699,
+          "text": "已完成"
+        },
+        {
+          "line": 723,
+          "text": "."
+        },
+        {
+          "line": 942,
+          "text": "仪表盘"
+        },
+        {
+          "line": 944,
+          "text": "先判断网关是否可用，再定位异常、成本与路由变化。"
+        },
+        {
+          "line": 947,
+          "text": "· 数据源："
+        },
+        {
+          "line": 964,
+          "text": "进程指标估算"
+        },
+        {
+          "line": 967,
+          "text": "当前没有持久化用量记录，范围统计来自本次进程启动后的指标。"
+        },
+        {
+          "line": 971,
+          "text": "已达保留上限"
+        },
+        {
+          "line": 972,
+          "text": "更早的用量记录可能已被轮转，长时间范围仅覆盖当前保留窗口。"
+        },
+        {
+          "line": 1034,
+          "text": "请求量趋势（"
+        },
+        {
+          "line": 1034,
+          "text": "）"
+        }
+      ],
+      "controls": [
+        {
+          "line": 114,
+          "attribute": "aria-label=\"仪表盘数据范围\""
+        },
+        {
+          "line": 134,
+          "attribute": "aria-label=\"开始时间\""
+        },
+        {
+          "line": 144,
+          "attribute": "aria-label=\"结束时间\""
+        },
+        {
+          "line": 222,
+          "attribute": "title={primaryModel}"
+        },
+        {
+          "line": 325,
+          "attribute": "title=\"暂无 Provider 运行数据\""
+        },
+        {
+          "line": 326,
+          "attribute": "description=\"配置上游并完成请求后，这里会展示渠道健康、Token 与费用。\""
+        },
+        {
+          "line": 396,
+          "attribute": "title=\"暂无模型用量\""
+        },
+        {
+          "line": 397,
+          "attribute": "description=\"完成首个模型请求后，这里会按真实保留用量展示模型分布。\""
+        },
+        {
+          "line": 493,
+          "attribute": "title=\"暂无 Token 趋势\""
+        },
+        {
+          "line": 494,
+          "attribute": "description=\"图表只使用后端返回的真实用量，不会用零值推断调用情况。\""
+        },
+        {
+          "line": 630,
+          "attribute": "aria-label=\"选择工作台模型目录的 API 密钥\""
+        },
+        {
+          "line": 631,
+          "attribute": "placeholder=\"选择 API Key\""
+        },
+        {
+          "line": 704,
+          "attribute": "aria-label=\"接入进度\""
+        },
+        {
+          "line": 738,
+          "attribute": "title={value}"
+        },
+        {
+          "line": 739,
+          "attribute": "title={detail}"
+        },
+        {
+          "line": 987,
+          "attribute": "title={`${rangeName}请求`}"
+        },
+        {
+          "line": 992,
+          "attribute": "description={summary.totalRequests === 0 ? '当前范围暂无调用' : undefined}"
+        },
+        {
+          "line": 995,
+          "attribute": "title={`${rangeName}成功率`}"
+        },
+        {
+          "line": 999,
+          "attribute": "description={rangeSuccessRate === null\n            ? '没有请求，不能推断成功率'\n            : `${formatNumber(summary.totalRequests - summary.successRequests)} 次异常`}"
+        },
+        {
+          "line": 1004,
+          "attribute": "title={`${rangeName}估算费用`}"
+        },
+        {
+          "line": 1008,
+          "attribute": "description=\"运维估算，不等同于 Provider 账单\""
+        },
+        {
+          "line": 1011,
+          "attribute": "title=\"进程平均延迟\""
+        },
+        {
+          "line": 1015,
+          "attribute": "description=\"进程累计，不受范围筛选影响\""
+        },
+        {
+          "line": 1019,
+          "attribute": "aria-label=\"补充运行指标\""
+        },
+        {
+          "line": 1021,
+          "attribute": "label={`${rangeName} Token`}"
+        },
+        {
+          "line": 1022,
+          "attribute": "label=\"范围吞吐\""
+        },
+        {
+          "line": 1023,
+          "attribute": "label=\"客户端密钥\""
+        },
+        {
+          "line": 1024,
+          "attribute": "label=\"缓存命中\""
+        },
+        {
+          "line": 1092,
+          "attribute": "title=\"当前范围暂无请求\""
+        },
+        {
+          "line": 1093,
+          "attribute": "description=\"发送首个请求后，这里会展示真实请求与错误趋势。\""
+        }
+      ]
+    },
+    {
+      "route": "/logs",
+      "file": "dashboard/src/pages/LogsPage.tsx",
+      "texts": [
+        {
+          "line": 151,
+          "text": "持久化日志"
+        },
+        {
+          "line": 154,
+          "text": "条结果"
+        },
+        {
+          "line": 157,
+          "text": "请求日志"
+        },
+        {
+          "line": 159,
+          "text": "从真实请求记录中排查路由、身份、缓存、计费与延迟；最后更新于"
+        },
+        {
+          "line": 159,
+          "text": "。"
+        },
+        {
+          "line": 171,
+          "text": "只看错误"
+        },
+        {
+          "line": 194,
+          "text": "每 3 秒刷新当前结果。为接收新请求，已移除固定结束时间；切换到后台标签页时会暂停请求。"
+        },
+        {
+          "line": 200,
+          "text": "刷新失败，当前显示的是上次成功加载的数据（"
+        },
+        {
+          "line": 200,
+          "text": "）。"
+        },
+        {
+          "line": 203,
+          "text": "重试"
+        }
+      ],
+      "controls": [
+        {
+          "line": 122,
+          "attribute": "title=\"请求日志加载失败\""
+        }
+      ]
+    },
+    {
+      "route": "/models",
+      "file": "dashboard/src/pages/ModelsPage.tsx",
+      "texts": [
+        {
+          "line": 779,
+          "text": "正在验证模型目录"
+        },
+        {
+          "line": 780,
+          "text": "正在核对 API Key、项目、模型与 Provider 策略。"
+        },
+        {
+          "line": 791,
+          "text": "（"
+        },
+        {
+          "line": 791,
+          "text": "）"
+        },
+        {
+          "line": 833,
+          "text": "当前为只读视图"
+        },
+        {
+          "line": 834,
+          "text": "只有管理员可以修改上游配置；下方按所选 API Key 的模型、Provider 与项目策略展示目录，IP 限制以实际客户端请求为准。"
+        },
+        {
+          "line": 851,
+          "text": "（"
+        },
+        {
+          "line": 851,
+          "text": "）"
+        },
+        {
+          "line": 857,
+          "text": "创建或检查密钥"
+        },
+        {
+          "line": 881,
+          "text": "唯一模型"
+        },
+        {
+          "line": 892,
+          "text": "启用 Provider"
+        },
+        {
+          "line": 893,
+          "text": "/"
+        },
+        {
+          "line": 903,
+          "text": "模型渠道"
+        },
+        {
+          "line": 924,
+          "text": "模型与路由"
+        },
+        {
+          "line": 925,
+          "text": "协议能力"
+        },
+        {
+          "line": 926,
+          "text": "别名"
+        },
+        {
+          "line": 927,
+          "text": "Provider 与凭证"
+        },
+        {
+          "line": 928,
+          "text": "默认路由"
+        },
+        {
+          "line": 929,
+          "text": "配置模板"
+        },
+        {
+          "line": 959,
+          "text": "全部模型系列"
+        },
+        {
+          "line": 972,
+          "text": "模型"
+        },
+        {
+          "line": 973,
+          "text": "系列"
+        },
+        {
+          "line": 974,
+          "text": "首选渠道（配置）"
+        },
+        {
+          "line": 975,
+          "text": "供应商"
+        },
+        {
+          "line": 976,
+          "text": "路由"
+        },
+        {
+          "line": 997,
+          "text": "查看接入模板"
+        },
+        {
+          "line": 999,
+          "text": "检查个人密钥"
+        },
+        {
+          "line": 1031,
+          "text": "/"
+        },
+        {
+          "line": 1031,
+          "text": "已启用"
+        },
+        {
+          "line": 1069,
+          "text": "复制路由名"
+        },
+        {
+          "line": 1073,
+          "text": "设为别名"
+        },
+        {
+          "line": 1106,
+          "text": "模板只生成 TOML 与环境变量片段，不会修改运行中配置；保存文件并重启后才生效。"
+        },
+        {
+          "line": 1119,
+          "text": "已配置"
+        },
+        {
+          "line": 1124,
+          "text": "配置"
+        },
+        {
+          "line": 1135,
+          "text": "+"
+        },
+        {
+          "line": 1149,
+          "text": "新 Provider 先进入组织审查目录"
+        },
+        {
+          "line": 1151,
+          "text": "从接入模板生成 TOML 与 Secret 环境变量，保存后重载或重启；控制台只编辑已批准的 Provider，不能临时添加任意端点。"
+        },
+        {
+          "line": 1155,
+          "text": "查看接入模板"
+        },
+        {
+          "line": 1164,
+          "text": "接入新 Provider"
+        },
+        {
+          "line": 1198,
+          "text": "查看接入模板"
+        },
+        {
+          "line": 1252,
+          "text": "Tool Use Provider"
+        },
+        {
+          "line": 1253,
+          "text": "/"
+        },
+        {
+          "line": 1263,
+          "text": "Anthropic-compatible"
+        },
+        {
+          "line": 1288,
+          "text": "Provider"
+        },
+        {
+          "line": 1289,
+          "text": "协议"
+        },
+        {
+          "line": 1290,
+          "text": "Tool Use"
+        },
+        {
+          "line": 1291,
+          "text": "tool_choice"
+        },
+        {
+          "line": 1292,
+          "text": "并行工具"
+        },
+        {
+          "line": 1293,
+          "text": "Arguments"
+        },
+        {
+          "line": 1294,
+          "text": "保真模式"
+        },
+        {
+          "line": 1295,
+          "text": "状态"
+        },
+        {
+          "line": 1301,
+          "text": "暂无 Provider"
+        },
+        {
+          "line": 1333,
+          "text": "默认"
+        },
+        {
+          "line": 1340,
+          "text": "等待充值"
+        },
+        {
+          "line": 1342,
+          "text": "所选密钥可路由"
+        },
+        {
+          "line": 1358,
+          "text": "新建别名"
+        },
+        {
+          "line": 1363,
+          "text": "共"
+        },
+        {
+          "line": 1363,
+          "text": "个模型别名；别名目标可以写成 provider:model。"
+        },
+        {
+          "line": 1372,
+          "text": "别名"
+        },
+        {
+          "line": 1373,
+          "text": "目标"
+        },
+        {
+          "line": 1374,
+          "text": "解析提供商"
+        },
+        {
+          "line": 1375,
+          "text": "解析模型"
+        },
+        {
+          "line": 1440,
+          "text": "默认路由策略"
+        },
+        {
+          "line": 1445,
+          "text": "同名模型会按供应商优先级解析；需要固定渠道时使用 provider:model，例如 openai:gpt-5.5。"
+        },
+        {
+          "line": 1448,
+          "text": "默认提供商"
+        },
+        {
+          "line": 1468,
+          "text": "Provider 解析顺序"
+        },
+        {
+          "line": 1469,
+          "text": "同名模型从上到下匹配可用 Provider；调整后立即保存并参与新请求路由。"
+        },
+        {
+          "line": 1484,
+          "text": "最高优先级"
+        },
+        {
+          "line": 1485,
+          "text": "默认"
+        },
+        {
+          "line": 1519,
+          "text": "暂无可排序的 Provider"
+        },
+        {
+          "line": 1521,
+          "text": "当前账号为只读角色，只有管理员可以调整路由优先级。"
+        },
+        {
+          "line": 1538,
+          "text": "新建别名"
+        },
+        {
+          "line": 1539,
+          "text": "创建模型别名以简化路由配置"
+        },
+        {
+          "line": 1550,
+          "text": "取消"
+        },
+        {
+          "line": 1568,
+          "text": "保存中"
+        },
+        {
+          "line": 1579,
+          "text": "结构配置会写入控制面；这里只保存 Secret 环境变量引用。新增或修改真实环境变量后必须重启 RoutePilot，并通过连接测试后才可投产。"
+        },
+        {
+          "line": 1583,
+          "text": "生效顺序：保存引用 → 在部署环境注入 Secret → 重启 RoutePilot → 回到 Provider 卡片运行“连接测试并发现模型”。保存表单本身不代表凭证可用。"
+        },
+        {
+          "line": 1628,
+          "text": "OpenAI 兼容"
+        },
+        {
+          "line": 1629,
+          "text": "Anthropic"
+        },
+        {
+          "line": 1670,
+          "text": "max_completion_tokens"
+        },
+        {
+          "line": 1671,
+          "text": "max_tokens"
+        },
+        {
+          "line": 1672,
+          "text": "both"
+        },
+        {
+          "line": 1706,
+          "text": "尽量无损"
+        },
+        {
+          "line": 1707,
+          "text": "严格无损"
+        },
+        {
+          "line": 1708,
+          "text": "稳定优先"
+        },
+        {
+          "line": 1719,
+          "text": "native"
+        },
+        {
+          "line": 1720,
+          "text": "delta"
+        },
+        {
+          "line": 1721,
+          "text": "cumulative"
+        },
+        {
+          "line": 1722,
+          "text": "best_effort"
+        },
+        {
+          "line": 1733,
+          "text": "best_effort"
+        },
+        {
+          "line": 1734,
+          "text": "strict"
+        },
+        {
+          "line": 1829,
+          "text": "保存前请确认"
+        },
+        {
+          "line": 1838,
+          "text": "取消"
+        },
+        {
+          "line": 1844,
+          "text": "保存中"
+        },
+        {
+          "line": 1854,
+          "text": "模型适配画像"
+        },
+        {
+          "line": 1865,
+          "text": "当前有效来源："
+        },
+        {
+          "line": 1865,
+          "text": "· 验证："
+        },
+        {
+          "line": 1865,
+          "text": "· 目录版本："
+        },
+        {
+          "line": 1865,
+          "text": "。`unknown` 会对高级能力失败关闭。"
+        },
+        {
+          "line": 1910,
+          "text": "继承目录"
+        },
+        {
+          "line": 1911,
+          "text": "none"
+        },
+        {
+          "line": 1912,
+          "text": "same_protocol"
+        },
+        {
+          "line": 1920,
+          "text": "取消"
+        },
+        {
+          "line": 1922,
+          "text": "保存中"
+        },
+        {
+          "line": 1933,
+          "text": "账号只保存环境变量名；真实 API Key 仍放在 .env、容器 Secret 或系统环境变量中。保存后需重启并重新运行 Provider 连接测试。"
+        },
+        {
+          "line": 1993,
+          "text": "取消"
+        },
+        {
+          "line": 2002,
+          "text": "保存中"
+        },
+        {
+          "line": 2018,
+          "text": "删除供应商"
+        },
+        {
+          "line": 2020,
+          "text": "删除后该供应商不会再参与路由；如果仍被别名、API Key 或团队策略引用，需要先确认依赖。"
+        },
+        {
+          "line": 2025,
+          "text": "确认删除"
+        },
+        {
+          "line": 2025,
+          "text": "？"
+        },
+        {
+          "line": 2028,
+          "text": "Provider、账号池、模型覆盖和健康记录会被移除；基础配置中的 Provider 会留下禁用墓碑。首次删除会先检查默认路由、别名和访问策略依赖。 强制删除会清理别名与路由控制项，但不会自动改写 API Key 或团队中的 allowedProviders 策略。"
+        },
+        {
+          "line": 2036,
+          "text": "发现"
+        },
+        {
+          "line": 2036,
+          "text": "个依赖"
+        },
+        {
+          "line": 2050,
+          "text": "输入"
+        },
+        {
+          "line": 2050,
+          "text": "确认强制删除"
+        },
+        {
+          "line": 2065,
+          "text": "取消"
+        },
+        {
+          "line": 2073,
+          "text": "强制删除 Provider"
+        },
+        {
+          "line": 2078,
+          "text": "检查依赖并删除"
+        },
+        {
+          "line": 2088,
+          "text": "删除上游账号"
+        },
+        {
+          "line": 2089,
+          "text": "账号配置和健康记录会删除；真实环境变量不会被修改。"
+        },
+        {
+          "line": 2095,
+          "text": "这是当前账号；删除后系统会选择其他可用账号，若没有候选则 Provider 可能不可路由。"
+        },
+        {
+          "line": 2099,
+          "text": "取消"
+        },
+        {
+          "line": 2102,
+          "text": "删除账号"
+        },
+        {
+          "line": 2111,
+          "text": "删除模型别名"
+        },
+        {
+          "line": 2112,
+          "text": "使用该别名的客户端将不再解析到原目标。"
+        },
+        {
+          "line": 2114,
+          "text": "确认删除别名"
+        },
+        {
+          "line": 2114,
+          "text": "？"
+        },
+        {
+          "line": 2116,
+          "text": "取消"
+        },
+        {
+          "line": 2132,
+          "text": "删除别名"
+        },
+        {
+          "line": 2143,
+          "text": "复制到 config.toml 或 .env，重启 RoutePilot 后生效。密钥仍建议放在环境变量里。"
+        },
+        {
+          "line": 2150,
+          "text": "TOML provider"
+        },
+        {
+          "line": 2153,
+          "text": "一键复制"
+        },
+        {
+          "line": 2160,
+          "text": "环境变量"
+        },
+        {
+          "line": 2163,
+          "text": "一键复制"
+        },
+        {
+          "line": 2168,
+          "text": "默认模型"
+        },
+        {
+          "line": 2170,
+          "text": "建议别名"
+        },
+        {
+          "line": 2171,
+          "text": "= \""
+        },
+        {
+          "line": 2171,
+          "text": ":"
+        },
+        {
+          "line": 2171,
+          "text": "\""
+        },
+        {
+          "line": 2177,
+          "text": "完成"
+        },
+        {
+          "line": 2215,
+          "text": "当前默认路由"
+        },
+        {
+          "line": 2220,
+          "text": "正在读取默认路由"
+        },
+        {
+          "line": 2221,
+          "text": "等待当前运行设置返回。"
+        },
+        {
+          "line": 2225,
+          "text": "默认路由状态不可用"
+        },
+        {
+          "line": 2226,
+          "text": "打开“默认路由”查看错误并重试。"
+        },
+        {
+          "line": 2232,
+          "text": ":"
+        },
+        {
+          "line": 2237,
+          "text": "默认 Provider 不在当前目录"
+        },
+        {
+          "line": 2242,
+          "text": "尚未形成默认路由"
+        },
+        {
+          "line": 2243,
+          "text": "添加并启用 Provider 后，再选择默认入口。"
+        },
+        {
+          "line": 2256,
+          "text": "路由检查暂不可用"
+        },
+        {
+          "line": 2262,
+          "text": "查看 Provider"
+        },
+        {
+          "line": 2266,
+          "text": "管理默认路由"
+        },
+        {
+          "line": 2270,
+          "text": "个 Provider ·"
+        },
+        {
+          "line": 2270,
+          "text": "个需处理"
+        },
+        {
+          "line": 2319,
+          "text": "下一步："
+        },
+        {
+          "line": 2426,
+          "text": "默认 Provider"
+        },
+        {
+          "line": 2441,
+          "text": "模型归属"
+        },
+        {
+          "line": 2445,
+          "text": "·"
+        },
+        {
+          "line": 2460,
+          "text": "Tool Use"
+        },
+        {
+          "line": 2462,
+          "text": "工具流"
+        },
+        {
+          "line": 2464,
+          "text": "单工具调用"
+        },
+        {
+          "line": 2465,
+          "text": "透传未知模型"
+        },
+        {
+          "line": 2509,
+          "text": "上游账号"
+        },
+        {
+          "line": 2524,
+          "text": "手动"
+        },
+        {
+          "line": 2525,
+          "text": "故障切换"
+        },
+        {
+          "line": 2526,
+          "text": "轮询"
+        },
+        {
+          "line": 2531,
+          "text": "新增"
+        },
+        {
+          "line": 2540,
+          "text": "DeepSeek 线上余额"
+        },
+        {
+          "line": 2548,
+          "text": "实时只读查询；充值、退款与账单以 DeepSeek 控制台为准。"
+        },
+        {
+          "line": 2567,
+          "text": "可用总额"
+        },
+        {
+          "line": 2572,
+          "text": "赠金"
+        },
+        {
+          "line": 2572,
+          "text": "· 充值"
+        },
+        {
+          "line": 2577,
+          "text": "最近查询："
+        },
+        {
+          "line": 2603,
+          "text": "·"
+        },
+        {
+          "line": 2616,
+          "text": "编辑"
+        },
+        {
+          "line": 2626,
+          "text": "删除"
+        },
+        {
+          "line": 2634,
+          "text": "环境变量："
+        },
+        {
+          "line": 2638,
+          "text": "Base URL："
+        },
+        {
+          "line": 2653,
+          "text": "当前"
+        },
+        {
+          "line": 2654,
+          "text": "禁用"
+        },
+        {
+          "line": 2658,
+          "text": "最近"
+        },
+        {
+          "line": 2708,
+          "text": "编辑"
+        },
+        {
+          "line": 2716,
+          "text": "删除"
+        },
+        {
+          "line": 2722,
+          "text": "连接测试会先读取模型目录，再向默认模型发送固定、无用户数据的最小请求；最多生成 1 Token，可能产生极小费用。"
+        },
+        {
+          "line": 2729,
+          "text": "控制面只保存 Secret 引用。请在部署环境注入"
+        },
+        {
+          "line": 2729,
+          "text": "并重启 RoutePilot；当前进程解析成功后才能测试上游。"
+        },
+        {
+          "line": 2751,
+          "text": "实际凭据："
+        },
+        {
+          "line": 2760,
+          "text": "模型目录"
+        },
+        {
+          "line": 2761,
+          "text": "复制路由名或创建别名"
+        },
+        {
+          "line": 2764,
+          "text": "启用"
+        },
+        {
+          "line": 2765,
+          "text": "禁用"
+        },
+        {
+          "line": 2773,
+          "text": "启用全部"
+        },
+        {
+          "line": 2782,
+          "text": "禁用非默认"
+        },
+        {
+          "line": 2789,
+          "text": "暂无启用模型，可先发现上游模型或在配置文件中补充 models。"
+        },
+        {
+          "line": 2817,
+          "text": "复制默认路由："
+        },
+        {
+          "line": 2860,
+          "text": "个"
+        },
+        {
+          "line": 2874,
+          "text": "默认"
+        },
+        {
+          "line": 2875,
+          "text": "已禁用"
+        },
+        {
+          "line": 2876,
+          "text": "推理 ·"
+        },
+        {
+          "line": 2877,
+          "text": "Tool Use"
+        },
+        {
+          "line": 2878,
+          "text": "上下文"
+        },
+        {
+          "line": 2879,
+          "text": "未实测"
+        },
+        {
+          "line": 2900,
+          "text": "默认"
+        },
+        {
+          "line": 2905,
+          "text": "别名"
+        },
+        {
+          "line": 2909,
+          "text": "适配"
+        },
+        {
+          "line": 2992,
+          "text": "*"
+        },
+        {
+          "line": 3023,
+          "text": "继承目录"
+        },
+        {
+          "line": 3024,
+          "text": "supported"
+        },
+        {
+          "line": 3025,
+          "text": "unsupported"
+        },
+        {
+          "line": 3026,
+          "text": "unknown（失败关闭）"
+        }
+      ],
+      "controls": [
+        {
+          "line": 771,
+          "attribute": "title=\"模型目录\""
+        },
+        {
+          "line": 772,
+          "attribute": "description=\"正在重新验证所选密钥的实时模型权限；验证完成前不会展示或复制缓存目录。\""
+        },
+        {
+          "line": 785,
+          "attribute": "aria-label=\"选择用于查询模型目录的 API 密钥\""
+        },
+        {
+          "line": 786,
+          "attribute": "placeholder=\"选择 API Key\""
+        },
+        {
+          "line": 807,
+          "attribute": "title=\"模型目录加载失败\""
+        },
+        {
+          "line": 823,
+          "attribute": "title={canManage ? 'Provider 与模型' : '模型目录'}"
+        },
+        {
+          "line": 824,
+          "attribute": "description={canManage\n          ? '管理上游接入、凭证账号、模型目录、别名和默认路由'\n          : '查看组织当前的模型、稳定别名和协议能力；此页面不提供任何配置写操作'}"
+        },
+        {
+          "line": 845,
+          "attribute": "aria-label=\"选择用于查询模型目录的 API 密钥\""
+        },
+        {
+          "line": 846,
+          "attribute": "placeholder=\"选择 API Key\""
+        },
+        {
+          "line": 939,
+          "attribute": "aria-label=\"搜索模型、Provider 或渠道\""
+        },
+        {
+          "line": 940,
+          "attribute": "placeholder=\"搜索模型、供应商或渠道...\""
+        },
+        {
+          "line": 957,
+          "attribute": "aria-label=\"筛选模型系列\""
+        },
+        {
+          "line": 957,
+          "attribute": "placeholder=\"全部模型系列\""
+        },
+        {
+          "line": 985,
+          "attribute": "title={providers.length === 0\n                            ? canManage ? '尚未配置 Provider' : '当前没有可访问模型'\n                            : '没有匹配的模型'}"
+        },
+        {
+          "line": 988,
+          "attribute": "description={providers.length === 0\n                            ? canManage\n                              ? '先从模板生成组织审查配置，重载或重启后再发现模型。'\n                              : '创建或检查个人 API 密钥；若仍为空，请联系管理员确认模型与项目策略。'\n                            : '清除搜索词或切换模型系列后重试。'}"
+        },
+        {
+          "line": 1015,
+          "attribute": "aria-label={`${expandedModel === row.model ? '收起' : '展开'} ${row.model} 的渠道`}"
+        },
+        {
+          "line": 1040,
+          "attribute": "aria-label={`复制路由 ${row.preferredChannel.routeName}`}"
+        },
+        {
+          "line": 1195,
+          "attribute": "title={providers.length === 0 ? '尚未配置 Provider' : '当前筛选没有结果'}"
+        },
+        {
+          "line": 1196,
+          "attribute": "description={providers.length === 0 ? '先从模板生成组织审查配置，重载或重启后再管理凭证与模型。' : '切换状态筛选以查看其他 Provider。'}"
+        },
+        {
+          "line": 1383,
+          "attribute": "title=\"暂无模型别名\""
+        },
+        {
+          "line": 1383,
+          "attribute": "description=\"别名可以为稳定的客户端模型名绑定明确的 provider:model 路由。\""
+        },
+        {
+          "line": 1398,
+          "attribute": "aria-label={`删除别名 ${alias.alias}`}"
+        },
+        {
+          "line": 1429,
+          "attribute": "title=\"默认路由加载失败\""
+        },
+        {
+          "line": 1454,
+          "attribute": "aria-label=\"默认 Provider\""
+        },
+        {
+          "line": 1455,
+          "attribute": "placeholder=\"加载默认供应商…\""
+        },
+        {
+          "line": 1478,
+          "attribute": "aria-label={`优先级 ${index + 1}`}"
+        },
+        {
+          "line": 1490,
+          "attribute": "aria-label={`${providerDisplayTitle(provider)} 排序操作`}"
+        },
+        {
+          "line": 1498,
+          "attribute": "aria-label={`上移 ${providerDisplayTitle(provider)}`}"
+        },
+        {
+          "line": 1499,
+          "attribute": "title=\"提高路由优先级\""
+        },
+        {
+          "line": 1510,
+          "attribute": "aria-label={`下移 ${providerDisplayTitle(provider)}`}"
+        },
+        {
+          "line": 1511,
+          "attribute": "title=\"降低路由优先级\""
+        },
+        {
+          "line": 1542,
+          "attribute": "label=\"别名\""
+        },
+        {
+          "line": 1542,
+          "attribute": "htmlFor=\"model-alias\""
+        },
+        {
+          "line": 1542,
+          "attribute": "description=\"客户端使用的稳定模型名；不能包含冒号。\""
+        },
+        {
+          "line": 1543,
+          "attribute": "placeholder=\"例如: sonnet\""
+        },
+        {
+          "line": 1545,
+          "attribute": "label=\"目标路由\""
+        },
+        {
+          "line": 1545,
+          "attribute": "htmlFor=\"model-alias-target\""
+        },
+        {
+          "line": 1545,
+          "attribute": "description=\"使用 provider:model 可固定上游渠道。\""
+        },
+        {
+          "line": 1546,
+          "attribute": "placeholder=\"例如: openrouter:anthropic/claude-sonnet-4.6\""
+        },
+        {
+          "line": 1588,
+          "attribute": "title=\"1. Provider 身份与端点\""
+        },
+        {
+          "line": 1589,
+          "attribute": "description=\"定义稳定 ID、协议、上游根地址和默认凭证引用。真实密钥不会写入控制面。\""
+        },
+        {
+          "line": 1591,
+          "attribute": "label=\"Provider ID\""
+        },
+        {
+          "line": 1591,
+          "attribute": "htmlFor=\"provider-id\""
+        },
+        {
+          "line": 1591,
+          "attribute": "description={editingProvider ? '稳定标识，创建后不可修改。' : '用于 provider:model 路由，只支持小写字母、数字、- 和 _。'}"
+        },
+        {
+          "line": 1597,
+          "attribute": "placeholder=\"例如: siliconflow\""
+        },
+        {
+          "line": 1602,
+          "attribute": "label=\"显示名称\""
+        },
+        {
+          "line": 1602,
+          "attribute": "htmlFor=\"provider-display-name\""
+        },
+        {
+          "line": 1602,
+          "attribute": "description=\"留空时使用 Provider ID。\""
+        },
+        {
+          "line": 1607,
+          "attribute": "placeholder=\"例如: 第三方 · OpenAI\""
+        },
+        {
+          "line": 1610,
+          "attribute": "label=\"上游协议\""
+        },
+        {
+          "line": 1610,
+          "attribute": "description=\"选择上游实际实现的协议；网关会从 Anthropic Messages 或 OpenAI Chat 入口归一化后适配。\""
+        },
+        {
+          "line": 1626,
+          "attribute": "aria-label=\"上游协议\""
+        },
+        {
+          "line": 1633,
+          "attribute": "label=\"Secret 环境变量引用\""
+        },
+        {
+          "line": 1633,
+          "attribute": "htmlFor=\"provider-api-key-env\""
+        },
+        {
+          "line": 1633,
+          "attribute": "description=\"这里只保存变量名，不保存明文。清空会显式移除旧引用；新增或修改变量值后需重启进程。\""
+        },
+        {
+          "line": 1638,
+          "attribute": "placeholder=\"例如: SILICONFLOW_API_KEY\""
+        },
+        {
+          "line": 1642,
+          "attribute": "label=\"API Base URL\""
+        },
+        {
+          "line": 1642,
+          "attribute": "htmlFor=\"provider-base-url\""
+        },
+        {
+          "line": 1642,
+          "attribute": "description=\"填写 API 根路径，不要包含 /chat/completions、/messages、查询参数或凭证。\""
+        },
+        {
+          "line": 1647,
+          "attribute": "placeholder=\"https://example.com/v1\""
+        },
+        {
+          "line": 1653,
+          "attribute": "title=\"2. 模型目录与请求字段\""
+        },
+        {
+          "line": 1654,
+          "attribute": "description=\"默认模型决定显式 provider 路由的回退；模型列表控制目录与可见性。\""
+        },
+        {
+          "line": 1656,
+          "attribute": "label=\"默认模型\""
+        },
+        {
+          "line": 1656,
+          "attribute": "htmlFor=\"provider-default-model\""
+        },
+        {
+          "line": 1656,
+          "attribute": "description=\"保存时会自动加入模型列表。\""
+        },
+        {
+          "line": 1661,
+          "attribute": "placeholder=\"例如: gpt-4o-mini\""
+        },
+        {
+          "line": 1666,
+          "attribute": "label=\"Max Tokens 字段\""
+        },
+        {
+          "line": 1666,
+          "attribute": "description=\"按上游兼容性选择请求字段名。\""
+        },
+        {
+          "line": 1668,
+          "attribute": "aria-label=\"Max Tokens 字段\""
+        },
+        {
+          "line": 1676,
+          "attribute": "label=\"模型列表\""
+        },
+        {
+          "line": 1676,
+          "attribute": "htmlFor=\"provider-models\""
+        },
+        {
+          "line": 1676,
+          "attribute": "description=\"每行或逗号分隔；发现模型后会与目录合并。\""
+        },
+        {
+          "line": 1682,
+          "attribute": "placeholder={'每行一个模型，或用逗号分隔\\ndeepseek-v4-flash\\ngpt-4o-mini'}"
+        },
+        {
+          "line": 1685,
+          "attribute": "label=\"模型前缀\""
+        },
+        {
+          "line": 1685,
+          "attribute": "htmlFor=\"provider-model-prefixes\""
+        },
+        {
+          "line": 1685,
+          "attribute": "description=\"可选；用于接受匹配前缀的模型名，不等同于已发现模型。\""
+        },
+        {
+          "line": 1690,
+          "attribute": "placeholder=\"可选，例如 openai/, anthropic/\""
+        },
+        {
+          "line": 1694,
+          "attribute": "title=\"3. 协议兼容与能力声明\""
+        },
+        {
+          "line": 1695,
+          "attribute": "description=\"这些开关描述适配器行为，不代表上游已通过真实 Tool Use 或流式验收。\""
+        },
+        {
+          "line": 1697,
+          "attribute": "label=\"保真模式\""
+        },
+        {
+          "line": 1697,
+          "attribute": "description=\"严格无损会拒绝无法无损映射的请求。\""
+        },
+        {
+          "line": 1700,
+          "attribute": "aria-label=\"保真模式\""
+        },
+        {
+          "line": 1712,
+          "attribute": "label=\"Tool Use 参数流\""
+        },
+        {
+          "line": 1712,
+          "attribute": "description=\"native 直通；delta/cumulative/best_effort 用于 OpenAI-compatible 参数片段。\""
+        },
+        {
+          "line": 1717,
+          "attribute": "aria-label=\"Tool Use 参数流\""
+        },
+        {
+          "line": 1726,
+          "attribute": "label=\"Tool Use 响应校验\""
+        },
+        {
+          "line": 1726,
+          "attribute": "description=\"strict 会拒绝未声明工具、非法参数以及违反 tool_choice 的响应。\""
+        },
+        {
+          "line": 1731,
+          "attribute": "aria-label=\"Tool Use 响应校验\""
+        },
+        {
+          "line": 1738,
+          "attribute": "aria-label=\"Provider 能力开关\""
+        },
+        {
+          "line": 1740,
+          "attribute": "label=\"需要 API Key\""
+        },
+        {
+          "line": 1745,
+          "attribute": "label=\"透传未知模型\""
+        },
+        {
+          "line": 1750,
+          "attribute": "label=\"流式文本去重\""
+        },
+        {
+          "line": 1763,
+          "attribute": "label=\"缓冲非流式文本\""
+        },
+        {
+          "line": 1768,
+          "attribute": "label=\"支持 Tool Use\""
+        },
+        {
+          "line": 1778,
+          "attribute": "label=\"支持 tool_choice\""
+        },
+        {
+          "line": 1784,
+          "attribute": "label=\"允许并行工具调用\""
+        },
+        {
+          "line": 1790,
+          "attribute": "label=\"保存后禁用\""
+        },
+        {
+          "line": 1796,
+          "attribute": "title=\"4. 上游请求策略\""
+        },
+        {
+          "line": 1797,
+          "attribute": "description=\"静态头只允许非敏感归因字段；认证、Cookie、转发、链路和 HTTP 帧头由 RoutePilot 保留。重试次数包含首次请求。\""
+        },
+        {
+          "line": 1799,
+          "attribute": "label=\"静态请求头\""
+        },
+        {
+          "line": 1799,
+          "attribute": "htmlFor=\"provider-static-headers\""
+        },
+        {
+          "line": 1799,
+          "attribute": "description=\"每行一个 Header-Name: value，例如 OpenRouter 的 HTTP-Referer 与 X-Title。\""
+        },
+        {
+          "line": 1805,
+          "attribute": "placeholder={'HTTP-Referer: https://routepilot.example\\nX-Title: RoutePilot'}"
+        },
+        {
+          "line": 1809,
+          "attribute": "label=\"请求 / SSE 握手超时（毫秒）\""
+        },
+        {
+          "line": 1809,
+          "attribute": "htmlFor=\"provider-request-timeout\""
+        },
+        {
+          "line": 1809,
+          "attribute": "description=\"留空继承全局设置。\""
+        },
+        {
+          "line": 1810,
+          "attribute": "placeholder=\"600000\""
+        },
+        {
+          "line": 1812,
+          "attribute": "label=\"流空闲超时（毫秒）\""
+        },
+        {
+          "line": 1812,
+          "attribute": "htmlFor=\"provider-stream-idle-timeout\""
+        },
+        {
+          "line": 1812,
+          "attribute": "description=\"留空继承全局设置；每收到一个 SSE 数据块会重新计时。\""
+        },
+        {
+          "line": 1813,
+          "attribute": "placeholder=\"300000\""
+        },
+        {
+          "line": 1815,
+          "attribute": "label=\"总尝试次数\""
+        },
+        {
+          "line": 1815,
+          "attribute": "htmlFor=\"provider-retry-attempts\""
+        },
+        {
+          "line": 1815,
+          "attribute": "description=\"1 表示不做同 Provider 重试；最大 5。\""
+        },
+        {
+          "line": 1818,
+          "attribute": "label=\"重试抖动比例\""
+        },
+        {
+          "line": 1818,
+          "attribute": "htmlFor=\"provider-retry-jitter\""
+        },
+        {
+          "line": 1818,
+          "attribute": "description=\"0 到 1，避免实例同时重试。\""
+        },
+        {
+          "line": 1821,
+          "attribute": "label=\"重试初始延迟（毫秒）\""
+        },
+        {
+          "line": 1821,
+          "attribute": "htmlFor=\"provider-retry-initial\""
+        },
+        {
+          "line": 1824,
+          "attribute": "label=\"重试最大延迟（毫秒）\""
+        },
+        {
+          "line": 1824,
+          "attribute": "htmlFor=\"provider-retry-max\""
+        },
+        {
+          "line": 1824,
+          "attribute": "description=\"同时作为上游 Retry-After 的本地上限。\""
+        },
+        {
+          "line": 1867,
+          "attribute": "label=\"显示名称\""
+        },
+        {
+          "line": 1867,
+          "attribute": "htmlFor=\"model-profile-display-name\""
+        },
+        {
+          "line": 1867,
+          "attribute": "description={`当前：${editingModelAdaptation.item.displayName || '未设置'}`}"
+        },
+        {
+          "line": 1868,
+          "attribute": "placeholder=\"留空继承\""
+        },
+        {
+          "line": 1870,
+          "attribute": "label=\"模型家族\""
+        },
+        {
+          "line": 1870,
+          "attribute": "htmlFor=\"model-profile-family\""
+        },
+        {
+          "line": 1870,
+          "attribute": "description={`当前：${editingModelAdaptation.item.family || '未设置'}`}"
+        },
+        {
+          "line": 1871,
+          "attribute": "placeholder=\"留空继承\""
+        },
+        {
+          "line": 1873,
+          "attribute": "label=\"上下文窗口\""
+        },
+        {
+          "line": 1873,
+          "attribute": "htmlFor=\"model-profile-context\""
+        },
+        {
+          "line": 1873,
+          "attribute": "description={`当前：${editingModelAdaptation.item.contextWindow?.toLocaleString() || '未知'}`}"
+        },
+        {
+          "line": 1874,
+          "attribute": "placeholder=\"留空继承\""
+        },
+        {
+          "line": 1876,
+          "attribute": "label=\"最大输出 Token\""
+        },
+        {
+          "line": 1876,
+          "attribute": "htmlFor=\"model-profile-output\""
+        },
+        {
+          "line": 1876,
+          "attribute": "description={`当前：${editingModelAdaptation.item.maxOutputTokens?.toLocaleString() || '未知'}`}"
+        },
+        {
+          "line": 1877,
+          "attribute": "placeholder=\"留空继承\""
+        },
+        {
+          "line": 1879,
+          "attribute": "label=\"输入模态\""
+        },
+        {
+          "line": 1879,
+          "attribute": "htmlFor=\"model-profile-modalities\""
+        },
+        {
+          "line": 1879,
+          "attribute": "description={`当前：${editingModelAdaptation.item.inputModalities?.join(', ') || 'text'}。当前 Exchange IR 仍只接受文本；image 仅记录能力，不开放图片请求。`}"
+        },
+        {
+          "line": 1880,
+          "attribute": "placeholder=\"留空继承；可填 text 或 text, image\""
+        },
+        {
+          "line": 1882,
+          "attribute": "label=\"Tool Use\""
+        },
+        {
+          "line": 1883,
+          "attribute": "label=\"tool_choice\""
+        },
+        {
+          "line": 1884,
+          "attribute": "label=\"并行工具调用\""
+        },
+        {
+          "line": 1885,
+          "attribute": "label=\"严格工具 Schema\""
+        },
+        {
+          "line": 1886,
+          "attribute": "label=\"推理\""
+        },
+        {
+          "line": 1887,
+          "attribute": "label=\"推理方言\""
+        },
+        {
+          "line": 1887,
+          "attribute": "description={`当前：${editingModelAdaptation.item.reasoningDialect ?? 'none'}`}"
+        },
+        {
+          "line": 1889,
+          "attribute": "aria-label=\"推理方言\""
+        },
+        {
+          "line": 1895,
+          "attribute": "label=\"推理档位\""
+        },
+        {
+          "line": 1895,
+          "attribute": "htmlFor=\"model-profile-efforts\""
+        },
+        {
+          "line": 1895,
+          "attribute": "description={`当前：${editingModelAdaptation.item.reasoningEfforts?.join(', ') || '未声明'}`}"
+        },
+        {
+          "line": 1896,
+          "attribute": "placeholder=\"off, low, medium, high\""
+        },
+        {
+          "line": 1898,
+          "attribute": "label=\"默认推理档位\""
+        },
+        {
+          "line": 1898,
+          "attribute": "description={`当前：${editingModelAdaptation.item.defaultReasoningEffort ?? '未设置'}`}"
+        },
+        {
+          "line": 1900,
+          "attribute": "aria-label=\"默认推理档位\""
+        },
+        {
+          "line": 1906,
+          "attribute": "label=\"推理回放\""
+        },
+        {
+          "line": 1906,
+          "attribute": "description={`当前：${editingModelAdaptation.item.reasoningReplay ?? 'none'}`}"
+        },
+        {
+          "line": 1908,
+          "attribute": "aria-label=\"推理回放\""
+        },
+        {
+          "line": 1938,
+          "attribute": "label=\"账号 ID\""
+        },
+        {
+          "line": 1938,
+          "attribute": "htmlFor=\"credential-id\""
+        },
+        {
+          "line": 1938,
+          "attribute": "description=\"用于账号池选择，创建后不可修改。\""
+        },
+        {
+          "line": 1943,
+          "attribute": "placeholder=\"例如: account-a\""
+        },
+        {
+          "line": 1949,
+          "attribute": "label=\"显示名称\""
+        },
+        {
+          "line": 1949,
+          "attribute": "htmlFor=\"credential-name\""
+        },
+        {
+          "line": 1954,
+          "attribute": "placeholder=\"例如: Mimo 主账号\""
+        },
+        {
+          "line": 1959,
+          "attribute": "label=\"API Key 环境变量\""
+        },
+        {
+          "line": 1959,
+          "attribute": "htmlFor=\"credential-api-key-env\""
+        },
+        {
+          "line": 1959,
+          "attribute": "description=\"只保存变量名；新增变量后必须重启进程才能读取。\""
+        },
+        {
+          "line": 1964,
+          "attribute": "placeholder=\"例如: MIMO_OPENAI_API_KEY_ALT\""
+        },
+        {
+          "line": 1969,
+          "attribute": "label=\"账号专用 Base URL\""
+        },
+        {
+          "line": 1969,
+          "attribute": "htmlFor=\"credential-base-url\""
+        },
+        {
+          "line": 1969,
+          "attribute": "description=\"可选；用于同一 Provider 下的不同上游入口，留空沿用 Provider。\""
+        },
+        {
+          "line": 1974,
+          "attribute": "placeholder=\"可选，不填则沿用供应商 Base URL\""
+        },
+        {
+          "line": 1980,
+          "attribute": "label=\"启用账号\""
+        },
+        {
+          "line": 2049,
+          "attribute": "htmlFor=\"provider-delete-confirm\""
+        },
+        {
+          "line": 2056,
+          "attribute": "placeholder={deleteTarget?.id}"
+        },
+        {
+          "line": 2216,
+          "attribute": "label={readiness.label}"
+        },
+        {
+          "line": 2250,
+          "attribute": "label=\"Provider\""
+        },
+        {
+          "line": 2251,
+          "attribute": "label=\"凭证\""
+        },
+        {
+          "line": 2252,
+          "attribute": "label=\"模型\""
+        },
+        {
+          "line": 2436,
+          "attribute": "label=\"Base URL\""
+        },
+        {
+          "line": 2437,
+          "attribute": "label=\"默认模型\""
+        },
+        {
+          "line": 2438,
+          "attribute": "label=\"启用模型目录\""
+        },
+        {
+          "line": 2470,
+          "attribute": "label=\"Secret 引用\""
+        },
+        {
+          "line": 2475,
+          "attribute": "label=\"当前进程解析\""
+        },
+        {
+          "line": 2480,
+          "attribute": "label=\"重启状态\""
+        },
+        {
+          "line": 2485,
+          "attribute": "label=\"连接测试\""
+        },
+        {
+          "line": 2520,
+          "attribute": "aria-label={`${displayTitle} 账号池策略`}"
+        },
+        {
+          "line": 2597,
+          "attribute": "aria-label={`${displayTitle} 当前账号`}"
+        },
+        {
+          "line": 2598,
+          "attribute": "placeholder=\"选择账号\""
+        },
+        {
+          "line": 2689,
+          "attribute": "aria-label={`发现 ${displayTitle} 模型`}"
+        },
+        {
+          "line": 2700,
+          "attribute": "aria-label={`${expanded ? '收起' : '查看'} ${displayTitle} 模型列表`}"
+        },
+        {
+          "line": 2887,
+          "attribute": "aria-label={`${enabled ? '禁用' : '启用'} ${item.model}`}"
+        },
+        {
+          "line": 2889,
+          "attribute": "aria-label={`复制 ${routeName}`}"
+        },
+        {
+          "line": 2945,
+          "attribute": "title={value}"
+        },
+        {
+          "line": 2990,
+          "attribute": "htmlFor={htmlFor}"
+        },
+        {
+          "line": 3019,
+          "attribute": "label={label}"
+        },
+        {
+          "line": 3019,
+          "attribute": "description={`当前有效值：${effective ?? 'unknown'}`}"
+        },
+        {
+          "line": 3021,
+          "attribute": "aria-label={label}"
+        },
+        {
+          "line": 3047,
+          "attribute": "aria-label={label}"
+        }
+      ]
+    },
+    {
+      "route": "/operations",
+      "file": "dashboard/src/pages/OperationsPage.tsx",
+      "texts": [
+        {
+          "line": 130,
+          "text": "Agent 启用与基础模型"
+        },
+        {
+          "line": 132,
+          "text": "默认关闭。后台开关只允许已由操作者部署的 Agent 工作，不会从浏览器启动容器；确定性规则始终负责告警，模型只提供只读诊断建议。"
+        },
+        {
+          "line": 145,
+          "text": "启用运维 Agent"
+        },
+        {
+          "line": 146,
+          "text": "保存后，已启动的 Agent 才会开始规则评估；Compose profile 默认不会启动。"
+        },
+        {
+          "line": 162,
+          "text": "本地模型优先"
+        },
+        {
+          "line": 163,
+          "text": "Ollama、local_vLLM、SGLang 和 llama.cpp 路由会排在候选列表前面。"
+        },
+        {
+          "line": 175,
+          "text": "基础模型"
+        },
+        {
+          "line": 199,
+          "text": "启用模型诊断"
+        },
+        {
+          "line": 200,
+          "text": "需要容器中的独立 ROUTEPILOT_OPS_MODEL_API_KEY；失败不会阻断规则告警。"
+        },
+        {
+          "line": 214,
+          "text": "模型状态："
+        },
+        {
+          "line": 223,
+          "text": "显式选择会覆盖本地优先推荐；关闭 Agent 不删除历史事件。"
+        },
+        {
+          "line": 239,
+          "text": "事件列表"
+        },
+        {
+          "line": 240,
+          "text": "恢复状态只能由同一确定性检测器的恢复证据关闭，人工操作不会伪造恢复。"
+        },
+        {
+          "line": 256,
+          "text": "等级"
+        },
+        {
+          "line": 257,
+          "text": "事件"
+        },
+        {
+          "line": 258,
+          "text": "状态"
+        },
+        {
+          "line": 259,
+          "text": "最近观测"
+        },
+        {
+          "line": 260,
+          "text": "次数"
+        },
+        {
+          "line": 282,
+          "text": "关闭详情"
+        },
+        {
+          "line": 286,
+          "text": "正在加载证据与时间线…"
+        },
+        {
+          "line": 292,
+          "text": "事实摘要"
+        },
+        {
+          "line": 294,
+          "text": "恢复条件："
+        },
+        {
+          "line": 299,
+          "text": "人工响应"
+        },
+        {
+          "line": 301,
+          "text": "状态变更依据"
+        },
+        {
+          "line": 305,
+          "text": "确认"
+        },
+        {
+          "line": 306,
+          "text": "处理中"
+        },
+        {
+          "line": 307,
+          "text": "观察中"
+        },
+        {
+          "line": 308,
+          "text": "抑制"
+        },
+        {
+          "line": 311,
+          "text": "规则反馈（可选说明）"
+        },
+        {
+          "line": 314,
+          "text": "有效告警"
+        },
+        {
+          "line": 315,
+          "text": "误报"
+        },
+        {
+          "line": 316,
+          "text": "待复核"
+        },
+        {
+          "line": 322,
+          "text": "事件时间线"
+        },
+        {
+          "line": 329,
+          "text": "·"
+        },
+        {
+          "line": 329,
+          "text": "·"
+        },
+        {
+          "line": 382,
+          "text": "模型诊断建议"
+        },
+        {
+          "line": 383,
+          "text": "只读建议 ·"
+        },
+        {
+          "line": 386,
+          "text": "该内容由模型根据脱敏事实生成，必须由人工验证；它不会触发任何操作。"
+        }
+      ],
+      "controls": [
+        {
+          "line": 57,
+          "attribute": "title=\"运维事件加载失败\""
+        },
+        {
+          "line": 121,
+          "attribute": "title=\"运维事件中心\""
+        },
+        {
+          "line": 122,
+          "attribute": "description=\"只读 Agent 基于脱敏运行指标和确定性规则发现、去重并闭环事件；它不会执行 Shell、SQL 或自动修改配置。\""
+        },
+        {
+          "line": 145,
+          "attribute": "htmlFor=\"ops-agent-enabled\""
+        },
+        {
+          "line": 162,
+          "attribute": "htmlFor=\"ops-prefer-local\""
+        },
+        {
+          "line": 175,
+          "attribute": "htmlFor=\"ops-base-model\""
+        },
+        {
+          "line": 181,
+          "attribute": "placeholder={configuration.data.candidates.length > 0 ? '选择用于运维诊断的模型' : '没有可路由模型'}"
+        },
+        {
+          "line": 199,
+          "attribute": "htmlFor=\"ops-analysis-enabled\""
+        },
+        {
+          "line": 231,
+          "attribute": "title=\"未恢复事件\""
+        },
+        {
+          "line": 232,
+          "attribute": "title=\"最高等级\""
+        },
+        {
+          "line": 233,
+          "attribute": "title=\"历史事件\""
+        },
+        {
+          "line": 234,
+          "attribute": "title=\"Agent 状态\""
+        },
+        {
+          "line": 287,
+          "attribute": "title=\"事件详情加载失败\""
+        },
+        {
+          "line": 301,
+          "attribute": "htmlFor=\"ops-status-reason\""
+        },
+        {
+          "line": 311,
+          "attribute": "htmlFor=\"ops-feedback-note\""
+        },
+        {
+          "line": 312,
+          "attribute": "placeholder=\"误报原因、缺少的证据或规则改进建议\""
+        }
+      ]
+    },
+    {
+      "route": "/enterprise",
+      "file": "dashboard/src/pages/EnterprisePage.tsx",
+      "texts": [
+        {
+          "line": 128,
+          "text": "Governed request ledger"
+        },
+        {
+          "line": 129,
+          "text": "/"
+        },
+        {
+          "line": 130,
+          "text": "请求事实账本"
+        },
+        {
+          "line": 132,
+          "text": "运行账本"
+        },
+        {
+          "line": 134,
+          "text": "从租户隔离的不可变请求事实中检查幂等、Provider 尝试、租约和计费状态。原始请求体与幂等键不会进入控制台。"
+        },
+        {
+          "line": 138,
+          "text": "更新于"
+        },
+        {
+          "line": 141,
+          "text": "刷新"
+        },
+        {
+          "line": 160,
+          "text": "部分刷新失败，当前保留上一次成功获取的数据。"
+        },
+        {
+          "line": 177,
+          "text": "查询"
+        },
+        {
+          "line": 228,
+          "text": "清除"
+        },
+        {
+          "line": 237,
+          "text": "Gateway Requests"
+        },
+        {
+          "line": 238,
+          "text": "按创建时间倒序 ·"
+        },
+        {
+          "line": 238,
+          "text": "条"
+        },
+        {
+          "line": 243,
+          "text": "个活跃租约"
+        },
+        {
+          "line": 257,
+          "text": "清除筛选"
+        },
+        {
+          "line": 263,
+          "text": "请求"
+        },
+        {
+          "line": 264,
+          "text": "租户 / 主体"
+        },
+        {
+          "line": 265,
+          "text": "模型与协议"
+        },
+        {
+          "line": 266,
+          "text": "状态"
+        },
+        {
+          "line": 267,
+          "text": "用量 / 成本"
+        },
+        {
+          "line": 268,
+          "text": "时间"
+        },
+        {
+          "line": 358,
+          "text": "/"
+        },
+        {
+          "line": 363,
+          "text": "租约 TTL"
+        },
+        {
+          "line": 363,
+          "text": "s"
+        },
+        {
+          "line": 364,
+          "text": "自动协调"
+        },
+        {
+          "line": 364,
+          "text": "s"
+        },
+        {
+          "line": 365,
+          "text": "范围"
+        },
+        {
+          "line": 365,
+          "text": "/"
+        },
+        {
+          "line": 365,
+          "text": "/"
+        },
+        {
+          "line": 391,
+          "text": "事务预算控制"
+        },
+        {
+          "line": 392,
+          "text": "硬门禁"
+        },
+        {
+          "line": 405,
+          "text": "占用"
+        },
+        {
+          "line": 409,
+          "text": "管理"
+        },
+        {
+          "line": 413,
+          "text": "预算状态暂时无法刷新，推理门禁仍由服务端独立执行。"
+        },
+        {
+          "line": 478,
+          "text": "事务预算与证据"
+        },
+        {
+          "line": 479,
+          "text": "/"
+        },
+        {
+          "line": 479,
+          "text": "/"
+        },
+        {
+          "line": 479,
+          "text": "· USD 微单位精确记账"
+        },
+        {
+          "line": 484,
+          "text": "推理硬上限"
+        },
+        {
+          "line": 485,
+          "text": "每个 Provider Attempt 在出站前原子预留预算；余额不足时不会调用上游。"
+        },
+        {
+          "line": 488,
+          "text": "预算上限（USD）"
+        },
+        {
+          "line": 492,
+          "text": "不限额"
+        },
+        {
+          "line": 500,
+          "text": "人工账务调整"
+        },
+        {
+          "line": 501,
+          "text": "正数补记、负数冲销；每次操作必须留下原因和外部证据引用，不修改历史流水。"
+        },
+        {
+          "line": 504,
+          "text": "调整金额（USD，可正负）"
+        },
+        {
+          "line": 508,
+          "text": "证据引用"
+        },
+        {
+          "line": 512,
+          "text": "调整原因"
+        },
+        {
+          "line": 520,
+          "text": "最近证据事件"
+        },
+        {
+          "line": 520,
+          "text": "最多显示 50 条，时间倒序。"
+        },
+        {
+          "line": 521,
+          "text": "v"
+        },
+        {
+          "line": 524,
+          "text": "尚无预算事件。"
+        },
+        {
+          "line": 594,
+          "text": "/"
+        },
+        {
+          "line": 595,
+          "text": "·"
+        },
+        {
+          "line": 599,
+          "text": "·"
+        },
+        {
+          "line": 599,
+          "text": "·"
+        },
+        {
+          "line": 604,
+          "text": "幂等"
+        },
+        {
+          "line": 606,
+          "text": "·"
+        },
+        {
+          "line": 606,
+          "text": "attempts"
+        },
+        {
+          "line": 609,
+          "text": "tok"
+        },
+        {
+          "line": 643,
+          "text": "请求事实"
+        },
+        {
+          "line": 644,
+          "text": "Gateway Request 与每次 Provider Attempt 的持久化终态。"
+        },
+        {
+          "line": 666,
+          "text": "Tool Use"
+        },
+        {
+          "line": 667,
+          "text": "幂等保护"
+        },
+        {
+          "line": 700,
+          "text": "预估"
+        },
+        {
+          "line": 701,
+          "text": "实际"
+        },
+        {
+          "line": 702,
+          "text": "可计费"
+        },
+        {
+          "line": 709,
+          "text": "请求尚未进入 Provider egress。"
+        },
+        {
+          "line": 719,
+          "text": "#"
+        },
+        {
+          "line": 719,
+          "text": "·"
+        },
+        {
+          "line": 724,
+          "text": "协议"
+        },
+        {
+          "line": 725,
+          "text": "HTTP"
+        },
+        {
+          "line": 726,
+          "text": "Tokens"
+        },
+        {
+          "line": 727,
+          "text": "预估"
+        },
+        {
+          "line": 728,
+          "text": "可计费"
+        },
+        {
+          "line": 729,
+          "text": "耗时"
+        },
+        {
+          "line": 729,
+          "text": "ms"
+        },
+        {
+          "line": 743,
+          "text": "终态错误"
+        }
+      ],
+      "controls": [
+        {
+          "line": 116,
+          "attribute": "title=\"运行账本加载失败\""
+        },
+        {
+          "line": 164,
+          "attribute": "aria-label=\"运行账本筛选\""
+        },
+        {
+          "line": 173,
+          "attribute": "placeholder=\"搜索 Ledger ID、Request ID、模型、主体或终止原因\""
+        },
+        {
+          "line": 174,
+          "attribute": "aria-label=\"搜索运行账本\""
+        },
+        {
+          "line": 182,
+          "attribute": "label=\"状态\""
+        },
+        {
+          "line": 194,
+          "attribute": "label=\"客户端协议\""
+        },
+        {
+          "line": 204,
+          "attribute": "label=\"流量类型\""
+        },
+        {
+          "line": 221,
+          "attribute": "placeholder=\"环境 ID\""
+        },
+        {
+          "line": 222,
+          "attribute": "aria-label=\"按环境 ID 筛选\""
+        },
+        {
+          "line": 234,
+          "attribute": "aria-label=\"受治理请求记录\""
+        },
+        {
+          "line": 249,
+          "attribute": "aria-label=\"正在加载运行账本\""
+        },
+        {
+          "line": 255,
+          "attribute": "title={hasFilters ? '没有匹配的账本记录' : '运行账本还没有请求'}"
+        },
+        {
+          "line": 256,
+          "attribute": "description={hasFilters ? '清除筛选条件或换一个关联 ID。' : '当请求进入 /v1/messages 或 /v1/chat/completions 后，这里会显示真实生命周期。'}"
+        },
+        {
+          "line": 335,
+          "attribute": "aria-label=\"运行账本概览\""
+        },
+        {
+          "line": 385,
+          "attribute": "aria-label=\"预算控制\""
+        },
+        {
+          "line": 399,
+          "attribute": "label=\"预算上限\""
+        },
+        {
+          "line": 400,
+          "attribute": "label=\"已预留\""
+        },
+        {
+          "line": 401,
+          "attribute": "label=\"已结算\""
+        },
+        {
+          "line": 402,
+          "attribute": "label=\"可用\""
+        },
+        {
+          "line": 488,
+          "attribute": "htmlFor=\"budget-limit\""
+        },
+        {
+          "line": 489,
+          "attribute": "placeholder=\"例如 1000.000000\""
+        },
+        {
+          "line": 493,
+          "attribute": "aria-label=\"预算不限额\""
+        },
+        {
+          "line": 504,
+          "attribute": "htmlFor=\"budget-delta\""
+        },
+        {
+          "line": 505,
+          "attribute": "placeholder=\"例如 -2.500000\""
+        },
+        {
+          "line": 508,
+          "attribute": "htmlFor=\"budget-evidence\""
+        },
+        {
+          "line": 509,
+          "attribute": "placeholder=\"账单号、工单号或对象存储 URI\""
+        },
+        {
+          "line": 512,
+          "attribute": "htmlFor=\"budget-reason\""
+        },
+        {
+          "line": 513,
+          "attribute": "placeholder=\"说明为何需要补记或冲销\""
+        },
+        {
+          "line": 575,
+          "attribute": "aria-label={label}"
+        },
+        {
+          "line": 649,
+          "attribute": "title=\"请求详情加载失败\""
+        },
+        {
+          "line": 670,
+          "attribute": "title=\"关联标识\""
+        },
+        {
+          "line": 671,
+          "attribute": "label=\"Ledger ID\""
+        },
+        {
+          "line": 672,
+          "attribute": "label=\"Request ID\""
+        },
+        {
+          "line": 673,
+          "attribute": "label=\"Principal\""
+        },
+        {
+          "line": 674,
+          "attribute": "label=\"租户范围\""
+        },
+        {
+          "line": 677,
+          "attribute": "title=\"生命周期\""
+        },
+        {
+          "line": 678,
+          "attribute": "label=\"请求模型\""
+        },
+        {
+          "line": 679,
+          "attribute": "label=\"请求路径\""
+        },
+        {
+          "line": 680,
+          "attribute": "label=\"状态 / HTTP\""
+        },
+        {
+          "line": 681,
+          "attribute": "label=\"终止原因\""
+        },
+        {
+          "line": 682,
+          "attribute": "label=\"用量模式\""
+        },
+        {
+          "line": 683,
+          "attribute": "label=\"请求延迟\""
+        },
+        {
+          "line": 684,
+          "attribute": "label=\"Tool 终态\""
+        },
+        {
+          "line": 685,
+          "attribute": "label=\"Tool 修复\""
+        },
+        {
+          "line": 686,
+          "attribute": "label=\"重试 / Fallback\""
+        },
+        {
+          "line": 687,
+          "attribute": "label=\"创建时间\""
+        },
+        {
+          "line": 688,
+          "attribute": "label=\"完成时间\""
+        },
+        {
+          "line": 689,
+          "attribute": "label=\"租约\""
+        },
+        {
+          "line": 692,
+          "attribute": "title=\"用量与成本\""
+        },
+        {
+          "line": 694,
+          "attribute": "label=\"输入\""
+        },
+        {
+          "line": 695,
+          "attribute": "label=\"输出\""
+        },
+        {
+          "line": 696,
+          "attribute": "label=\"缓存创建\""
+        },
+        {
+          "line": 697,
+          "attribute": "label=\"缓存读取\""
+        },
+        {
+          "line": 704,
+          "attribute": "label=\"计价证据\""
+        },
+        {
+          "line": 707,
+          "attribute": "title={`Provider Attempts · ${attempts.length}`}"
+        },
+        {
+          "line": 769,
+          "attribute": "aria-label={`复制${label}`}"
+        }
+      ]
+    },
+    {
+      "route": "/settings",
+      "file": "dashboard/src/pages/SettingsPage.tsx",
+      "texts": [
+        {
+          "line": 244,
+          "text": "当前账号仅可查看运行事实"
+        },
+        {
+          "line": 245,
+          "text": "Provider 测试、配置热加载和诊断快照会产生外部调用或审计记录，仅管理员可以执行。"
+        },
+        {
+          "line": 278,
+          "text": "服务运行"
+        },
+        {
+          "line": 279,
+          "text": "认证安全"
+        },
+        {
+          "line": 280,
+          "text": "请求边界"
+        },
+        {
+          "line": 281,
+          "text": "Provider 检查"
+        },
+        {
+          "line": 282,
+          "text": "运维审计"
+        },
+        {
+          "line": 290,
+          "text": "服务运行事实"
+        },
+        {
+          "line": 291,
+          "text": "这些值来自当前进程，不是可编辑表单；部署配置修改后需要重启。"
+        },
+        {
+          "line": 312,
+          "text": "认证安全边界"
+        },
+        {
+          "line": 313,
+          "text": "展示数据面认证状态；Dashboard session、CSRF 与 Origin 保护由后端独立执行。"
+        },
+        {
+          "line": 336,
+          "text": "请求与流边界"
+        },
+        {
+          "line": 337,
+          "text": "并发、请求体和超时是启动参数；此处不表示 API Key 的 USD 周期预算。"
+        },
+        {
+          "line": 353,
+          "text": "Provider 连接检查"
+        },
+        {
+          "line": 354,
+          "text": "这里验证当前运行凭证与模型发现；凭证变量、账号池和模型目录在 Provider 页面管理。"
+        },
+        {
+          "line": 357,
+          "text": "Provider 管理"
+        },
+        {
+          "line": 362,
+          "text": "加载 Provider…"
+        },
+        {
+          "line": 374,
+          "text": "前往 Provider 管理"
+        },
+        {
+          "line": 421,
+          "text": "诊断快照"
+        },
+        {
+          "line": 423,
+          "text": "导出脱敏控制面数据；不可用于恢复"
+        },
+        {
+          "line": 428,
+          "text": "敏感密钥"
+        },
+        {
+          "line": 429,
+          "text": "不包含明文"
+        },
+        {
+          "line": 432,
+          "text": "用户/用量数据"
+        },
+        {
+          "line": 433,
+          "text": "包含"
+        },
+        {
+          "line": 442,
+          "text": "导出诊断快照"
+        },
+        {
+          "line": 444,
+          "text": "需要管理员权限。"
+        },
+        {
+          "line": 462,
+          "text": "审计事件"
+        },
+        {
+          "line": 464,
+          "text": "最近"
+        },
+        {
+          "line": 464,
+          "text": "/"
+        },
+        {
+          "line": 464,
+          "text": "条"
+        },
+        {
+          "line": 468,
+          "text": "加载审计事件…"
+        },
+        {
+          "line": 539,
+          "text": "运行状态"
+        },
+        {
+          "line": 543,
+          "text": "此页反映当前进程，不会直接改写 .env 或 config.toml。"
+        },
+        {
+          "line": 553,
+          "text": "检查 Provider"
+        },
+        {
+          "line": 554,
+          "text": "查看运维"
+        },
+        {
+          "line": 610,
+          "text": "智能路由"
+        },
+        {
+          "line": 616,
+          "text": "展示当前进程的策略与灰度证据；修改 config.toml 后需执行配置热加载。"
+        },
+        {
+          "line": 621,
+          "text": "刷新状态"
+        },
+        {
+          "line": 628,
+          "text": "无法读取路由运行计数："
+        },
+        {
+          "line": 644,
+          "text": "尚未加载智能路由组；普通 alias 与 provider:model 仍按确定性规则运行。"
+        },
+        {
+          "line": 650,
+          "text": "个候选"
+        },
+        {
+          "line": 653,
+          "text": "·"
+        },
+        {
+          "line": 716,
+          "text": "上线检查"
+        },
+        {
+          "line": 739,
+          "text": "查看"
+        },
+        {
+          "line": 758,
+          "text": "共"
+        },
+        {
+          "line": 758,
+          "text": "条警告；运行可用不代表每个 Provider 都已验收。"
+        },
+        {
+          "line": 785,
+          "text": "运行信息"
+        },
+        {
+          "line": 787,
+          "text": "端点和本地数据文件"
+        },
+        {
+          "line": 832,
+          "text": "配置热加载"
+        },
+        {
+          "line": 834,
+          "text": "重新读取 provider、基础密钥、Base URL、模型与别名"
+        },
+        {
+          "line": 839,
+          "text": "供应商"
+        },
+        {
+          "line": 843,
+          "text": "默认路由"
+        },
+        {
+          "line": 847,
+          "text": "校验告警"
+        },
+        {
+          "line": 852,
+          "text": "监听端口、限流/并发层、请求体上限、HTTP 超时、安全/会话、存储、可信代理与新账号环境变量仍需重启。"
+        },
+        {
+          "line": 861,
+          "text": "热重载配置"
+        },
+        {
+          "line": 863,
+          "text": "需要管理员权限；热加载会写入审计记录。"
+        },
+        {
+          "line": 894,
+          "text": "数据保留"
+        },
+        {
+          "line": 895,
+          "text": "先预览，再按 30 / 90 / 395 天策略处理运维元数据；RoutePilot 不持久化提示词和响应正文。"
+        },
+        {
+          "line": 925,
+          "text": "· 共"
+        },
+        {
+          "line": 925,
+          "text": "项"
+        },
+        {
+          "line": 926,
+          "text": "评估于"
+        },
+        {
+          "line": 955,
+          "text": "预览影响"
+        },
+        {
+          "line": 958,
+          "text": "执行保留策略"
+        },
+        {
+          "line": 961,
+          "text": "执行前必须重新完成一次预览。"
+        },
+        {
+          "line": 962,
+          "text": "需要管理员权限。"
+        },
+        {
+          "line": 984,
+          "text": "暂无审计事件"
+        },
+        {
+          "line": 1032,
+          "text": "取消"
+        },
+        {
+          "line": 1099,
+          "text": "默认"
+        },
+        {
+          "line": 1106,
+          "text": "·"
+        },
+        {
+          "line": 1107,
+          "text": "实际凭据："
+        },
+        {
+          "line": 1112,
+          "text": "·"
+        },
+        {
+          "line": 1117,
+          "text": "models"
+        },
+        {
+          "line": 1132,
+          "text": "测试连接"
+        }
+      ],
+      "controls": [
+        {
+          "line": 54,
+          "attribute": "title=\"运行设置加载失败\""
+        },
+        {
+          "line": 236,
+          "attribute": "title=\"运行设置与运维\""
+        },
+        {
+          "line": 237,
+          "attribute": "description=\"查看当前生效的部署事实、连接检查与受控运维操作\""
+        },
+        {
+          "line": 294,
+          "attribute": "label=\"绑定地址\""
+        },
+        {
+          "line": 295,
+          "attribute": "label=\"最大请求体\""
+        },
+        {
+          "line": 296,
+          "attribute": "label=\"并发请求\""
+        },
+        {
+          "line": 317,
+          "attribute": "label=\"数据面认证\""
+        },
+        {
+          "line": 323,
+          "attribute": "label=\"匿名访问\""
+        },
+        {
+          "line": 328,
+          "attribute": "label=\"Legacy Token 变量\""
+        },
+        {
+          "line": 340,
+          "attribute": "label=\"并发请求上限\""
+        },
+        {
+          "line": 341,
+          "attribute": "label=\"请求体上限\""
+        },
+        {
+          "line": 342,
+          "attribute": "label=\"非流式 / 握手超时\""
+        },
+        {
+          "line": 343,
+          "attribute": "label=\"SSE 空闲超时\""
+        },
+        {
+          "line": 365,
+          "attribute": "title=\"Provider 状态加载失败\""
+        },
+        {
+          "line": 372,
+          "attribute": "title=\"暂无 Provider\""
+        },
+        {
+          "line": 373,
+          "attribute": "description=\"请先在 Provider 与模型页面添加上游接入。\""
+        },
+        {
+          "line": 471,
+          "attribute": "title=\"审计事件加载失败\""
+        },
+        {
+          "line": 486,
+          "attribute": "title=\"确认热加载运行配置\""
+        },
+        {
+          "line": 487,
+          "attribute": "description=\"此操作会立即重新读取 Provider、基础凭证引用、Base URL、模型目录和别名，并写入审计记录；需要重启的服务参数不会改变。\""
+        },
+        {
+          "line": 496,
+          "attribute": "title=\"导出诊断快照\""
+        },
+        {
+          "line": 497,
+          "attribute": "description=\"快照不包含明文密钥，但会包含用户、用量和控制面配置。请仅保存到受控位置，并按敏感运维数据处理。\""
+        },
+        {
+          "line": 506,
+          "attribute": "title=\"执行数据保留策略\""
+        },
+        {
+          "line": 507,
+          "attribute": "description=\"此操作会按刚才预览的 30/90/395 天策略脱敏或删除符合条件的运维元数据，并写入审计记录。预算证据不会删除；操作不可撤销。\""
+        },
+        {
+          "line": 545,
+          "attribute": "label=\"默认 Provider\""
+        },
+        {
+          "line": 547,
+          "attribute": "label=\"Provider\""
+        },
+        {
+          "line": 551,
+          "attribute": "label=\"API 认证\""
+        },
+        {
+          "line": 632,
+          "attribute": "label=\"策略版本\""
+        },
+        {
+          "line": 633,
+          "attribute": "label=\"激活比例\""
+        },
+        {
+          "line": 634,
+          "attribute": "label=\"决策总数\""
+        },
+        {
+          "line": 636,
+          "attribute": "label=\"影子分歧率\""
+        },
+        {
+          "line": 732,
+          "attribute": "aria-label={`查看 ${check.label} 详情：${check.detail}`}"
+        },
+        {
+          "line": 744,
+          "attribute": "aria-label=\"配置校验问题\""
+        },
+        {
+          "line": 800,
+          "attribute": "aria-label={`复制 ${label}`}"
+        },
+        {
+          "line": 801,
+          "attribute": "title={value ? `复制 ${label}` : `${label} ${fallback}`}"
+        },
+        {
+          "line": 906,
+          "attribute": "label=\"请求明细\""
+        },
+        {
+          "line": 911,
+          "attribute": "label=\"用户用量\""
+        },
+        {
+          "line": 916,
+          "attribute": "label=\"普通审计事件\""
+        },
+        {
+          "line": 929,
+          "attribute": "label=\"请求明细脱敏\""
+        },
+        {
+          "line": 930,
+          "attribute": "label=\"尝试记录脱敏\""
+        },
+        {
+          "line": 931,
+          "attribute": "label=\"路由证据删除\""
+        },
+        {
+          "line": 932,
+          "attribute": "label=\"用量去标识\""
+        },
+        {
+          "line": 933,
+          "attribute": "label=\"审计事件删除\""
+        },
+        {
+          "line": 1124,
+          "attribute": "aria-label={`测试 ${providerId} 连接`}"
+        },
+        {
+          "line": 1125,
+          "attribute": "title={isDisabled && !isTesting ? '需要管理员权限、有效 Provider，或等待当前测试完成' : undefined}"
+        }
+      ]
+    },
+    {
+      "route": "/api-keys",
+      "file": "dashboard/src/pages/ApiKeysPage.tsx",
+      "texts": [
+        {
+          "line": 518,
+          "text": "API 密钥"
+        },
+        {
+          "line": 520,
+          "text": "个可用 /"
+        },
+        {
+          "line": 520,
+          "text": "个总数 · 今日"
+        },
+        {
+          "line": 520,
+          "text": "请求 ·"
+        },
+        {
+          "line": 520,
+          "text": "tokens"
+        },
+        {
+          "line": 530,
+          "text": "创建密钥"
+        },
+        {
+          "line": 559,
+          "text": "全部标签"
+        },
+        {
+          "line": 560,
+          "text": "无标签"
+        },
+        {
+          "line": 575,
+          "text": "全部状态"
+        },
+        {
+          "line": 576,
+          "text": "已启用"
+        },
+        {
+          "line": 577,
+          "text": "7 天内过期"
+        },
+        {
+          "line": 578,
+          "text": "已过期"
+        },
+        {
+          "line": 579,
+          "text": "已禁用"
+        },
+        {
+          "line": 584,
+          "text": "清除筛选"
+        },
+        {
+          "line": 590,
+          "text": "显示"
+        },
+        {
+          "line": 590,
+          "text": "/"
+        },
+        {
+          "line": 590,
+          "text": "个密钥"
+        },
+        {
+          "line": 598,
+          "text": "已禁用"
+        },
+        {
+          "line": 602,
+          "text": "7 天内过期"
+        },
+        {
+          "line": 602,
+          "text": "· 已过期"
+        },
+        {
+          "line": 636,
+          "text": "名称"
+        },
+        {
+          "line": 637,
+          "text": "密钥标识"
+        },
+        {
+          "line": 638,
+          "text": "用户"
+        },
+        {
+          "line": 639,
+          "text": "项目/标签"
+        },
+        {
+          "line": 640,
+          "text": "用量"
+        },
+        {
+          "line": 641,
+          "text": "费用限制"
+        },
+        {
+          "line": 642,
+          "text": "过期时间"
+        },
+        {
+          "line": 643,
+          "text": "状态"
+        },
+        {
+          "line": 644,
+          "text": "上次使用时间"
+        },
+        {
+          "line": 645,
+          "text": "创建时间"
+        },
+        {
+          "line": 646,
+          "text": "操作"
+        },
+        {
+          "line": 672,
+          "text": "重新加载"
+        },
+        {
+          "line": 673,
+          "text": "清除筛选"
+        },
+        {
+          "line": 762,
+          "text": "删除"
+        },
+        {
+          "line": 784,
+          "text": "重新加载"
+        },
+        {
+          "line": 785,
+          "text": "清除筛选"
+        },
+        {
+          "line": 848,
+          "text": "创建 API 密钥"
+        },
+        {
+          "line": 857,
+          "text": "立即复制并安全保存"
+        },
+        {
+          "line": 858,
+          "text": "完整密钥只显示这一次。不要通过聊天、邮件或工单发送。"
+        },
+        {
+          "line": 860,
+          "text": "新 API 密钥"
+        },
+        {
+          "line": 869,
+          "text": "接入配置"
+        },
+        {
+          "line": 870,
+          "text": "同一把密钥可访问 Anthropic Messages 与 OpenAI Chat Completions；把 YOUR_MODEL 替换为模型列表返回的 ID 或稳定路由别名。"
+        },
+        {
+          "line": 888,
+          "text": "用户"
+        },
+        {
+          "line": 888,
+          "text": "*"
+        },
+        {
+          "line": 893,
+          "text": "·"
+        },
+        {
+          "line": 897,
+          "text": "暂无可签发密钥的可用用户，请先创建或恢复用户。"
+        },
+        {
+          "line": 900,
+          "text": "为自己创建"
+        },
+        {
+          "line": 901,
+          "text": "· 仅个人密钥；默认 30 天有效，最多保留 5 把活跃密钥。服务账号和权限扩展仍需管理员处理。"
+        },
+        {
+          "line": 905,
+          "text": "名称"
+        },
+        {
+          "line": 905,
+          "text": "*"
+        },
+        {
+          "line": 907,
+          "text": "使用能识别人员、设备或用途的名称，便于泄露时快速定位。"
+        },
+        {
+          "line": 911,
+          "text": "主体类型"
+        },
+        {
+          "line": 915,
+          "text": "个人密钥"
+        },
+        {
+          "line": 916,
+          "text": "服务账号（自动化）"
+        },
+        {
+          "line": 921,
+          "text": "过期时间"
+        },
+        {
+          "line": 928,
+          "text": "自动化用途"
+        },
+        {
+          "line": 928,
+          "text": "*"
+        },
+        {
+          "line": 930,
+          "text": "服务账号必须填写至少 8 个字符的用途、明确的模型/Provider 范围，并设置不超过 90 天的有效期；禁止多人共享个人密钥。"
+        },
+        {
+          "line": 934,
+          "text": "标签（可选）"
+        },
+        {
+          "line": 938,
+          "text": "项目（可选）"
+        },
+        {
+          "line": 942,
+          "text": "不绑定项目"
+        },
+        {
+          "line": 951,
+          "text": "允许模型（可选）"
+        },
+        {
+          "line": 955,
+          "text": "允许上游 Provider（可选）"
+        },
+        {
+          "line": 960,
+          "text": "多个值用逗号或空格分隔，支持后缀"
+        },
+        {
+          "line": 960,
+          "text": "*"
+        },
+        {
+          "line": 960,
+          "text": "；留空表示不增加密钥级限制。"
+        },
+        {
+          "line": 961,
+          "text": "自助创建不会展示或允许修改管理员策略；项目、模型、Provider 和预算继续受管理员上限约束。密钥明文只显示一次，创建后请立即保存。"
+        },
+        {
+          "line": 967,
+          "text": "已保存，关闭"
+        },
+        {
+          "line": 970,
+          "text": "取消"
+        },
+        {
+          "line": 986,
+          "text": "编辑密钥"
+        },
+        {
+          "line": 987,
+          "text": "更新 API 密钥设置"
+        },
+        {
+          "line": 994,
+          "text": "名称"
+        },
+        {
+          "line": 1004,
+          "text": "标签"
+        },
+        {
+          "line": 1016,
+          "text": "普通用户只能修改密钥名称和标签；访问策略、状态与费用限额由管理员维护。"
+        },
+        {
+          "line": 1023,
+          "text": "项目"
+        },
+        {
+          "line": 1032,
+          "text": "不绑定项目"
+        },
+        {
+          "line": 1042,
+          "text": "允许模型"
+        },
+        {
+          "line": 1052,
+          "text": "允许上游 Provider"
+        },
+        {
+          "line": 1064,
+          "text": "状态"
+        },
+        {
+          "line": 1070,
+          "text": "启用"
+        },
+        {
+          "line": 1071,
+          "text": "已禁用"
+        },
+        {
+          "line": 1085,
+          "text": "允许 IP / CIDR"
+        },
+        {
+          "line": 1093,
+          "text": "开启后，只有匹配列表的客户端 IP 可以使用此密钥。"
+        },
+        {
+          "line": 1098,
+          "text": "总费用额度"
+        },
+        {
+          "line": 1154,
+          "text": "过期时间"
+        },
+        {
+          "line": 1163,
+          "text": "该时间已过去；请选择未来时间、清空有效期或将状态设为“已禁用”。"
+        },
+        {
+          "line": 1171,
+          "text": "取消"
+        },
+        {
+          "line": 1189,
+          "text": "完成 API 密钥交接"
+        },
+        {
+          "line": 1190,
+          "text": "新密钥尚未启用，旧密钥仍可调用。保存新密钥后再确认启用；响应丢失或放弃都不会锁死现有客户端。"
+        },
+        {
+          "line": 1195,
+          "text": "完整新密钥只显示这一次"
+        },
+        {
+          "line": 1196,
+          "text": "先复制并安全保存。点击“启用新密钥”后旧密钥才会失效；不要通过聊天、邮件或工单发送。"
+        },
+        {
+          "line": 1198,
+          "text": "新 API 密钥"
+        },
+        {
+          "line": 1206,
+          "text": "待启用密钥 ID："
+        },
+        {
+          "line": 1206,
+          "text": "· 有效期："
+        },
+        {
+          "line": 1210,
+          "text": "轮换状态已变化"
+        },
+        {
+          "line": 1223,
+          "text": "状态已变化，关闭并刷新"
+        },
+        {
+          "line": 1295,
+          "text": "复制配置"
+        },
+        {
+          "line": 1329,
+          "text": "项目"
+        },
+        {
+          "line": 1330,
+          "text": "按项目管理预算、模型和上游 Provider 访问范围；预算采用滚动窗口。"
+        },
+        {
+          "line": 1337,
+          "text": "个密钥"
+        },
+        {
+          "line": 1340,
+          "text": "暂无项目"
+        },
+        {
+          "line": 1396,
+          "text": "无项目或标签"
+        },
+        {
+          "line": 1468,
+          "text": "今日请求"
+        },
+        {
+          "line": 1469,
+          "text": "今日 Tokens"
+        },
+        {
+          "line": 1470,
+          "text": "访问限制"
+        },
+        {
+          "line": 1471,
+          "text": "有效期"
+        },
+        {
+          "line": 1473,
+          "text": "上次使用："
+        },
+        {
+          "line": 1476,
+          "text": "编辑"
+        },
+        {
+          "line": 1477,
+          "text": "轮换"
+        },
+        {
+          "line": 1484,
+          "text": "删除"
+        },
+        {
+          "line": 1495,
+          "text": "今日请求"
+        },
+        {
+          "line": 1496,
+          "text": "req"
+        },
+        {
+          "line": 1497,
+          "text": "Tokens"
+        },
+        {
+          "line": 1529,
+          "text": "永久有效"
+        },
+        {
+          "line": 1543,
+          "text": "已轮换"
+        },
+        {
+          "line": 1547,
+          "text": "已过期"
+        },
+        {
+          "line": 1550,
+          "text": "即将过期"
+        },
+        {
+          "line": 1558,
+          "text": "活跃"
+        }
+      ],
+      "controls": [
+        {
+          "line": 524,
+          "attribute": "aria-label=\"刷新 API 密钥\""
+        },
+        {
+          "line": 541,
+          "attribute": "placeholder=\"搜索名称、用户、密钥标识或项目\""
+        },
+        {
+          "line": 542,
+          "attribute": "aria-label=\"搜索 API 密钥\""
+        },
+        {
+          "line": 557,
+          "attribute": "aria-label=\"按标签筛选\""
+        },
+        {
+          "line": 557,
+          "attribute": "placeholder=\"全部标签\""
+        },
+        {
+          "line": 573,
+          "attribute": "aria-label=\"按状态和过期风险筛选\""
+        },
+        {
+          "line": 573,
+          "attribute": "placeholder=\"全部状态\""
+        },
+        {
+          "line": 594,
+          "attribute": "label=\"Anthropic Messages\""
+        },
+        {
+          "line": 595,
+          "attribute": "label=\"OpenAI Chat\""
+        },
+        {
+          "line": 596,
+          "attribute": "label=\"模型列表\""
+        },
+        {
+          "line": 663,
+          "attribute": "title={isError ? '无法加载 API 密钥' : filtersActive ? '没有匹配的 API 密钥' : '暂无 API 密钥'}"
+        },
+        {
+          "line": 664,
+          "attribute": "description={isError\n                        ? '检查网络或服务状态后重新加载。'\n                        : filtersActive\n                        ? '没有匹配的 API 密钥，请调整筛选条件'\n                        : isAdmin\n                          ? '点击「创建密钥」按钮签发第一个 API 密钥'\n                          : '当前账号没有可查看的 API 密钥'}"
+        },
+        {
+          "line": 695,
+          "attribute": "aria-label={`复制 ${key.name} 密钥标识`}"
+        },
+        {
+          "line": 733,
+          "attribute": "label=\"编辑\""
+        },
+        {
+          "line": 740,
+          "attribute": "label=\"轮换\""
+        },
+        {
+          "line": 748,
+          "attribute": "label={key.status === 'active' ? '禁用' : apiKeyExpiryState(key, referenceTime) === 'expired' ? '已过期' : '恢复'}"
+        },
+        {
+          "line": 775,
+          "attribute": "aria-label=\"正在加载 API 密钥\""
+        },
+        {
+          "line": 781,
+          "attribute": "title={isError ? '无法加载 API 密钥' : filtersActive ? '没有匹配的 API 密钥' : '暂无 API 密钥'}"
+        },
+        {
+          "line": 782,
+          "attribute": "description={isError ? '检查网络或服务状态后重新加载。' : filtersActive ? '尝试清除筛选或更换关键词。' : isAdmin ? '创建第一把密钥并立即安全保存。' : '当前账号没有可查看的 API 密钥。'}"
+        },
+        {
+          "line": 860,
+          "attribute": "htmlFor=\"new-api-key\""
+        },
+        {
+          "line": 863,
+          "attribute": "aria-label=\"复制新 API 密钥\""
+        },
+        {
+          "line": 873,
+          "attribute": "title=\"Claude Code / Anthropic SDK\""
+        },
+        {
+          "line": 878,
+          "attribute": "title=\"OpenAI SDK\""
+        },
+        {
+          "line": 888,
+          "attribute": "htmlFor=\"create-key-user\""
+        },
+        {
+          "line": 890,
+          "attribute": "placeholder={usersLoading ? '正在加载用户…' : '选择可用用户'}"
+        },
+        {
+          "line": 905,
+          "attribute": "htmlFor=\"create-key-name\""
+        },
+        {
+          "line": 906,
+          "attribute": "placeholder=\"例如：Alice 的 Claude Code\""
+        },
+        {
+          "line": 911,
+          "attribute": "htmlFor=\"create-key-principal\""
+        },
+        {
+          "line": 921,
+          "attribute": "htmlFor=\"create-key-expires\""
+        },
+        {
+          "line": 928,
+          "attribute": "htmlFor=\"create-key-purpose\""
+        },
+        {
+          "line": 929,
+          "attribute": "placeholder=\"例如：CI 每晚运行回归评测（仅 production 项目）\""
+        },
+        {
+          "line": 934,
+          "attribute": "htmlFor=\"create-key-group\""
+        },
+        {
+          "line": 935,
+          "attribute": "placeholder=\"例如：研发 / CI\""
+        },
+        {
+          "line": 938,
+          "attribute": "htmlFor=\"create-key-team\""
+        },
+        {
+          "line": 940,
+          "attribute": "placeholder=\"选择项目\""
+        },
+        {
+          "line": 951,
+          "attribute": "htmlFor=\"create-key-models\""
+        },
+        {
+          "line": 952,
+          "attribute": "placeholder=\"mimo*, claude-sonnet*\""
+        },
+        {
+          "line": 955,
+          "attribute": "htmlFor=\"create-key-providers\""
+        },
+        {
+          "line": 956,
+          "attribute": "placeholder=\"mimo, openai\""
+        },
+        {
+          "line": 994,
+          "attribute": "htmlFor=\"edit-key-name\""
+        },
+        {
+          "line": 1004,
+          "attribute": "htmlFor=\"edit-key-group\""
+        },
+        {
+          "line": 1010,
+          "attribute": "placeholder=\"留空表示无标签\""
+        },
+        {
+          "line": 1023,
+          "attribute": "htmlFor=\"edit-key-team\""
+        },
+        {
+          "line": 1029,
+          "attribute": "placeholder=\"选择项目\""
+        },
+        {
+          "line": 1042,
+          "attribute": "htmlFor=\"edit-key-models\""
+        },
+        {
+          "line": 1048,
+          "attribute": "placeholder=\"留空表示不限\""
+        },
+        {
+          "line": 1052,
+          "attribute": "htmlFor=\"edit-key-providers\""
+        },
+        {
+          "line": 1058,
+          "attribute": "placeholder=\"留空表示不限\""
+        },
+        {
+          "line": 1064,
+          "attribute": "htmlFor=\"edit-key-status\""
+        },
+        {
+          "line": 1078,
+          "attribute": "label=\"IP 限制\""
+        },
+        {
+          "line": 1085,
+          "attribute": "htmlFor=\"edit-key-allowed-ips\""
+        },
+        {
+          "line": 1091,
+          "attribute": "placeholder=\"127.0.0.1, 10.0.0.0/8\""
+        },
+        {
+          "line": 1098,
+          "attribute": "htmlFor=\"edit-key-spend-limit\""
+        },
+        {
+          "line": 1103,
+          "attribute": "placeholder=\"输入 USD 额度限制\""
+        },
+        {
+          "line": 1110,
+          "attribute": "label=\"启用周期费用限额\""
+        },
+        {
+          "line": 1123,
+          "attribute": "label=\"5 小时限额 (USD)\""
+        },
+        {
+          "line": 1131,
+          "attribute": "label=\"24 小时限额 (USD)\""
+        },
+        {
+          "line": 1139,
+          "attribute": "label=\"7 天限额 (USD)\""
+        },
+        {
+          "line": 1147,
+          "attribute": "label=\"30 天限额 (USD)\""
+        },
+        {
+          "line": 1154,
+          "attribute": "htmlFor=\"edit-key-expires\""
+        },
+        {
+          "line": 1198,
+          "attribute": "htmlFor=\"rotated-api-key\""
+        },
+        {
+          "line": 1201,
+          "attribute": "aria-label=\"复制轮换后的 API 密钥\""
+        },
+        {
+          "line": 1240,
+          "attribute": "title=\"API 密钥交接尚未完成，仍要离开？\""
+        },
+        {
+          "line": 1241,
+          "attribute": "description={rotationResult\n          ? '待启用密钥尚未完成交接。留在此页是默认选项；确认离开时会先放弃待启用密钥，旧密钥继续有效。'\n          : '密钥创建或轮换请求仍在进行，或完整新密钥尚未确认保存。离开后可能永久无法再查看它；默认应留在此页。'}"
+        },
+        {
+          "line": 1249,
+          "attribute": "title={confirmAction?.title || ''}"
+        },
+        {
+          "line": 1250,
+          "attribute": "description={confirmAction?.description || ''}"
+        },
+        {
+          "line": 1281,
+          "attribute": "aria-label={`复制 ${label}`}"
+        },
+        {
+          "line": 1377,
+          "attribute": "aria-label=\"项目名称\""
+        },
+        {
+          "line": 1377,
+          "attribute": "placeholder=\"项目名称\""
+        },
+        {
+          "line": 1378,
+          "attribute": "aria-label=\"项目滚动 24 小时预算（USD）\""
+        },
+        {
+          "line": 1378,
+          "attribute": "placeholder=\"24h 预算 USD\""
+        },
+        {
+          "line": 1379,
+          "attribute": "aria-label=\"项目滚动 30 天预算（USD）\""
+        },
+        {
+          "line": 1379,
+          "attribute": "placeholder=\"30 天预算 USD\""
+        },
+        {
+          "line": 1380,
+          "attribute": "aria-label=\"项目模型白名单\""
+        },
+        {
+          "line": 1380,
+          "attribute": "placeholder=\"模型白名单（留空不限）\""
+        },
+        {
+          "line": 1381,
+          "attribute": "aria-label=\"项目上游 Provider 白名单\""
+        },
+        {
+          "line": 1381,
+          "attribute": "placeholder=\"Provider 白名单（留空不限）\""
+        },
+        {
+          "line": 1462,
+          "attribute": "aria-label={`复制 ${apiKey.name} 密钥标识`}"
+        },
+        {
+          "line": 1521,
+          "attribute": "title={summary}"
+        },
+        {
+          "line": 1543,
+          "attribute": "title={`替代密钥：${apiKey.supersededByKeyId}`}"
+        },
+        {
+          "line": 1639,
+          "attribute": "htmlFor={id}"
+        },
+        {
+          "line": 1660,
+          "attribute": "htmlFor={id}"
+        },
+        {
+          "line": 1661,
+          "attribute": "placeholder=\"0\""
+        },
+        {
+          "line": 1691,
+          "attribute": "placeholder={placeholder}"
+        }
+      ]
+    },
+    {
+      "route": "/users",
+      "file": "dashboard/src/pages/UsersPage.tsx",
+      "texts": [
+        {
+          "line": 296,
+          "text": "全部角色"
+        },
+        {
+          "line": 297,
+          "text": "管理员"
+        },
+        {
+          "line": 298,
+          "text": "普通用户"
+        },
+        {
+          "line": 299,
+          "text": "只读用户"
+        },
+        {
+          "line": 307,
+          "text": "全部状态"
+        },
+        {
+          "line": 308,
+          "text": "可用"
+        },
+        {
+          "line": 309,
+          "text": "已禁用"
+        },
+        {
+          "line": 310,
+          "text": "已暂停"
+        },
+        {
+          "line": 315,
+          "text": "清除筛选"
+        },
+        {
+          "line": 320,
+          "text": "显示"
+        },
+        {
+          "line": 320,
+          "text": "/"
+        },
+        {
+          "line": 320,
+          "text": "个用户"
+        },
+        {
+          "line": 331,
+          "text": "重新加载"
+        },
+        {
+          "line": 333,
+          "text": "清除筛选"
+        },
+        {
+          "line": 334,
+          "text": "新建用户"
+        },
+        {
+          "line": 342,
+          "text": "用户"
+        },
+        {
+          "line": 343,
+          "text": "角色"
+        },
+        {
+          "line": 344,
+          "text": "状态"
+        },
+        {
+          "line": 345,
+          "text": "API 密钥"
+        },
+        {
+          "line": 346,
+          "text": "24h 请求"
+        },
+        {
+          "line": 347,
+          "text": "最后登录"
+        },
+        {
+          "line": 348,
+          "text": "操作"
+        },
+        {
+          "line": 387,
+          "text": "角色"
+        },
+        {
+          "line": 388,
+          "text": "密钥"
+        },
+        {
+          "line": 389,
+          "text": "24h 请求"
+        },
+        {
+          "line": 391,
+          "text": "最后登录："
+        },
+        {
+          "line": 393,
+          "text": "编辑"
+        },
+        {
+          "line": 394,
+          "text": "密钥"
+        },
+        {
+          "line": 402,
+          "text": "删除"
+        },
+        {
+          "line": 430,
+          "text": "新建用户"
+        },
+        {
+          "line": 431,
+          "text": "创建登录身份。后续可在用户详情中签发 API 密钥。"
+        },
+        {
+          "line": 440,
+          "text": "请输入有效的邮箱地址。"
+        },
+        {
+          "line": 449,
+          "text": "管理员"
+        },
+        {
+          "line": 450,
+          "text": "普通用户"
+        },
+        {
+          "line": 451,
+          "text": "只读用户"
+        },
+        {
+          "line": 457,
+          "text": "取消"
+        },
+        {
+          "line": 468,
+          "text": "编辑用户"
+        },
+        {
+          "line": 469,
+          "text": "角色和状态变更会立即影响用户权限。"
+        },
+        {
+          "line": 478,
+          "text": "请输入有效的邮箱地址。"
+        },
+        {
+          "line": 485,
+          "text": "保存新密码会注销该用户的全部会话"
+        },
+        {
+          "line": 485,
+          "text": "。"
+        },
+        {
+          "line": 493,
+          "text": "管理员"
+        },
+        {
+          "line": 494,
+          "text": "普通用户"
+        },
+        {
+          "line": 495,
+          "text": "只读用户"
+        },
+        {
+          "line": 503,
+          "text": "可用"
+        },
+        {
+          "line": 504,
+          "text": "禁用"
+        },
+        {
+          "line": 505,
+          "text": "暂停"
+        },
+        {
+          "line": 519,
+          "text": "保存后该用户会立即退出登录，现有 API 密钥和配额会被回收；恢复用户状态时不会自动恢复这些资源。"
+        },
+        {
+          "line": 524,
+          "text": "取消"
+        },
+        {
+          "line": 560,
+          "text": "的 API 密钥"
+        },
+        {
+          "line": 561,
+          "text": "密钥创建后仅展示一次；禁用操作会立即中断后续调用。"
+        },
+        {
+          "line": 567,
+          "text": "立即保存此密钥"
+        },
+        {
+          "line": 568,
+          "text": "完整密钥只显示这一次，关闭窗口后无法再次查看。"
+        },
+        {
+          "line": 579,
+          "text": "已保存，返回列表"
+        },
+        {
+          "line": 587,
+          "text": "当前用户不可用，无法签发新密钥。先将用户状态恢复为“可用”。"
+        },
+        {
+          "line": 617,
+          "text": "名称"
+        },
+        {
+          "line": 618,
+          "text": "密钥标识"
+        },
+        {
+          "line": 619,
+          "text": "状态"
+        },
+        {
+          "line": 620,
+          "text": "最后使用"
+        },
+        {
+          "line": 621,
+          "text": "操作"
+        },
+        {
+          "line": 714,
+          "text": "编辑用户"
+        },
+        {
+          "line": 715,
+          "text": "管理 API 密钥"
+        },
+        {
+          "line": 733,
+          "text": "*"
+        }
+      ],
+      "controls": [
+        {
+          "line": 258,
+          "attribute": "title=\"用户管理\""
+        },
+        {
+          "line": 259,
+          "attribute": "description=\"管理登录身份、角色权限和用户所属 API 密钥\""
+        },
+        {
+          "line": 272,
+          "attribute": "aria-label=\"用户概览\""
+        },
+        {
+          "line": 273,
+          "attribute": "label=\"全部用户\""
+        },
+        {
+          "line": 274,
+          "attribute": "label=\"可用用户\""
+        },
+        {
+          "line": 275,
+          "attribute": "label=\"活跃管理员\""
+        },
+        {
+          "line": 284,
+          "attribute": "aria-label=\"搜索用户\""
+        },
+        {
+          "line": 286,
+          "attribute": "placeholder=\"搜索用户名、邮箱或用户 ID\""
+        },
+        {
+          "line": 292,
+          "attribute": "aria-label=\"按角色筛选\""
+        },
+        {
+          "line": 303,
+          "attribute": "aria-label=\"按状态筛选\""
+        },
+        {
+          "line": 328,
+          "attribute": "title={isError ? '无法加载用户' : filtersActive ? '没有匹配的用户' : '暂无用户'}"
+        },
+        {
+          "line": 329,
+          "attribute": "description={isError ? '检查网络或服务状态后重新加载。' : filtersActive ? '尝试清除筛选或更换关键词。' : '创建第一个用户并为其分配合适的角色。'}"
+        },
+        {
+          "line": 400,
+          "attribute": "aria-label={canDeleteUser(user) ? `删除用户 ${user.username}` : `无法删除当前账号或最后一名管理员 ${user.username}`}"
+        },
+        {
+          "line": 435,
+          "attribute": "label=\"用户名\""
+        },
+        {
+          "line": 436,
+          "attribute": "placeholder=\"例如：alice\""
+        },
+        {
+          "line": 438,
+          "attribute": "label=\"邮箱\""
+        },
+        {
+          "line": 439,
+          "attribute": "placeholder=\"alice@example.com\""
+        },
+        {
+          "line": 442,
+          "attribute": "label=\"初始密码\""
+        },
+        {
+          "line": 442,
+          "attribute": "description=\"至少 12 个字符。请通过安全渠道交给用户，并建议首次登录后更换。\""
+        },
+        {
+          "line": 443,
+          "attribute": "placeholder=\"至少 12 个字符\""
+        },
+        {
+          "line": 445,
+          "attribute": "label=\"角色\""
+        },
+        {
+          "line": 445,
+          "attribute": "description={roleDescription(form.role)}"
+        },
+        {
+          "line": 473,
+          "attribute": "label=\"用户名\""
+        },
+        {
+          "line": 476,
+          "attribute": "label=\"邮箱\""
+        },
+        {
+          "line": 480,
+          "attribute": "label=\"新密码\""
+        },
+        {
+          "line": 480,
+          "attribute": "description=\"留空即保留当前密码；设置时至少输入 12 个字符。\""
+        },
+        {
+          "line": 481,
+          "attribute": "placeholder=\"不修改密码\""
+        },
+        {
+          "line": 489,
+          "attribute": "label=\"角色\""
+        },
+        {
+          "line": 489,
+          "attribute": "description={roleDescription(editForm.role)}"
+        },
+        {
+          "line": 499,
+          "attribute": "label=\"状态\""
+        },
+        {
+          "line": 499,
+          "attribute": "description={statusDescription(editForm.status)}"
+        },
+        {
+          "line": 570,
+          "attribute": "label=\"新 API 密钥\""
+        },
+        {
+          "line": 573,
+          "attribute": "aria-label=\"复制新 API 密钥\""
+        },
+        {
+          "line": 592,
+          "attribute": "aria-label=\"新密钥名称\""
+        },
+        {
+          "line": 593,
+          "attribute": "placeholder=\"密钥名称，例如：本地开发\""
+        },
+        {
+          "line": 607,
+          "attribute": "aria-label=\"正在加载 API 密钥\""
+        },
+        {
+          "line": 611,
+          "attribute": "title=\"暂无 API 密钥\""
+        },
+        {
+          "line": 611,
+          "attribute": "description=\"为此用户生成第一把密钥。\""
+        },
+        {
+          "line": 633,
+          "attribute": "aria-label={`禁用密钥 ${key.name}`}"
+        },
+        {
+          "line": 664,
+          "attribute": "title=\"API 密钥尚未确认保存，仍要离开？\""
+        },
+        {
+          "line": 665,
+          "attribute": "description=\"密钥生成请求仍在进行，或完整密钥尚未确认保存。离开后可能永久无法再查看它；默认应留在此页完成保存。\""
+        },
+        {
+          "line": 675,
+          "attribute": "title={confirmAction?.title || ''}"
+        },
+        {
+          "line": 676,
+          "attribute": "description={confirmAction?.description || ''}"
+        },
+        {
+          "line": 709,
+          "attribute": "aria-label={`打开 ${user.username} 的操作菜单`}"
+        },
+        {
+          "line": 733,
+          "attribute": "htmlFor={id}"
+        }
+      ]
+    },
+    {
+      "route": "/quotas",
+      "file": "dashboard/src/pages/QuotasPage.tsx",
+      "texts": [
+        {
+          "line": 187,
+          "text": "用户配额"
+        },
+        {
+          "line": 188,
+          "text": "0 表示完全阻止该类型的用量；删除规则表示不再单独限制。"
+        },
+        {
+          "line": 214,
+          "text": "清除"
+        },
+        {
+          "line": 216,
+          "text": "显示"
+        },
+        {
+          "line": 216,
+          "text": "/"
+        },
+        {
+          "line": 216,
+          "text": "条规则"
+        },
+        {
+          "line": 226,
+          "text": "重新加载"
+        },
+        {
+          "line": 228,
+          "text": "清除筛选"
+        },
+        {
+          "line": 229,
+          "text": "新建配额"
+        },
+        {
+          "line": 237,
+          "text": "用户"
+        },
+        {
+          "line": 238,
+          "text": "类型"
+        },
+        {
+          "line": 239,
+          "text": "已用 / 限额"
+        },
+        {
+          "line": 240,
+          "text": "使用率"
+        },
+        {
+          "line": 241,
+          "text": "周期"
+        },
+        {
+          "line": 242,
+          "text": "下次重置"
+        },
+        {
+          "line": 243,
+          "text": "操作"
+        },
+        {
+          "line": 292,
+          "text": "用户"
+        },
+        {
+          "line": 292,
+          "text": "*"
+        },
+        {
+          "line": 305,
+          "text": "·"
+        },
+        {
+          "line": 310,
+          "text": "暂无用户。先创建用户，再配置配额。"
+        },
+        {
+          "line": 314,
+          "text": "配额类型"
+        },
+        {
+          "line": 318,
+          "text": "Token 数"
+        },
+        {
+          "line": 319,
+          "text": "请求数"
+        },
+        {
+          "line": 320,
+          "text": "费用（USD）"
+        },
+        {
+          "line": 325,
+          "text": "重置周期"
+        },
+        {
+          "line": 329,
+          "text": "每日"
+        },
+        {
+          "line": 330,
+          "text": "每周"
+        },
+        {
+          "line": 331,
+          "text": "每月"
+        },
+        {
+          "line": 337,
+          "text": "限额"
+        },
+        {
+          "line": 337,
+          "text": "*"
+        },
+        {
+          "line": 351,
+          "text": "设为 0 会阻止该类型的全部新用量。"
+        },
+        {
+          "line": 354,
+          "text": "请输入有效的"
+        },
+        {
+          "line": 354,
+          "text": "。"
+        },
+        {
+          "line": 358,
+          "text": "这是阻断规则：该用户的新"
+        },
+        {
+          "line": 358,
+          "text": "用量会立即被拒绝，而不是“不设置限额”。"
+        },
+        {
+          "line": 363,
+          "text": "。创建后，服务端会以当前 UTC 周期为准设置开始与重置时间。"
+        },
+        {
+          "line": 367,
+          "text": "取消"
+        },
+        {
+          "line": 410,
+          "text": "/"
+        },
+        {
+          "line": 434,
+          "text": "·"
+        },
+        {
+          "line": 442,
+          "text": "/"
+        },
+        {
+          "line": 445,
+          "text": "下次重置："
+        }
+      ],
+      "controls": [
+        {
+          "line": 167,
+          "attribute": "title=\"配额管理\""
+        },
+        {
+          "line": 168,
+          "attribute": "description=\"按用户限制 Token、请求数或费用；周期均按 UTC 自然边界重置\""
+        },
+        {
+          "line": 176,
+          "attribute": "aria-label=\"配额概览\""
+        },
+        {
+          "line": 177,
+          "attribute": "title=\"配额规则\""
+        },
+        {
+          "line": 177,
+          "attribute": "description=\"不同单位不会混合相加\""
+        },
+        {
+          "line": 178,
+          "attribute": "title=\"受限用户\""
+        },
+        {
+          "line": 178,
+          "attribute": "description={`共 ${formatNumber(users.length)} 个系统用户`}"
+        },
+        {
+          "line": 179,
+          "attribute": "title=\"需要关注\""
+        },
+        {
+          "line": 179,
+          "attribute": "description=\"使用率已达 80%\""
+        },
+        {
+          "line": 180,
+          "attribute": "title=\"已阻止调用\""
+        },
+        {
+          "line": 180,
+          "attribute": "description=\"额度为 0 或使用率已达 100%\""
+        },
+        {
+          "line": 190,
+          "attribute": "aria-label=\"刷新配额\""
+        },
+        {
+          "line": 199,
+          "attribute": "aria-label=\"搜索配额用户\""
+        },
+        {
+          "line": 200,
+          "attribute": "placeholder=\"搜索用户名或用户 ID\""
+        },
+        {
+          "line": 205,
+          "attribute": "label=\"按类型筛选\""
+        },
+        {
+          "line": 208,
+          "attribute": "label=\"按周期筛选\""
+        },
+        {
+          "line": 211,
+          "attribute": "label=\"按使用风险筛选\""
+        },
+        {
+          "line": 223,
+          "attribute": "title={isError ? '无法加载配额' : filtersActive ? '没有匹配的配额规则' : '暂无配额规则'}"
+        },
+        {
+          "line": 224,
+          "attribute": "description={isError ? '检查网络或服务状态后重新加载。' : filtersActive ? '调整筛选条件后重试。' : '创建规则，为用户设置明确的用量边界。'}"
+        },
+        {
+          "line": 292,
+          "attribute": "htmlFor=\"quota-user\""
+        },
+        {
+          "line": 301,
+          "attribute": "placeholder=\"选择真实用户\""
+        },
+        {
+          "line": 314,
+          "attribute": "htmlFor=\"quota-type\""
+        },
+        {
+          "line": 325,
+          "attribute": "htmlFor=\"quota-period\""
+        },
+        {
+          "line": 337,
+          "attribute": "htmlFor=\"quota-limit\""
+        },
+        {
+          "line": 347,
+          "attribute": "placeholder={form.quotaType === 'cost' ? '例如：25.00' : '例如：100000'}"
+        },
+        {
+          "line": 377,
+          "attribute": "title={editingQuota ? '确认将限额调整为 0？' : '确认阻止该用户的调用？'}"
+        },
+        {
+          "line": 378,
+          "attribute": "description={`限额 0 会立即阻止 ${form.username || '所选用户'} 的${periodLabels[form.period]}${quotaTypeLabels[form.quotaType]}新用量。${editingQuota ? '取消可保留原限额。' : '若不想单独限制，请取消并关闭创建窗口。'}`}"
+        },
+        {
+          "line": 388,
+          "attribute": "title={`删除 ${quotaToDelete?.username || ''} 的配额？`}"
+        },
+        {
+          "line": 389,
+          "attribute": "description={quotaToDelete\n          ? `将移除其${periodLabels[quotaToDelete.period]}${quotaTypeLabels[quotaToDelete.quotaType]}限制；删除后该类型不再受这条规则约束。历史用量不会删除。`\n          : ''}"
+        },
+        {
+          "line": 416,
+          "attribute": "aria-label={`编辑 ${quota.username} 的${quotaTypeLabels[quota.quotaType]}配额`}"
+        },
+        {
+          "line": 419,
+          "attribute": "aria-label={`删除 ${quota.username} 的${quotaTypeLabels[quota.quotaType]}配额`}"
+        },
+        {
+          "line": 437,
+          "attribute": "aria-label={`编辑 ${quota.username} 的${quotaTypeLabels[quota.quotaType]}配额`}"
+        },
+        {
+          "line": 438,
+          "attribute": "aria-label={`删除 ${quota.username} 的${quotaTypeLabels[quota.quotaType]}配额`}"
+        },
+        {
+          "line": 458,
+          "attribute": "aria-label={`${quota.username} ${quotaTypeLabels[quota.quotaType]}使用率`}"
+        },
+        {
+          "line": 472,
+          "attribute": "aria-label={label}"
+        }
+      ]
+    },
+    {
+      "route": "/governance",
+      "file": "dashboard/src/pages/GovernancePage.tsx",
+      "texts": [
+        {
+          "line": 149,
+          "text": "专用操作已选择审批单"
+        },
+        {
+          "line": 149,
+          "text": "；后续 Dashboard 写请求会自动携带该 ID，服务端仍会校验动作、目标与载荷摘要。"
+        },
+        {
+          "line": 153,
+          "text": "清除选择"
+        },
+        {
+          "line": 159,
+          "text": "提交高风险变更"
+        },
+        {
+          "line": 169,
+          "text": "变更类型"
+        },
+        {
+          "line": 184,
+          "text": "目标标识"
+        },
+        {
+          "line": 189,
+          "text": "业务原因与回滚依据"
+        },
+        {
+          "line": 193,
+          "text": "精确变更载荷（JSON）"
+        },
+        {
+          "line": 203,
+          "text": "默认模板会为示例 DeepSeek 路由显式开启云外发，并可能产生 Provider 费用；使用本地模型时请改为 local_strict、cloudEnabled=false 及对应 Provider/模型。"
+        },
+        {
+          "line": 218,
+          "text": "审批队列"
+        },
+        {
+          "line": 226,
+          "text": "暂无高风险变更"
+        },
+        {
+          "line": 236,
+          "text": "目标："
+        },
+        {
+          "line": 236,
+          "text": "· 提交人："
+        },
+        {
+          "line": 238,
+          "text": "SHA-256"
+        },
+        {
+          "line": 239,
+          "text": "审批："
+        },
+        {
+          "line": 243,
+          "text": "第二人审批"
+        },
+        {
+          "line": 246,
+          "text": "直接应用"
+        },
+        {
+          "line": 249,
+          "text": "应用变更"
+        },
+        {
+          "line": 256,
+          "text": "用于下一次专用操作"
+        }
+      ],
+      "controls": [
+        {
+          "line": 74,
+          "attribute": "title=\"治理控制台加载失败\""
+        },
+        {
+          "line": 127,
+          "attribute": "title=\"治理与变更审批\""
+        },
+        {
+          "line": 128,
+          "attribute": "description={data.dualApprovalRequired\n          ? '高风险变更必须先形成载荷摘要，再由另一名管理员审批；Dashboard 与 API 共用同一门禁。'\n          : '免费小团队模式允许管理员直接执行并保留审计；需要复核时仍可使用完整的双人审批流程。'}"
+        },
+        {
+          "line": 135,
+          "attribute": "title=\"治理存储\""
+        },
+        {
+          "line": 136,
+          "attribute": "title=\"审批门禁\""
+        },
+        {
+          "line": 137,
+          "attribute": "title=\"交互队列\""
+        },
+        {
+          "line": 138,
+          "attribute": "title=\"后台队列\""
+        },
+        {
+          "line": 169,
+          "attribute": "htmlFor=\"governance-action\""
+        },
+        {
+          "line": 184,
+          "attribute": "htmlFor=\"governance-target\""
+        },
+        {
+          "line": 185,
+          "attribute": "placeholder=\"org_local/prj_default/env_default\""
+        },
+        {
+          "line": 189,
+          "attribute": "htmlFor=\"governance-reason\""
+        },
+        {
+          "line": 190,
+          "attribute": "placeholder=\"说明必要性、影响面、验证和回滚条件\""
+        },
+        {
+          "line": 193,
+          "attribute": "htmlFor=\"governance-payload\""
+        }
+      ]
+    },
+    {
+      "route": "/guide",
+      "file": "dashboard/src/pages/UsageGuidePage.tsx",
+      "texts": [
+        {
+          "line": 46,
+          "text": "复制"
+        },
+        {
+          "line": 69,
+          "text": "0"
+        },
+        {
+          "line": 182,
+          "text": "约 5 分钟"
+        },
+        {
+          "line": 201,
+          "text": "选择当前可用模型"
+        },
+        {
+          "line": 208,
+          "text": "个可用"
+        },
+        {
+          "line": 212,
+          "text": "用于查询目录的 API Key"
+        },
+        {
+          "line": 227,
+          "text": "（"
+        },
+        {
+          "line": 227,
+          "text": "）"
+        },
+        {
+          "line": 236,
+          "text": "无法读取实时模型目录，请检查会话和后端状态后重试。为避免误导，下面不会填入固定模型。"
+        },
+        {
+          "line": 261,
+          "text": "Anthropic-compatible"
+        },
+        {
+          "line": 262,
+          "text": "Claude Code / Anthropic SDK"
+        },
+        {
+          "line": 264,
+          "text": "客户端连接 RoutePilot，而不是直接连接实际模型上游。"
+        },
+        {
+          "line": 266,
+          "text": "接口："
+        },
+        {
+          "line": 266,
+          "text": "POST /v1/messages"
+        },
+        {
+          "line": 266,
+          "text": "，认证头："
+        },
+        {
+          "line": 266,
+          "text": "x-api-key"
+        },
+        {
+          "line": 266,
+          "text": "。"
+        },
+        {
+          "line": 271,
+          "text": "OpenAI-compatible"
+        },
+        {
+          "line": 272,
+          "text": "OpenAI SDK / Quant"
+        },
+        {
+          "line": 274,
+          "text": "Base URL 需要包含"
+        },
+        {
+          "line": 274,
+          "text": "/v1"
+        },
+        {
+          "line": 274,
+          "text": "，模型 ID 与密钥权限保持一致。"
+        },
+        {
+          "line": 276,
+          "text": "接口："
+        },
+        {
+          "line": 276,
+          "text": "POST /v1/chat/completions"
+        },
+        {
+          "line": 276,
+          "text": "，认证头："
+        },
+        {
+          "line": 276,
+          "text": "Authorization: Bearer …"
+        },
+        {
+          "line": 276,
+          "text": "。"
+        },
+        {
+          "line": 286,
+          "text": "路由与模型"
+        },
+        {
+          "line": 287,
+          "text": "请求日志中的 Provider、请求模型和解析后模型应与预期一致。"
+        },
+        {
+          "line": 290,
+          "text": "用量与费用"
+        },
+        {
+          "line": 291,
+          "text": "优先使用上游返回的 Token，并核对本次请求保存的价格快照。"
+        },
+        {
+          "line": 294,
+          "text": "状态与延迟"
+        },
+        {
+          "line": 295,
+          "text": "区分上游错误、策略拒绝、超时和客户端主动取消，避免误判 Provider 故障。"
+        },
+        {
+          "line": 298,
+          "text": "权限边界"
+        },
+        {
+          "line": 299,
+          "text": "403 通常表示模型、Provider 或 IP 不在密钥策略内；429 表示配额或限流。"
+        },
+        {
+          "line": 307,
+          "text": "不要把 API Key 写入前端代码、聊天记录、截图或 Git 仓库。"
+        },
+        {
+          "line": 308,
+          "text": "不同应用使用不同密钥，并限制允许的模型与 Provider；密钥泄露后立即吊销并重新签发。"
+        },
+        {
+          "line": 309,
+          "text": "Dashboard 登录会话不能替代数据面 API Key，客户端调用必须携带独立密钥。"
+        },
+        {
+          "line": 312,
+          "text": "查看 API 密钥"
+        },
+        {
+          "line": 327,
+          "text": "1. 接入模型与渠道"
+        },
+        {
+          "line": 327,
+          "text": "配置上游、凭证和默认路由"
+        },
+        {
+          "line": 332,
+          "text": "2. 应用项目路由策略"
+        },
+        {
+          "line": 332,
+          "text": "在治理页明确本地与云外发边界；默认不会放行云 Provider"
+        },
+        {
+          "line": 337,
+          "text": "3. 创建或确认用户"
+        },
+        {
+          "line": 337,
+          "text": "确认角色、状态和归属"
+        },
+        {
+          "line": 342,
+          "text": "4. 签发最小权限密钥"
+        },
+        {
+          "line": 342,
+          "text": "限制模型、Provider 和预算"
+        },
+        {
+          "line": 352,
+          "text": "完成调用后，请求日志是路由、用量和计费的最终核对入口。"
+        },
+        {
+          "line": 354,
+          "text": "打开请求日志"
+        }
+      ],
+      "controls": [
+        {
+          "line": 43,
+          "attribute": "aria-label={`复制${copyLabel}`}"
+        },
+        {
+          "line": 48,
+          "attribute": "aria-label={copyLabel}"
+        },
+        {
+          "line": 170,
+          "attribute": "title=\"用户使用说明\""
+        },
+        {
+          "line": 171,
+          "attribute": "description=\"从获取 API Key 到完成首次模型调用，并在请求日志中核对路由、Token、延迟和费用。\""
+        },
+        {
+          "line": 179,
+          "attribute": "title=\"最短调用路径\""
+        },
+        {
+          "line": 180,
+          "attribute": "description=\"普通用户只需要完成以下四步，不需要接触 Provider 凭证。\""
+        },
+        {
+          "line": 185,
+          "attribute": "title=\"获取 API Key\""
+        },
+        {
+          "line": 185,
+          "attribute": "description=\"使用管理员签发的受限密钥；密钥明文只在创建时展示一次。\""
+        },
+        {
+          "line": 186,
+          "attribute": "title=\"确认模型 ID\""
+        },
+        {
+          "line": 186,
+          "attribute": "description={activeModel ? `当前选择 ${activeModel}；模型来自实时目录，不使用固定示例。` : '选择 API Key，再从它的实时目录选择模型。'}"
+        },
+        {
+          "line": 187,
+          "attribute": "title=\"选择客户端协议\""
+        },
+        {
+          "line": 187,
+          "attribute": "description=\"Claude Code 使用 Anthropic Messages；OpenAI SDK 使用 Chat Completions。\""
+        },
+        {
+          "line": 188,
+          "attribute": "title=\"核对请求日志\""
+        },
+        {
+          "line": 188,
+          "attribute": "description=\"确认实际 Provider、模型、Token、计费和终止状态均符合预期。\""
+        },
+        {
+          "line": 195,
+          "attribute": "title=\"配置客户端\""
+        },
+        {
+          "line": 196,
+          "attribute": "description=\"两种客户端协议使用同一套 RoutePilot API Key，但 Base URL 规则不同。\""
+        },
+        {
+          "line": 212,
+          "attribute": "htmlFor=\"guide-api-key\""
+        },
+        {
+          "line": 221,
+          "attribute": "aria-label=\"选择用于查询模型目录的 API 密钥\""
+        },
+        {
+          "line": 222,
+          "attribute": "placeholder=\"选择 API Key\""
+        },
+        {
+          "line": 240,
+          "attribute": "aria-label=\"选择可用模型\""
+        },
+        {
+          "line": 241,
+          "attribute": "placeholder={catalogLoading ? '正在加载模型目录…' : '选择模型'}"
+        },
+        {
+          "line": 283,
+          "attribute": "title=\"调用后检查\""
+        },
+        {
+          "line": 305,
+          "attribute": "title=\"密钥安全\""
+        },
+        {
+          "line": 321,
+          "attribute": "title=\"管理员：首次接入顺序\""
+        },
+        {
+          "line": 322,
+          "attribute": "description=\"这部分只对管理员显示，完成后普通用户即可按上面的调用流程使用。\""
+        }
+      ]
+    },
+    {
+      "route": "/login",
+      "file": "dashboard/src/pages/LoginPage.tsx",
+      "texts": [
+        {
+          "line": 149,
+          "text": "RoutePilot"
+        },
+        {
+          "line": 150,
+          "text": "智能模型路由网关"
+        },
+        {
+          "line": 154,
+          "text": "Route · Govern · Observe"
+        },
+        {
+          "line": 155,
+          "text": "模型自由接入，"
+        },
+        {
+          "line": 155,
+          "text": "治理始终统一。"
+        },
+        {
+          "line": 156,
+          "text": "在同一条安全边界内连接客户端、策略与 Provider，让每一次模型调用可控、可查、可结算。"
+        },
+        {
+          "line": 167,
+          "text": "OpenAI-compatible"
+        },
+        {
+          "line": 167,
+          "text": "Anthropic-compatible"
+        },
+        {
+          "line": 167,
+          "text": "Beta · 单实例"
+        },
+        {
+          "line": 176,
+          "text": "RoutePilot Console"
+        },
+        {
+          "line": 177,
+          "text": "登录控制台"
+        },
+        {
+          "line": 178,
+          "text": "使用组织账户进入受治理网关"
+        },
+        {
+          "line": 179,
+          "text": "智能模型路由网关 · Beta · 单实例"
+        },
+        {
+          "line": 196,
+          "text": "正在确认当前实例启用的登录方式…"
+        },
+        {
+          "line": 205,
+          "text": "下方密码入口仅作为恢复尝试，并不表示服务端已启用密码登录；若实例只启用 SSO，该尝试会被拒绝。"
+        },
+        {
+          "line": 221,
+          "text": "重新探测"
+        },
+        {
+          "line": 231,
+          "text": "尝试 SSO"
+        },
+        {
+          "line": 250,
+          "text": "或使用密码"
+        },
+        {
+          "line": 259,
+          "text": "用户名"
+        },
+        {
+          "line": 278,
+          "text": "密码"
+        },
+        {
+          "line": 306,
+          "text": "大写锁定已开启"
+        },
+        {
+          "line": 329,
+          "text": "连接当前实例 · 安全会话鉴权"
+        },
+        {
+          "line": 334,
+          "text": "当前实例未启用可用的登录方式，请联系管理员。"
+        },
+        {
+          "line": 338,
+          "text": "将通过企业身份提供方完成安全认证"
+        }
+      ],
+      "controls": [
+        {
+          "line": 259,
+          "attribute": "htmlFor=\"username\""
+        },
+        {
+          "line": 265,
+          "attribute": "placeholder=\"请输入用户名\""
+        },
+        {
+          "line": 278,
+          "attribute": "htmlFor=\"password\""
+        },
+        {
+          "line": 284,
+          "attribute": "placeholder=\"请输入密码\""
+        },
+        {
+          "line": 300,
+          "attribute": "aria-label={showPassword ? '隐藏密码' : '显示密码'}"
+        }
+      ]
+    },
+    {
+      "route": "/*",
+      "file": "dashboard/src/pages/NotFoundPage.tsx",
+      "texts": [
+        {
+          "line": 14,
+          "text": "404"
+        },
+        {
+          "line": 21,
+          "text": "页面不存在"
+        },
+        {
+          "line": 22,
+          "text": "地址可能已变更。你可以返回上一页，或回到可用入口继续操作。"
+        },
+        {
+          "line": 27,
+          "text": "返回上一页"
+        }
+      ],
+      "controls": []
+    }
+  ],
+  "types": [
+    {
+      "file": "dashboard/src/types/dashboard.types.ts",
+      "line": 4,
+      "name": "DashboardModelUsage",
+      "declaration": "export interface DashboardModelUsage {\n  model: string\n  provider: string\n  requests: number\n  tokens: number\n  cost: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/dashboard.types.ts",
+      "line": 12,
+      "name": "DashboardTokenTimePoint",
+      "declaration": "export interface DashboardTokenTimePoint {\n  timestamp: string\n  inputTokens: number\n  outputTokens: number\n  cacheWriteTokens: number\n  cacheReadTokens: number\n  cacheHitRate: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/dashboard.types.ts",
+      "line": 21,
+      "name": "DashboardStats",
+      "declaration": "export interface DashboardStats {\n  uptimeSeconds: number\n  totalRequests: number\n  successRate: number\n  activeProviders: number\n  totalProviders: number\n  activeUsers: number\n  totalModels: number\n  avgLatencyMs: number\n  apiKeysTotal?: number\n  apiKeysActive?: number\n  todayRequests?: number\n  todayInputTokens?: number\n  todayOutputTokens?: number\n  todayCacheWriteTokens?: number\n  todayCacheReadTokens?: number\n  todayCostEstimate?: number\n  trendRange?: {\n    range: '1d' | '3d' | '7d' | 'custom'\n    from: string\n    to: string\n    bucketMs: number\n  }\n  requestTimeSeries: TimeSeriesPoint[]\n  errorTimeSeries: TimeSeriesPoint[]\n  topModels: Array<{ model: string; provider: string; requests: number }>\n  modelUsage: DashboardModelUsage[]\n  tokenTimeSeries: DashboardTokenTimePoint[]\n  rangeSummary: LogSummary\n  rangeDataSource: 'relational-ledger' | 'empty'\n  rangeDataEstimated: boolean\n  rangeDataAtRetentionLimit: boolean\n  onboardingMilestones?: {\n    hasRequestEver: boolean\n    hasSuccessfulRequestEver: boolean\n    hasDefaultProjectPolicy: boolean\n  }\n  providerHealth: Array<{\n    providerId: string\n    displayName: string\n    status: 'healthy' | 'degraded' | 'down' | 'cooldown'\n    requestsTotal: number\n    successRate: number\n    avgLatencyMs: number\n    inputTokensTotal?: number\n    outputTokensTotal?: number\n    cacheWriteTokensTotal?: number\n    cacheReadTokensTotal?: number\n    costEstimateUsdTotal?: number\n    accountIssue?: 'none' | 'insufficient_balance' | 'auth'\n    rechargeRequired?: boolean\n    rechargeBadge?: string | null\n  }>\n  recentActivity: Array<{\n    id: string\n    timestamp: string\n    type: 'request' | 'error' | 'config_change' | 'auto_governance' | 'account_issue' | string\n    message: string\n    severity: 'info' | 'warning' | 'error'\n  }>\n}"
+    },
+    {
+      "file": "dashboard/src/types/enterprise.types.ts",
+      "line": 1,
+      "name": "EnterpriseRequestState",
+      "declaration": "export type EnterpriseRequestState = 'started' | 'completed' | 'failed' | 'cancelled'"
+    },
+    {
+      "file": "dashboard/src/types/enterprise.types.ts",
+      "line": 2,
+      "name": "EnterpriseClientProtocol",
+      "declaration": "export type EnterpriseClientProtocol = 'anthropic-messages' | 'openai-chat-completions'"
+    },
+    {
+      "file": "dashboard/src/types/enterprise.types.ts",
+      "line": 4,
+      "name": "EnterpriseLedgerOverview",
+      "declaration": "export interface EnterpriseLedgerOverview {\n  backend: 'memory' | 'postgres'\n  location: string\n  leaseTtlSecs: number\n  reconcileIntervalSecs: number\n  totalRequests: number\n  startedRequests: number\n  completedRequests: number\n  failedRequests: number\n  cancelledRequests: number\n  unreconciledRequests: number\n  idempotentRequests: number\n  activeLeases: number\n  expiredLeases: number\n  chargeableRequests: number\n  estimateOnlyRequests: number\n  totalCostMicrounits: number\n  totalBillableCostMicrounits: number\n  organizationCount: number\n  projectCount: number\n  environmentCount: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/enterprise.types.ts",
+      "line": 27,
+      "name": "EnterpriseRequest",
+      "declaration": "export interface EnterpriseRequest {\n  ledgerId: string\n  requestId: string\n  organizationId: string\n  projectId: string\n  environmentId: string\n  principalId: string\n  clientProtocol: EnterpriseClientProtocol\n  requestedModel: string\n  requestPath: string\n  trafficClass: 'business' | 'synthetic' | 'diagnostic'\n  toolUseRequested: boolean\n  stream: boolean\n  state: EnterpriseRequestState\n  statusCode: number | null\n  terminalReason: string | null\n  errorMessage: string | null\n  inputTokens: number\n  outputTokens: number\n  cacheWriteTokens: number\n  cacheReadTokens: number\n  costAmountMicrounits: number\n  actualCostMicrounits: number | null\n  billableCostMicrounits: number | null\n  pricingEvidence: PricingEvidence | null\n  currency: string\n  billingMode: string | null\n  chargeable: boolean\n  latencyMs: number\n  firstByteLatencyMs: number | null\n  toolOutcome: string\n  toolRepairAttempted: boolean\n  toolRepairRecovered: boolean\n  retryCount: number\n  fallbackFromProvider: string | null\n  hasIdempotencyKey: boolean\n  leaseOwner: string\n  leaseExpiresAtMs: number\n  createdAtMs: number\n  updatedAtMs: number\n  completedAtMs: number | null\n  attemptCount: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/enterprise.types.ts",
+      "line": 71,
+      "name": "EnterpriseAttempt",
+      "declaration": "export interface EnterpriseAttempt {\n  attemptId: string\n  requestLedgerId: string\n  organizationId: string\n  projectId: string\n  environmentId: string\n  providerId: string\n  resolvedModel: string\n  providerProtocol: string\n  state: EnterpriseRequestState\n  statusCode: number | null\n  terminalReason: string | null\n  errorMessage: string | null\n  inputTokens: number\n  outputTokens: number\n  cacheWriteTokens: number\n  cacheReadTokens: number\n  costAmountMicrounits: number\n  actualCostMicrounits: number | null\n  billableCostMicrounits: number | null\n  pricingEvidence: PricingEvidence | null\n  currency: string\n  billingMode: string | null\n  chargeable: boolean\n  latencyMs: number\n  firstByteLatencyMs: number | null\n  leaseOwner: string\n  leaseExpiresAtMs: number\n  createdAtMs: number\n  updatedAtMs: number\n  completedAtMs: number | null\n}"
+    },
+    {
+      "file": "dashboard/src/types/enterprise.types.ts",
+      "line": 104,
+      "name": "EnterpriseRequestPage",
+      "declaration": "export interface EnterpriseRequestPage {\n  requests: EnterpriseRequest[]\n  total: number\n  page: number\n  pageSize: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/enterprise.types.ts",
+      "line": 111,
+      "name": "EnterpriseRequestDetail",
+      "declaration": "export interface EnterpriseRequestDetail {\n  request: EnterpriseRequest\n  attempts: EnterpriseAttempt[]\n}"
+    },
+    {
+      "file": "dashboard/src/types/enterprise.types.ts",
+      "line": 116,
+      "name": "EnterpriseRequestFilters",
+      "declaration": "export interface EnterpriseRequestFilters {\n  state?: EnterpriseRequestState\n  protocol?: EnterpriseClientProtocol\n  trafficClass?: 'business' | 'synthetic' | 'diagnostic'\n  organizationId?: string\n  projectId?: string\n  environmentId?: string\n  search?: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/enterprise.types.ts",
+      "line": 126,
+      "name": "EnterpriseBudgetScope",
+      "declaration": "export interface EnterpriseBudgetScope {\n  organizationId: string\n  projectId: string\n  environmentId: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/enterprise.types.ts",
+      "line": 132,
+      "name": "EnterpriseBudgetAccount",
+      "declaration": "export interface EnterpriseBudgetAccount extends EnterpriseBudgetScope {\n  currency: string\n  limitMicrounits: number | null\n  reservedMicrounits: number\n  settledMicrounits: number\n  availableMicrounits: number | null\n  utilizationBasisPoints: number | null\n  version: number\n  updatedAtMs: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/enterprise.types.ts",
+      "line": 143,
+      "name": "EnterpriseBudgetEvent",
+      "declaration": "export interface EnterpriseBudgetEvent extends EnterpriseBudgetScope {\n  eventId: string\n  currency: string\n  reservationId: string | null\n  requestLedgerId: string | null\n  attemptId: string | null\n  eventType: 'reservation_created' | 'settled' | 'released' | 'adjustment'\n  reservedDeltaMicrounits: number\n  settledDeltaMicrounits: number\n  evidenceSource: string\n  billingMode: string | null\n  reason: string | null\n  actorId: string | null\n  inputTokens: number\n  outputTokens: number\n  cacheWriteTokens: number\n  cacheReadTokens: number\n  createdAtMs: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/enterprise.types.ts",
+      "line": 163,
+      "name": "EnterpriseBudgetView",
+      "declaration": "export interface EnterpriseBudgetView {\n  account: EnterpriseBudgetAccount\n  recentEvents: EnterpriseBudgetEvent[]\n}"
+    },
+    {
+      "file": "dashboard/src/types/enterprise.types.ts",
+      "line": 168,
+      "name": "EnterpriseBudgetUpdate",
+      "declaration": "export interface EnterpriseBudgetUpdate extends EnterpriseBudgetScope {\n  limitMicrounits?: number\n  unlimited: boolean\n}"
+    },
+    {
+      "file": "dashboard/src/types/enterprise.types.ts",
+      "line": 173,
+      "name": "EnterpriseBudgetAdjustment",
+      "declaration": "export interface EnterpriseBudgetAdjustment extends EnterpriseBudgetScope {\n  deltaMicrounits: number\n  reason: string\n  evidenceReference: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/governance.types.ts",
+      "line": 1,
+      "name": "HybridMode",
+      "declaration": "export type HybridMode = 'local_strict' | 'local_first' | 'balanced' | 'cloud_first'"
+    },
+    {
+      "file": "dashboard/src/types/governance.types.ts",
+      "line": 2,
+      "name": "DataClassification",
+      "declaration": "export type DataClassification = 'unknown' | 'sensitive' | 'internal' | 'public'"
+    },
+    {
+      "file": "dashboard/src/types/governance.types.ts",
+      "line": 4,
+      "name": "ProjectPolicy",
+      "declaration": "export interface ProjectPolicy {\n  organizationId: string\n  projectId: string\n  environmentId: string\n  maximumMode: HybridMode\n  defaultClassification: DataClassification\n  allowedProviders: string[]\n  allowedModels: string[]\n  allowedRegions: string[]\n  allowedApiVersions: string[]\n  cloudEnabled: boolean\n  updatedBy: string\n  updatedAtMs: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/governance.types.ts",
+      "line": 19,
+      "name": "ChangeApproval",
+      "declaration": "export interface ChangeApproval {\n  actorId: string\n  actorName: string\n  approvedAtMs: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/governance.types.ts",
+      "line": 25,
+      "name": "GovernanceChangeRequest",
+      "declaration": "export interface GovernanceChangeRequest {\n  id: string\n  action: string\n  target: string\n  payload: unknown\n  payloadSha256: string\n  reason: string\n  risk: 'high'\n  status: 'pending_second_approval' | 'approved' | 'applied'\n  requestedBy: string\n  requestedByName: string\n  approvals: ChangeApproval[]\n  createdAtMs: number\n  updatedAtMs: number\n  appliedAtMs: number | null\n}"
+    },
+    {
+      "file": "dashboard/src/types/governance.types.ts",
+      "line": 42,
+      "name": "LocalSchedulerSnapshot",
+      "declaration": "export interface LocalSchedulerSnapshot {\n  running: number\n  interactiveQueued: number\n  batchQueued: number\n  usersQueued: number\n  estimatedServiceMs: number\n  oldestInteractiveWaitMs: number\n  oldestBatchWaitMs: number\n  limits: {\n    executingPerUser: number\n    queuedPerUser: number\n    globalInteractiveQueue: number\n    globalBatchQueue: number\n    overflowAfterSeconds: number\n    strictWaitSeconds: number\n  }\n}"
+    },
+    {
+      "file": "dashboard/src/types/governance.types.ts",
+      "line": 60,
+      "name": "GovernanceOverview",
+      "declaration": "export interface GovernanceOverview {\n  view: 'administrator-control-plane'\n  ready: boolean\n  dualApprovalRequired: boolean\n  projectPolicies: ProjectPolicy[]\n  changeRequests: GovernanceChangeRequest[]\n  scheduler: LocalSchedulerSnapshot\n  highRiskActions: string[]\n}"
+    },
+    {
+      "file": "dashboard/src/types/governance.types.ts",
+      "line": 70,
+      "name": "GovernanceChangeInput",
+      "declaration": "export interface GovernanceChangeInput {\n  action: string\n  target: string\n  payload: unknown\n  reason: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/log.types.ts",
+      "line": 3,
+      "name": "RequestStatus",
+      "declaration": "export type RequestStatus = 'success' | 'error' | 'timeout'"
+    },
+    {
+      "file": "dashboard/src/types/log.types.ts",
+      "line": 4,
+      "name": "StreamMode",
+      "declaration": "export type StreamMode = 'stream' | 'non-stream'"
+    },
+    {
+      "file": "dashboard/src/types/log.types.ts",
+      "line": 5,
+      "name": "ToolUseMode",
+      "declaration": "export type ToolUseMode = 'requested' | 'not-requested'"
+    },
+    {
+      "file": "dashboard/src/types/log.types.ts",
+      "line": 6,
+      "name": "TrafficClass",
+      "declaration": "export type TrafficClass = 'business' | 'synthetic' | 'diagnostic'"
+    },
+    {
+      "file": "dashboard/src/types/log.types.ts",
+      "line": 7,
+      "name": "ReconciliationStatus",
+      "declaration": "export type ReconciliationStatus = 'billable' | 'partially_billable' | 'actual_unbillable' | 'estimate_only'"
+    },
+    {
+      "file": "dashboard/src/types/log.types.ts",
+      "line": 9,
+      "name": "ModelPricingRates",
+      "declaration": "export interface ModelPricingRates {\n  inputPerMillion: number\n  outputPerMillion: number\n  cacheWritePerMillion: number\n  cacheReadPerMillion: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/log.types.ts",
+      "line": 16,
+      "name": "PricingEvidence",
+      "declaration": "export interface PricingEvidence {\n  provider: string\n  model: string\n  method: 'provider_reported' | 'exact_rate_card'\n  currency: string\n  version: string\n  effectiveAt: string\n  source: 'provider_published' | 'provider_contract' | 'internal_chargeback' | 'legacy_estimate'\n  serviceTier: 'standard' | 'batch' | 'flex' | 'priority' | 'custom'\n  region?: string | null\n  evidence: string\n  rates?: ModelPricingRates | null\n}"
+    },
+    {
+      "file": "dashboard/src/types/log.types.ts",
+      "line": 30,
+      "name": "RequestLog",
+      "declaration": "export interface RequestLog {\n  id: string\n  requestId?: string | null\n  attemptId?: string | null\n  timestamp: string\n  userId: string\n  username: string\n  apiKeyId?: string | null\n  apiKeyName?: string | null\n  apiKeyGroup?: string | null\n  teamId?: string | null\n  teamName?: string | null\n  model: string\n  resolvedModel: string\n  provider: string\n  protocol: ProviderProtocol\n  clientProtocol?: 'anthropic-messages' | 'openai-chat-completions'\n  toolUseRequested?: boolean\n  trafficClass?: TrafficClass\n  toolOutcome?: 'not_requested' | 'continuation_tool_called' | 'tool_called' | 'final_answer' | 'answered_without_tool' | 'completed_unobserved' | 'client_cancelled' | 'timeout' | 'protocol_error' | 'upstream_or_delivery_error'\n  stream: StreamMode\n  status: RequestStatus\n  statusCode: number\n  terminalReason?: string\n  inputTokens: number\n  outputTokens: number\n  cacheWriteTokens?: number\n  cacheReadTokens?: number\n  billedInputTokens?: number\n  totalTokens?: number\n  cacheHitRate?: number\n  costEstimate?: number\n  actualCost?: number | null\n  billableCost?: number | null\n  reconciliationStatus?: ReconciliationStatus\n  pricingEvidence?: PricingEvidence | null\n  modelPricing?: ModelPricingRates\n  costBreakdown?: {\n    inputCost: number\n    outputCost: number\n    cacheWriteCost: number\n    cacheReadCost: number\n    totalCost: number\n  }\n  latencyMs: number\n  firstByteLatencyMs?: number\n  retryCount?: number\n  clientIp?: string | null\n  requestPath?: string\n  billingMode?: string\n  errorMessage: string | null\n}"
+    },
+    {
+      "file": "dashboard/src/types/log.types.ts",
+      "line": 83,
+      "name": "LogFilters",
+      "declaration": "export interface LogFilters {\n  userId?: string\n  apiKeyId?: string\n  model?: string\n  provider?: string\n  group?: string\n  username?: string\n  status?: RequestStatus\n  stream?: StreamMode\n  toolUse?: ToolUseMode\n  trafficClass?: TrafficClass\n  dateFrom?: string\n  dateTo?: string\n  search?: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/log.types.ts",
+      "line": 99,
+      "name": "LogSummary",
+      "declaration": "export interface LogSummary {\n  totalRequests: number\n  successRequests: number\n  toolUseRequests?: number\n  toolUseSuccessRequests?: number\n  totalInputTokens: number\n  totalOutputTokens: number\n  totalCacheWriteTokens: number\n  totalCacheReadTokens: number\n  totalTokens: number\n  totalCostEstimate: number\n  totalActualCost: number\n  totalBillableCost: number\n  billableRequests: number\n  estimateOnlyRequests: number\n  latencyP95Ms?: number\n  latencySampleCount?: number\n  firstByteLatencyP95Ms?: number\n  firstByteLatencySampleCount?: number\n  rpm: number\n  tpm: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/log.types.ts",
+      "line": 122,
+      "name": "LatencyStats",
+      "declaration": "export interface LatencyStats {\n  p50: number\n  p90: number\n  p95: number\n  p99: number\n  avg: number\n  max: number\n  sampleCount?: number\n  percentilesEstimated?: boolean\n  byModel: Record<string, { p50: number; p95: number; avg: number }>\n  byProvider: Record<string, { p50: number; p95: number; avg: number }>\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 1,
+      "name": "ProviderProtocol",
+      "declaration": "export type ProviderProtocol = 'anthropic' | 'openai-compat'"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 2,
+      "name": "MaxTokensField",
+      "declaration": "export type MaxTokensField = 'max_completion_tokens' | 'max_tokens' | 'both'"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 3,
+      "name": "FidelityMode",
+      "declaration": "export type FidelityMode = 'strict' | 'best_effort' | 'stability'"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 4,
+      "name": "ToolStreamingArguments",
+      "declaration": "export type ToolStreamingArguments = 'native' | 'delta' | 'cumulative' | 'best_effort'"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 5,
+      "name": "ToolResponseValidation",
+      "declaration": "export type ToolResponseValidation = 'best_effort' | 'strict'"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 6,
+      "name": "ProviderStatus",
+      "declaration": "export type ProviderStatus = 'active' | 'inactive' | 'disabled' | 'error'"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 7,
+      "name": "ProviderModelStatus",
+      "declaration": "export type ProviderModelStatus = 'active' | 'disabled'"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 8,
+      "name": "ProviderCredentialPoolMode",
+      "declaration": "export type ProviderCredentialPoolMode = 'manual' | 'failover' | 'round_robin'"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 9,
+      "name": "CapabilitySupport",
+      "declaration": "export type CapabilitySupport = 'supported' | 'unsupported' | 'unknown'"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 10,
+      "name": "ReasoningEffort",
+      "declaration": "export type ReasoningEffort = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 11,
+      "name": "ReasoningDialect",
+      "declaration": "export type ReasoningDialect = 'none' | 'native_anthropic' | 'openai' | 'deepseek' | 'openrouter' | 'qwen' | 'zai' | 'string_thinking' | 'llama_cpp'"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 12,
+      "name": "ReasoningReplay",
+      "declaration": "export type ReasoningReplay = 'none' | 'same_protocol'"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 14,
+      "name": "ModelProfileOverride",
+      "declaration": "export interface ModelProfileOverride {\n  display_name?: string\n  family?: string\n  context_window?: number\n  max_output_tokens?: number\n  input_modalities?: Array<'text' | 'image'>\n  tool_use?: CapabilitySupport\n  tool_choice?: CapabilitySupport\n  parallel_tool_calls?: CapabilitySupport\n  strict_tool_schema?: CapabilitySupport\n  reasoning?: CapabilitySupport\n  reasoning_efforts?: ReasoningEffort[]\n  reasoning_effort_map?: Partial<Record<ReasoningEffort, string>>\n  default_reasoning_effort?: ReasoningEffort\n  reasoning_dialect?: ReasoningDialect\n  reasoning_replay?: ReasoningReplay\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 32,
+      "name": "ProviderRetryPolicy",
+      "declaration": "export interface ProviderRetryPolicy {\n  max_attempts: number\n  initial_delay_ms: number\n  max_delay_ms: number\n  jitter_ratio: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 39,
+      "name": "ToolUseCapabilities",
+      "declaration": "export interface ToolUseCapabilities {\n  supported: boolean\n  toolChoice: boolean\n  parallelToolCalls: boolean\n  streamingArguments: ToolStreamingArguments\n  responseValidation?: ToolResponseValidation\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 47,
+      "name": "ModelPricing",
+      "declaration": "export interface ModelPricing {\n  inputPerMillion: number\n  outputPerMillion: number\n  cacheWritePerMillion: number\n  cacheReadPerMillion: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 54,
+      "name": "ModelPricingCard",
+      "declaration": "export interface ModelPricingCard extends ModelPricing {\n  version: string\n  effectiveAt: string\n  currency: 'USD'\n  source: 'provider_published' | 'provider_contract' | 'internal_chargeback'\n  serviceTier: 'standard'\n  region?: string | null\n  evidence: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 64,
+      "name": "ProviderHealth",
+      "declaration": "export interface ProviderHealth {\n  providerId: string\n  credentialId?: string\n  requestsTotal: number\n  successesTotal: number\n  failuresTotal: number\n  consecutiveFailures: number\n  successRate: number\n  status: 'healthy' | 'degraded' | 'cooldown'\n  lastSuccessAt?: string | null\n  lastFailureAt?: string | null\n  lastUsedAt?: string | null\n  cooldownUntil?: string | null\n  lastError?: string | null\n  lastStatusCode?: number | null\n  failureKind?: 'none' | 'account' | 'rate_limit' | 'upstream_unavailable' | 'config' | 'unknown'\n  accountIssue?: 'none' | 'insufficient_balance' | 'auth'\n  rechargeRequired?: boolean\n  rechargeBadge?: string | null\n  recommendedAction?: string | null\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 86,
+      "name": "ProviderModelInventory",
+      "declaration": "export interface ProviderModelInventory {\n  providerId?: string\n  model: string\n  status: ProviderModelStatus\n  displayName?: string | null\n  family?: string | null\n  contextWindow?: number | null\n  maxOutputTokens?: number | null\n  inputModalities?: Array<'text' | 'image'>\n  toolUse?: CapabilitySupport\n  toolChoice?: CapabilitySupport\n  parallelToolCalls?: CapabilitySupport\n  strictToolSchema?: CapabilitySupport\n  reasoning?: CapabilitySupport\n  reasoningEfforts?: ReasoningEffort[]\n  defaultReasoningEffort?: ReasoningEffort | null\n  reasoningDialect?: ReasoningDialect\n  reasoningReplay?: ReasoningReplay\n  verification?: 'verified' | 'unverified'\n  source?: 'catalog' | 'config' | 'control' | 'discovery' | 'provider_default'\n  catalogVersion?: number\n  override?: ModelProfileOverride\n  default?: boolean\n  createdAt?: string\n  updatedAt?: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 113,
+      "name": "ProviderCredential",
+      "declaration": "export interface ProviderCredential {\n  id: string\n  providerId: string\n  name: string\n  apiKeyEnv: string\n  baseUrl?: string | null\n  status: 'active' | 'disabled'\n  active: boolean\n  hasApiKey: boolean\n  health?: ProviderHealth | null\n  createdAt?: string\n  updatedAt?: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 127,
+      "name": "Provider",
+      "declaration": "export interface Provider {\n  id: string\n  displayName: string\n  source?: 'config' | 'control'\n  protocol: ProviderProtocol\n  baseUrl: string\n  apiKeyEnv: string | null\n  apiKeyRequired: boolean\n  defaultModel: string\n  models: string[]\n  modelPrefixes: string[]\n  passthroughUnknownModels: boolean\n  maxTokensField: MaxTokensField\n  deduplicateStreamText: boolean\n  bufferStreamText: boolean\n  fidelityMode?: FidelityMode\n  toolUse?: ToolUseCapabilities\n  modelProfileDefaults?: ModelProfileOverride\n  modelProfiles?: Record<string, ModelProfileOverride>\n  staticHeaders?: Record<string, string>\n  requestTimeoutMs?: number | null\n  streamIdleTimeoutMs?: number | null\n  retry?: ProviderRetryPolicy\n  adaptationCatalogVersion?: number\n  pricing?: ModelPricing | null\n  modelPricing?: Record<string, ModelPricingCard>\n  trustUpstreamCost?: boolean\n  status: ProviderStatus\n  credentials?: ProviderCredential[]\n  activeCredentialId?: string | null\n  credentialPoolMode?: ProviderCredentialPoolMode\n  runtimeStatus?: 'healthy' | 'degraded' | 'cooldown'\n  hasApiKey: boolean\n  health?: ProviderHealth | null\n  lastTest?: {\n    testedAt: string\n    success: boolean\n    message: string\n    testedCredentialId?: string | null\n    models?: string[]\n    modelCount?: number\n  } | null\n  modelInventory?: ProviderModelInventory[]\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 172,
+      "name": "ProviderWritePayload",
+      "declaration": "export interface ProviderWritePayload {\n  id?: string\n  displayName?: string\n  protocol?: ProviderProtocol\n  baseUrl?: string\n  apiKeyEnv?: string\n  clearApiKeyEnv?: boolean\n  apiKeyRequired?: boolean\n  defaultModel?: string\n  models?: string[]\n  modelPrefixes?: string[]\n  passthroughUnknownModels?: boolean\n  maxTokensField?: MaxTokensField\n  deduplicateStreamText?: boolean\n  bufferStreamText?: boolean\n  fidelityMode?: FidelityMode\n  toolUse?: ToolUseCapabilities\n  modelProfileDefaults?: ModelProfileOverride\n  modelProfiles?: Record<string, ModelProfileOverride>\n  staticHeaders?: Record<string, string>\n  requestTimeoutMs?: number\n  streamIdleTimeoutMs?: number\n  retry?: ProviderRetryPolicy\n  pricing?: ModelPricing | null\n  modelPricing?: Record<string, ModelPricingCard>\n  trustUpstreamCost?: boolean\n  disabled?: boolean\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 201,
+      "name": "ProviderModelWritePayload",
+      "declaration": "export interface ProviderModelWritePayload {\n  model: string\n  status?: ProviderModelStatus\n  displayName?: string | null\n  family?: string | null\n  contextWindow?: number | null\n  profile?: ModelProfileOverride\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 210,
+      "name": "ProviderCredentialWritePayload",
+      "declaration": "export interface ProviderCredentialWritePayload {\n  id?: string\n  name: string\n  apiKeyEnv: string\n  baseUrl?: string | null\n  status?: 'active' | 'disabled'\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 218,
+      "name": "ProviderDeleteDependency",
+      "declaration": "export interface ProviderDeleteDependency {\n  type: string\n  id?: string\n  name?: string\n  field?: string\n  target?: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 226,
+      "name": "ProviderDeleteBlocked",
+      "declaration": "export interface ProviderDeleteBlocked {\n  ok: false\n  blocked: true\n  providerId: string\n  message: string\n  dependencies: ProviderDeleteDependency[]\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 234,
+      "name": "ProviderModelDiscovery",
+      "declaration": "export interface ProviderModelDiscovery {\n  providerId: string\n  success: boolean\n  message: string\n  models: string[]\n  modelCount: number\n  testedCredentialId?: string | null\n  discoveredAt: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 244,
+      "name": "ProviderBalanceInfo",
+      "declaration": "export interface ProviderBalanceInfo {\n  currency: 'CNY' | 'USD'\n  totalBalance: string\n  grantedBalance: string\n  toppedUpBalance: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 251,
+      "name": "ProviderOnlineBalance",
+      "declaration": "export interface ProviderOnlineBalance {\n  providerId: string\n  isAvailable: boolean\n  balanceInfos: ProviderBalanceInfo[]\n  checkedAt: string\n  managementScope: 'read-monitor-alert'\n  billingAuthority: 'deepseek-console'\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 260,
+      "name": "ModelAlias",
+      "declaration": "export interface ModelAlias {\n  alias: string\n  target: string\n  resolvedProvider: string\n  resolvedModel: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/model.types.ts",
+      "line": 267,
+      "name": "ModelInfo",
+      "declaration": "export interface ModelInfo {\n  id: string\n  type: 'model'\n  displayName: string\n  providerId: string\n  enabled: boolean\n}"
+    },
+    {
+      "file": "dashboard/src/types/ops.types.ts",
+      "line": 1,
+      "name": "OpsSeverity",
+      "declaration": "export type OpsSeverity = 'SEV-1' | 'SEV-2' | 'SEV-3' | 'SEV-4'"
+    },
+    {
+      "file": "dashboard/src/types/ops.types.ts",
+      "line": 3,
+      "name": "OpsIncidentStatus",
+      "declaration": "export type OpsIncidentStatus =\n  | 'open'\n  | 'acknowledged'\n  | 'mitigating'\n  | 'monitoring'\n  | 'resolved'\n  | 'suppressed'"
+    },
+    {
+      "file": "dashboard/src/types/ops.types.ts",
+      "line": 11,
+      "name": "OpsIncidentSummary",
+      "declaration": "export interface OpsIncidentSummary {\n  id: string\n  eventKey: string\n  detectorType: string\n  severity: OpsSeverity\n  status: OpsIncidentStatus\n  title: string\n  summary: string\n  affectedScope: Record<string, unknown>\n  recoveryCriteria: string\n  firstSeenAtMs: number\n  lastSeenAtMs: number\n  resolvedAtMs: number | null\n  occurrenceCount: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/ops.types.ts",
+      "line": 27,
+      "name": "OpsIncidentEvidence",
+      "declaration": "export interface OpsIncidentEvidence {\n  id: string\n  incidentId: string\n  observedAtMs: number\n  evidence: Record<string, unknown>\n}"
+    },
+    {
+      "file": "dashboard/src/types/ops.types.ts",
+      "line": 34,
+      "name": "OpsIncidentTimelineEntry",
+      "declaration": "export interface OpsIncidentTimelineEntry {\n  id: string\n  incidentId: string\n  eventType: string\n  actorId: string\n  actorName: string\n  message: string\n  occurredAtMs: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/ops.types.ts",
+      "line": 44,
+      "name": "OpsIncidentDetail",
+      "declaration": "export interface OpsIncidentDetail extends OpsIncidentSummary {\n  evidence: OpsIncidentEvidence[]\n  timeline: OpsIncidentTimelineEntry[]\n}"
+    },
+    {
+      "file": "dashboard/src/types/ops.types.ts",
+      "line": 49,
+      "name": "OpsIncidentList",
+      "declaration": "export interface OpsIncidentList {\n  items: OpsIncidentSummary[]\n  total: number\n  open: number\n  highestOpenSeverity: OpsSeverity | null\n  agents: OpsAgentSummary[]\n}"
+    },
+    {
+      "file": "dashboard/src/types/ops.types.ts",
+      "line": 57,
+      "name": "OpsAgentSummary",
+      "declaration": "export interface OpsAgentSummary {\n  instanceId: string\n  agentVersion: string\n  mode: 'disabled' | 'replay' | 'shadow' | 'read_only'\n  ruleSetVersion: string\n  observedAtMs: number\n  queueDepth: number\n  intervalSeconds: number\n  online: boolean\n  analysisEnabled: boolean\n  selectedModel: string | null\n  modelStatus: 'disabled' | 'configured' | 'missing_credential' | 'error'\n  modelLastSuccessAtMs: number | null\n}"
+    },
+    {
+      "file": "dashboard/src/types/ops.types.ts",
+      "line": 72,
+      "name": "OpsModelCandidate",
+      "declaration": "export interface OpsModelCandidate {\n  id: string\n  providerId: string\n  model: string\n  displayName: string\n  local: boolean\n}"
+    },
+    {
+      "file": "dashboard/src/types/ops.types.ts",
+      "line": 80,
+      "name": "OpsAgentConfiguration",
+      "declaration": "export interface OpsAgentConfiguration {\n  enabled: boolean\n  analysisEnabled: boolean\n  selectedModel: string | null\n  preferLocal: boolean\n  modelReady: boolean\n  selectedModelLocal: boolean\n  recommendedModel: string | null\n  candidates: OpsModelCandidate[]\n}"
+    },
+    {
+      "file": "dashboard/src/types/ops.types.ts",
+      "line": 91,
+      "name": "OpsAgentConfigurationInput",
+      "declaration": "export interface OpsAgentConfigurationInput {\n  enabled: boolean\n  analysisEnabled: boolean\n  selectedModel: string | null\n  preferLocal: boolean\n}"
+    },
+    {
+      "file": "dashboard/src/types/ops.types.ts",
+      "line": 98,
+      "name": "OpsIncidentStatusInput",
+      "declaration": "export interface OpsIncidentStatusInput {\n  status: Exclude<OpsIncidentStatus, 'open' | 'resolved'>\n  reason: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/ops.types.ts",
+      "line": 103,
+      "name": "OpsIncidentFeedbackInput",
+      "declaration": "export interface OpsIncidentFeedbackInput {\n  outcome: 'true_positive' | 'false_positive' | 'needs_review'\n  rootCauseCorrect?: boolean\n  recommendationAdopted?: boolean\n  note?: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/quota.types.ts",
+      "line": 1,
+      "name": "QuotaType",
+      "declaration": "export type QuotaType = 'tokens' | 'requests' | 'cost'"
+    },
+    {
+      "file": "dashboard/src/types/quota.types.ts",
+      "line": 2,
+      "name": "QuotaPeriod",
+      "declaration": "export type QuotaPeriod = 'daily' | 'weekly' | 'monthly'"
+    },
+    {
+      "file": "dashboard/src/types/quota.types.ts",
+      "line": 4,
+      "name": "Quota",
+      "declaration": "export interface Quota {\n  id: string\n  userId: string\n  username: string\n  quotaType: QuotaType\n  limit: number\n  used: number\n  period: QuotaPeriod\n  periodStart: string\n  periodEnd: string\n  resetAt: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/quota.types.ts",
+      "line": 17,
+      "name": "UsageRecord",
+      "declaration": "export interface UsageRecord {\n  id: string\n  userId: string\n  model: string\n  provider: string\n  inputTokens: number\n  outputTokens: number\n  timestamp: string\n  costEstimate: number | null\n}"
+    },
+    {
+      "file": "dashboard/src/types/quota.types.ts",
+      "line": 28,
+      "name": "TimeSeriesPoint",
+      "declaration": "export interface TimeSeriesPoint {\n  timestamp: string\n  value: number\n  label?: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/quota.types.ts",
+      "line": 34,
+      "name": "UsageSummary",
+      "declaration": "export interface UsageSummary {\n  totalRequests: number\n  totalInputTokens: number\n  totalOutputTokens: number\n  totalCostEstimate: number\n  byModel: Record<string, { requests: number; tokens: number }>\n  byProvider: Record<string, { requests: number; tokens: number }>\n  byUser: Record<string, { requests: number; tokens: number }>\n  timeSeries: TimeSeriesPoint[]\n}"
+    },
+    {
+      "file": "dashboard/src/types/settings.types.ts",
+      "line": 1,
+      "name": "SystemSettings",
+      "declaration": "export interface SystemSettings {\n  server: ServerSettings\n  auth: AuthSettings\n  gateway: GatewaySettings\n  smartRouting: SmartRoutingSettings\n  rateLimits: RateLimitSettings\n  runtime?: RuntimeSettings\n  setup?: SetupStatus\n}"
+    },
+    {
+      "file": "dashboard/src/types/settings.types.ts",
+      "line": 11,
+      "name": "ServerSettings",
+      "declaration": "export interface ServerSettings {\n  bindAddress: string\n  maxRequestBodyBytes: number\n  maxConcurrentRequests: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/settings.types.ts",
+      "line": 17,
+      "name": "AuthSettings",
+      "declaration": "export interface AuthSettings {\n  enabled: boolean\n  tokenEnvVar: string\n  allowNoAuth: boolean\n}"
+    },
+    {
+      "file": "dashboard/src/types/settings.types.ts",
+      "line": 23,
+      "name": "GatewaySettings",
+      "declaration": "export interface GatewaySettings {\n  defaultProvider: string\n  providerOrder: string[]\n}"
+    },
+    {
+      "file": "dashboard/src/types/settings.types.ts",
+      "line": 28,
+      "name": "SmartRoutingSettings",
+      "declaration": "export interface SmartRoutingSettings {\n  mode: 'off' | 'shadow' | 'active'\n  defaultProfile: 'quality' | 'balanced' | 'economy' | 'latency'\n  policyVersion: string\n  activationPercent: number\n  groupCount: number\n  candidateCount: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/settings.types.ts",
+      "line": 37,
+      "name": "SmartRouterStatus",
+      "declaration": "export interface SmartRouterStatus {\n  mode: SmartRoutingSettings['mode']\n  defaultProfile: SmartRoutingSettings['defaultProfile']\n  policyVersion: string\n  activationPercent: number\n  groups: Array<{\n    id: string\n    aliases: string[]\n    defaultProfile: SmartRoutingSettings['defaultProfile']\n    candidateCount: number\n  }>\n  decisionsTotal: number\n  activeDecisionsTotal: number\n  shadowDecisionsTotal: number\n  staticDecisionsTotal: number\n  shadowDisagreementsTotal: number\n  selectedByCandidate: Record<string, number>\n  recommendedByCandidate: Record<string, number>\n  outcomes: Array<{\n    candidate: string\n    attempts: number\n    successes: number\n    successRate: number\n    latencyEwmaMs: number\n  }>\n}"
+    },
+    {
+      "file": "dashboard/src/types/settings.types.ts",
+      "line": 64,
+      "name": "RateLimitSettings",
+      "declaration": "export interface RateLimitSettings {\n  maxConcurrentRequests: number\n  maxRequestBodyBytes: number\n  requestTimeoutSecs: number\n  streamIdleTimeoutSecs: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/settings.types.ts",
+      "line": 71,
+      "name": "RuntimeSettings",
+      "declaration": "export interface RuntimeSettings {\n  apiEndpoint: string\n  anthropicEndpoint: string\n  openaiEndpoint: string\n  modelsEndpoint: string\n  adminEndpoint: string\n  controlDataPath?: string | null\n  authDataPath?: string | null\n}"
+    },
+    {
+      "file": "dashboard/src/types/settings.types.ts",
+      "line": 81,
+      "name": "SetupStatus",
+      "declaration": "export interface SetupStatus {\n  ready: boolean\n  activeProviderCount: number\n  defaultProviderReady: boolean\n  checks: SetupCheck[]\n  issues: Array<{\n    severity: 'error' | 'warning'\n    message: string\n  }>\n}"
+    },
+    {
+      "file": "dashboard/src/types/settings.types.ts",
+      "line": 92,
+      "name": "SetupCheck",
+      "declaration": "export interface SetupCheck {\n  id: string\n  label: string\n  status: 'ok' | 'warning' | 'error'\n  detail: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/settings.types.ts",
+      "line": 99,
+      "name": "ConfigReloadResult",
+      "declaration": "export interface ConfigReloadResult {\n  ok: boolean\n  settings: SystemSettings\n  providerCount: number\n  defaultProvider: string\n  providerOrder: string[]\n  issues: Array<{\n    severity: 'error' | 'warning'\n    message: string\n  }>\n  reloadScope?: {\n    applied: string[]\n    requiresRestart: string[]\n  }\n}"
+    },
+    {
+      "file": "dashboard/src/types/settings.types.ts",
+      "line": 115,
+      "name": "AuditEvent",
+      "declaration": "export interface AuditEvent {\n  id: string\n  timestamp: string\n  type: 'request' | 'error' | 'config_change' | string\n  actor?: string\n  target?: string\n  message: string\n  severity: 'info' | 'warning' | 'error'\n}"
+    },
+    {
+      "file": "dashboard/src/types/settings.types.ts",
+      "line": 125,
+      "name": "AuditEventsResponse",
+      "declaration": "export interface AuditEventsResponse {\n  events: AuditEvent[]\n  total: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/settings.types.ts",
+      "line": 130,
+      "name": "BackupExport",
+      "declaration": "export interface BackupExport {\n  schemaVersion: number\n  service: string\n  generatedAt: string\n  containsSecrets: boolean\n  containsPersonalData: boolean\n  settings: SystemSettings\n  users: unknown[]\n  control: unknown\n}"
+    },
+    {
+      "file": "dashboard/src/types/user.types.ts",
+      "line": 1,
+      "name": "UserRole",
+      "declaration": "export type UserRole = 'admin' | 'user' | 'viewer'"
+    },
+    {
+      "file": "dashboard/src/types/user.types.ts",
+      "line": 3,
+      "name": "User",
+      "declaration": "export interface User {\n  id: string\n  username: string\n  email: string\n  role: UserRole\n  status: 'active' | 'disabled' | 'suspended'\n  createdAt: string\n  lastLoginAt: string | null\n  apiKeyCount: number\n  requestCount24h: number\n}"
+    },
+    {
+      "file": "dashboard/src/types/user.types.ts",
+      "line": 15,
+      "name": "CreateUserInput",
+      "declaration": "export interface CreateUserInput {\n  username: string\n  email: string\n  password: string\n  role: UserRole\n  status: 'active' | 'disabled' | 'suspended'\n}"
+    },
+    {
+      "file": "dashboard/src/types/user.types.ts",
+      "line": 23,
+      "name": "UpdateUserInput",
+      "declaration": "export interface UpdateUserInput {\n  email?: string\n  password?: string\n  role?: UserRole\n  status?: User['status']\n}"
+    },
+    {
+      "file": "dashboard/src/types/user.types.ts",
+      "line": 30,
+      "name": "ApiKey",
+      "declaration": "export interface ApiKey {\n  id: string\n  userId: string\n  username?: string\n  name: string\n  principalType?: 'user' | 'service_account' | 'legacy'\n  purpose?: string | null\n  keyPrefix: string\n  keyPreview?: string\n  key?: string\n  group?: string | null\n  teamId?: string | null\n  teamName?: string | null\n  allowedModels?: string[]\n  allowedProviders?: string[]\n  createdAt: string\n  lastUsedAt: string | null\n  expiresAt: string | null\n  status: 'active' | 'revoked'\n  requestsToday?: number\n  tokensToday?: number\n  ipRestricted?: boolean\n  allowedIps?: string[]\n  spendLimitUsd?: number\n  rateLimited?: boolean\n  fiveHourLimitUsd?: number\n  dailyLimitUsd?: number\n  weeklyLimitUsd?: number\n  monthlyLimitUsd?: number\n  supersededByKeyId?: string | null\n}"
+    },
+    {
+      "file": "dashboard/src/types/user.types.ts",
+      "line": 62,
+      "name": "Team",
+      "declaration": "export interface Team {\n  id: string\n  name: string\n  slug: string\n  description?: string | null\n  status: 'active' | 'archived' | 'disabled'\n  dailyLimitUsd: number\n  monthlyLimitUsd: number\n  dailySpendUsd: number\n  monthlySpendUsd: number\n  allowedModels: string[]\n  allowedProviders: string[]\n  activeApiKeys: number\n  requestsToday: number\n  createdAt: string\n  updatedAt: string\n}"
+    },
+    {
+      "file": "dashboard/src/types/user.types.ts",
+      "line": 80,
+      "name": "UpsertTeamInput",
+      "declaration": "export interface UpsertTeamInput {\n  id?: string\n  name: string\n  slug?: string\n  description?: string\n  status?: Team['status']\n  dailyLimitUsd?: number\n  monthlyLimitUsd?: number\n  allowedModels?: string[]\n  allowedProviders?: string[]\n}"
+    }
+  ],
+  "notes": [
+    "JSX文本、字段控件及全部领域类型的基线索引；动态文案以对应源码为准。",
+    "LogsPage拆分字段额外见src/pages/logs/LogsFilters.tsx、LogsTable.tsx、LogsDrawer.tsx。"
+  ],
+  "logComponents": [
+    {
+      "file": "dashboard/src/pages/logs/LogsFilters.tsx",
+      "entries": [
+        {
+          "line": 94,
+          "attribute": "placeholder={placeholder}"
+        },
+        {
+          "line": 97,
+          "attribute": "aria-label={ariaLabel}"
+        },
+        {
+          "line": 157,
+          "text": "筛选条件"
+        },
+        {
+          "line": 158,
+          "text": "时间 · 来源 · 身份 · 状态"
+        },
+        {
+          "line": 164,
+          "text": "已启用"
+        },
+        {
+          "line": 174,
+          "text": "重置"
+        },
+        {
+          "line": 181,
+          "text": "快速范围"
+        },
+        {
+          "line": 205,
+          "text": "更多筛选"
+        },
+        {
+          "line": 213,
+          "attribute": "label=\"关键词\""
+        },
+        {
+          "line": 217,
+          "attribute": "placeholder=\"模型、渠道、令牌、请求 ID\""
+        },
+        {
+          "line": 225,
+          "attribute": "label=\"Provider\""
+        },
+        {
+          "line": 230,
+          "attribute": "aria-label=\"筛选 Provider\""
+        },
+        {
+          "line": 231,
+          "attribute": "placeholder=\"全部 Provider\""
+        },
+        {
+          "line": 234,
+          "text": "全部 Provider"
+        },
+        {
+          "line": 244,
+          "attribute": "label=\"状态\""
+        },
+        {
+          "line": 251,
+          "attribute": "aria-label=\"筛选日志状态\""
+        },
+        {
+          "line": 252,
+          "attribute": "placeholder=\"全部状态\""
+        },
+        {
+          "line": 255,
+          "text": "全部状态"
+        },
+        {
+          "line": 256,
+          "text": "成功"
+        },
+        {
+          "line": 257,
+          "text": "错误"
+        },
+        {
+          "line": 258,
+          "text": "超时"
+        },
+        {
+          "line": 267,
+          "attribute": "label=\"开始时间\""
+        },
+        {
+          "line": 270,
+          "attribute": "aria-label=\"日志开始时间\""
+        },
+        {
+          "line": 279,
+          "attribute": "label=\"结束时间\""
+        },
+        {
+          "line": 282,
+          "attribute": "aria-label=\"日志结束时间\""
+        },
+        {
+          "line": 291,
+          "attribute": "label=\"用户\""
+        },
+        {
+          "line": 293,
+          "attribute": "placeholder=\"用户名\""
+        },
+        {
+          "line": 301,
+          "attribute": "label=\"API Key 标签\""
+        },
+        {
+          "line": 303,
+          "attribute": "placeholder=\"例如：研发组\""
+        },
+        {
+          "line": 311,
+          "attribute": "label=\"响应模式\""
+        },
+        {
+          "line": 318,
+          "attribute": "aria-label=\"筛选响应模式\""
+        },
+        {
+          "line": 319,
+          "attribute": "placeholder=\"全部模式\""
+        },
+        {
+          "line": 322,
+          "text": "全部模式"
+        },
+        {
+          "line": 323,
+          "text": "流式"
+        },
+        {
+          "line": 324,
+          "text": "非流式"
+        },
+        {
+          "line": 329,
+          "attribute": "label=\"Tool Use\""
+        },
+        {
+          "line": 336,
+          "attribute": "aria-label=\"筛选 Tool Use\""
+        },
+        {
+          "line": 337,
+          "attribute": "placeholder=\"全部工作流\""
+        },
+        {
+          "line": 340,
+          "text": "全部工作流"
+        },
+        {
+          "line": 341,
+          "text": "Tool Use"
+        },
+        {
+          "line": 342,
+          "text": "非 Tool Use"
+        },
+        {
+          "line": 347,
+          "attribute": "label=\"流量类型\""
+        },
+        {
+          "line": 354,
+          "attribute": "aria-label=\"筛选流量类型\""
+        },
+        {
+          "line": 355,
+          "attribute": "placeholder=\"全部流量\""
+        },
+        {
+          "line": 358,
+          "text": "全部流量"
+        },
+        {
+          "line": 359,
+          "text": "业务"
+        },
+        {
+          "line": 360,
+          "text": "合成测试"
+        },
+        {
+          "line": 361,
+          "text": "诊断"
+        }
+      ]
+    },
+    {
+      "file": "dashboard/src/pages/logs/LogsTable.tsx",
+      "entries": [
+        {
+          "line": 81,
+          "attribute": "title={`客户端 ${clientProtocolLabel(log.clientProtocol)}`}"
+        },
+        {
+          "line": 100,
+          "attribute": "title={log.username}"
+        },
+        {
+          "line": 101,
+          "attribute": "title={log.userId}"
+        },
+        {
+          "line": 104,
+          "attribute": "title={`令牌 ${tokenName} / 分组 ${groupName}`}"
+        },
+        {
+          "line": 105,
+          "text": "分组"
+        },
+        {
+          "line": 116,
+          "attribute": "title={resolvedModel}"
+        },
+        {
+          "line": 120,
+          "attribute": "title={`请求模型 ${log.model}`}"
+        },
+        {
+          "line": 121,
+          "text": "请求"
+        },
+        {
+          "line": 136,
+          "text": "总耗时"
+        },
+        {
+          "line": 143,
+          "text": "首字"
+        },
+        {
+          "line": 158,
+          "attribute": "title=\"输入 Tokens\""
+        },
+        {
+          "line": 159,
+          "attribute": "title=\"输出 Tokens\""
+        },
+        {
+          "line": 166,
+          "attribute": "title={`缓存写 ${formatInteger(cacheWriteTokens)} / 缓存读 ${formatInteger(cacheReadTokens)}`}"
+        },
+        {
+          "line": 181,
+          "text": "·"
+        },
+        {
+          "line": 194,
+          "attribute": "title={log.provider}"
+        },
+        {
+          "line": 206,
+          "text": "消费"
+        },
+        {
+          "line": 207,
+          "text": "异常"
+        },
+        {
+          "line": 208,
+          "text": "流式"
+        },
+        {
+          "line": 209,
+          "attribute": "title={log.toolOutcome || 'unknown'}"
+        },
+        {
+          "line": 209,
+          "text": "Tool Use ·"
+        },
+        {
+          "line": 226,
+          "attribute": "title={title}"
+        },
+        {
+          "line": 240,
+          "text": "时间 / 状态"
+        },
+        {
+          "line": 241,
+          "text": "路由渠道"
+        },
+        {
+          "line": 242,
+          "text": "调用身份"
+        },
+        {
+          "line": 243,
+          "text": "模型"
+        },
+        {
+          "line": 244,
+          "text": "延迟"
+        },
+        {
+          "line": 245,
+          "text": "Tokens"
+        },
+        {
+          "line": 246,
+          "text": "花费"
+        },
+        {
+          "line": 270,
+          "attribute": "aria-label={`查看 ${log.resolvedModel || log.model} 请求详情`}"
+        },
+        {
+          "line": 318,
+          "attribute": "aria-label={`查看 ${log.resolvedModel || log.model} 请求详情`}"
+        },
+        {
+          "line": 339,
+          "text": "延迟"
+        },
+        {
+          "line": 340,
+          "text": "Token"
+        },
+        {
+          "line": 341,
+          "text": "费用"
+        },
+        {
+          "line": 345,
+          "text": "·"
+        },
+        {
+          "line": 407,
+          "text": "调用明细"
+        },
+        {
+          "line": 408,
+          "text": "缓存 · 计价 · 错误上下文 · 点击行查看详情"
+        },
+        {
+          "line": 411,
+          "text": "共"
+        },
+        {
+          "line": 413,
+          "text": "条"
+        },
+        {
+          "line": 422,
+          "text": "没有匹配的请求日志"
+        },
+        {
+          "line": 423,
+          "text": "调整筛选条件，或先发送一条模型请求。"
+        }
+      ]
+    },
+    {
+      "file": "dashboard/src/pages/logs/LogsDrawer.tsx",
+      "entries": [
+        {
+          "line": 79,
+          "attribute": "title={copied ? '已复制' : '复制'}"
+        },
+        {
+          "line": 80,
+          "attribute": "aria-label={copied ? '已复制到剪贴板' : '复制到剪贴板'}"
+        },
+        {
+          "line": 269,
+          "text": "redacted"
+        },
+        {
+          "line": 304,
+          "text": "Client:"
+        },
+        {
+          "line": 305,
+          "text": "Provider:"
+        },
+        {
+          "line": 309,
+          "attribute": "label=\"时间\""
+        },
+        {
+          "line": 310,
+          "attribute": "label=\"总耗时\""
+        },
+        {
+          "line": 313,
+          "attribute": "title=\"路由与请求\""
+        },
+        {
+          "line": 314,
+          "attribute": "label=\"日志 ID\""
+        },
+        {
+          "line": 316,
+          "attribute": "label=\"请求 ID\""
+        },
+        {
+          "line": 321,
+          "attribute": "label=\"Provider\""
+        },
+        {
+          "line": 323,
+          "attribute": "label=\"请求路径\""
+        },
+        {
+          "line": 328,
+          "attribute": "label=\"客户端协议\""
+        },
+        {
+          "line": 329,
+          "attribute": "label=\"Provider 协议\""
+        },
+        {
+          "line": 330,
+          "attribute": "label=\"流量类型\""
+        },
+        {
+          "line": 331,
+          "attribute": "label=\"流式模式\""
+        },
+        {
+          "line": 332,
+          "attribute": "label=\"日志详情\""
+        },
+        {
+          "line": 335,
+          "attribute": "title=\"身份\""
+        },
+        {
+          "line": 336,
+          "attribute": "label=\"用户名\""
+        },
+        {
+          "line": 337,
+          "attribute": "label=\"API Key\""
+        },
+        {
+          "line": 338,
+          "attribute": "label=\"分组\""
+        },
+        {
+          "line": 339,
+          "attribute": "label=\"用户 ID\""
+        },
+        {
+          "line": 340,
+          "attribute": "label=\"客户端 IP\""
+        },
+        {
+          "line": 343,
+          "attribute": "title=\"缓存与用量\""
+        },
+        {
+          "line": 344,
+          "attribute": "label=\"输入 Tokens\""
+        },
+        {
+          "line": 345,
+          "attribute": "label=\"输出 Tokens\""
+        },
+        {
+          "line": 346,
+          "attribute": "label=\"缓存创建\""
+        },
+        {
+          "line": 347,
+          "attribute": "label=\"缓存命中\""
+        },
+        {
+          "line": 348,
+          "attribute": "label=\"计费 Tokens\""
+        },
+        {
+          "line": 351,
+          "attribute": "title=\"计费拆分\""
+        },
+        {
+          "line": 353,
+          "attribute": "label=\"价格\""
+        },
+        {
+          "line": 358,
+          "attribute": "label=\"计算过程\""
+        },
+        {
+          "line": 359,
+          "attribute": "label=\"输入成本\""
+        },
+        {
+          "line": 360,
+          "attribute": "label=\"缓存成本\""
+        },
+        {
+          "line": 361,
+          "attribute": "label=\"输出成本\""
+        },
+        {
+          "line": 362,
+          "attribute": "label=\"预估金额\""
+        },
+        {
+          "line": 364,
+          "attribute": "label=\"实际金额\""
+        },
+        {
+          "line": 369,
+          "attribute": "label=\"可计费金额\""
+        },
+        {
+          "line": 373,
+          "attribute": "label=\"核算状态\""
+        },
+        {
+          "line": 374,
+          "attribute": "label=\"计费模式\""
+        },
+        {
+          "line": 378,
+          "attribute": "label=\"计价证据\""
+        },
+        {
+          "line": 382,
+          "attribute": "label=\"证据引用\""
+        },
+        {
+          "line": 393,
+          "text": "错误信息"
+        },
+        {
+          "line": 411,
+          "attribute": "label=\"Request ID\""
+        },
+        {
+          "line": 417,
+          "attribute": "label=\"首字延迟\""
+        },
+        {
+          "line": 422,
+          "attribute": "label=\"Retry\""
+        },
+        {
+          "line": 423,
+          "attribute": "label=\"Provider\""
+        },
+        {
+          "line": 429,
+          "text": "持久化日志摘要"
+        },
+        {
+          "line": 430,
+          "text": "仅呈现服务端已保存字段，不代表逐阶段执行 Trace 或耗时。"
+        },
+        {
+          "line": 435,
+          "attribute": "title=\"请求已记录\""
+        },
+        {
+          "line": 441,
+          "attribute": "title=\"身份上下文\""
+        },
+        {
+          "line": 447,
+          "attribute": "title=\"路由归因摘要\""
+        },
+        {
+          "line": 453,
+          "attribute": "title=\"请求结果\""
+        },
+        {
+          "line": 463,
+          "attribute": "title=\"客户端摘要（重构）\""
+        },
+        {
+          "line": 474,
+          "attribute": "title=\"归一化路由摘要（重构）\""
+        },
+        {
+          "line": 486,
+          "attribute": "title=\"Provider 归因摘要（重构）\""
+        },
+        {
+          "line": 530,
+          "text": "本次请求没有工具级遥测"
+        },
+        {
+          "line": 532,
+          "text": "当前日志未持久化 tools、tool_choice、tool_use_id 或 tool_result，因而无法证明本次请求是否调用工具或通过了哪些校验。"
+        },
+        {
+          "line": 536,
+          "text": "能力参考"
+        },
+        {
+          "line": 540,
+          "attribute": "label=\"tools: 未记录\""
+        },
+        {
+          "line": 541,
+          "attribute": "label=\"tool_choice: 未记录\""
+        },
+        {
+          "line": 542,
+          "attribute": "label=\"tool_result: 未记录\""
+        },
+        {
+          "line": 550,
+          "text": "这条日志可确认"
+        },
+        {
+          "line": 553,
+          "attribute": "label=\"Provider 协议\""
+        },
+        {
+          "line": 554,
+          "attribute": "label=\"响应模式\""
+        },
+        {
+          "line": 555,
+          "attribute": "label=\"请求结果\""
+        },
+        {
+          "line": 562,
+          "text": "这条日志无法确认"
+        },
+        {
+          "line": 565,
+          "attribute": "label=\"工具定义\""
+        },
+        {
+          "line": 566,
+          "attribute": "label=\"工具执行\""
+        },
+        {
+          "line": 567,
+          "attribute": "label=\"校验过程\""
+        },
+        {
+          "line": 574,
+          "text": "协议事件能力参考（非本次 Trace）"
+        },
+        {
+          "line": 575,
+          "text": "用于理解网关可能处理的事件；不表示下列事件出现在本次请求中。"
+        },
+        {
+          "line": 726,
+          "text": "Request"
+        },
+        {
+          "line": 730,
+          "text": "请求详情"
+        },
+        {
+          "line": 736,
+          "attribute": "aria-label=\"关闭请求详情\""
+        },
+        {
+          "line": 747,
+          "text": "正在从详情接口加载完整请求记录…"
+        },
+        {
+          "line": 752,
+          "text": "详情接口加载失败；下方暂时显示列表摘要，部分证据可能缺失。"
+        },
+        {
+          "line": 756,
+          "text": "重试"
+        },
+        {
+          "line": 763,
+          "text": "概览"
+        },
+        {
+          "line": 764,
+          "text": "协议 Trace"
+        },
+        {
+          "line": 765,
+          "text": "Tool Use"
+        },
+        {
+          "line": 782,
+          "text": "关闭"
+        }
+      ]
+    },
+    {
+      "file": "dashboard/src/pages/logs/LogsSummary.tsx",
+      "entries": [
+        {
+          "line": 21,
+          "attribute": "title={label}"
+        },
+        {
+          "line": 44,
+          "attribute": "label=\"可计费费用\""
+        },
+        {
+          "line": 50,
+          "attribute": "label=\"成功率\""
+        },
+        {
+          "line": 56,
+          "attribute": "label=\"Token\""
+        },
+        {
+          "line": 62,
+          "attribute": "label=\"Tool Use\""
+        },
+        {
+          "line": 68,
+          "attribute": "label=\"P95 延迟\""
+        },
+        {
+          "line": 76,
+          "attribute": "label=\"缓存 Token\""
+        }
+      ]
+    }
+  ]
+}

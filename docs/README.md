@@ -1,9 +1,11 @@
-# ModelPort Documentation
+# RoutePilot Documentation
+
+RoutePilot 的应用、配置及部署资源统一使用新的项目命名。
 
 The root [README](../README.md) is the product entry point. You do not need to
 read every document: choose the path that matches your task.
 
-## I Want To Run ModelPort
+## I Want To Run RoutePilot
 
 1. [Learning Path](LEARNING_PATH.md) — choose a short operator, integration,
    operations, or contributor track. A
@@ -11,7 +13,7 @@ read every document: choose the path that matches your task.
 2. [Getting Started](GETTING_STARTED.md) — go from a clean clone to the first
    authenticated request.
 3. [Local inference joint quickstart](LOCAL_INFERENCE_STACK.md) — pair
-   ModelPort with local-inference-stack on Linux/WSL2.
+   RoutePilot with local-inference-stack on Linux/WSL2.
 4. [Deployment](DEPLOYMENT.md) — choose Docker Compose or systemd.
 5. [Production](PRODUCTION.md) — harden and accept a shared deployment.
 6. [Operations](OPERATIONS.md) — monitor, back up, troubleshoot, and upgrade it.
@@ -19,7 +21,7 @@ read every document: choose the path that matches your task.
    major-version or managed-database migration without reusing an old data
    directory.
 8. [40 人团队第一阶段生产基线](PRODUCTION_BASELINE_40_USERS.zh-CN.md) — 单
-   ModelPort 现状下的数据库、备份、密钥和投产检查清单。
+   RoutePilot 现状下的数据库、备份、密钥和投产检查清单。
 9. [Compatibility matrix](COMPATIBILITY.md) — Tier 1 platform and explicit
    experimental/unsupported boundaries.
 10. [Observability runbook](OBSERVABILITY_RUNBOOK.md) — official alerts,
@@ -38,7 +40,7 @@ read every document: choose the path that matches your task.
 - [Smart Routing](SMART_ROUTING.md) — define smart aliases and roll them out
   through shadow and canary modes.
 
-## I Want To Configure ModelPort
+## I Want To Configure RoutePilot
 
 - [Configuration](CONFIGURATION.md) is the single reference for environment
   variables, TOML, precedence, security guardrails, and reload scope.
@@ -54,6 +56,13 @@ read every document: choose the path that matches your task.
   persistence, trust boundaries, and deliberate non-goals.
 - [Dashboard README](../dashboard/README.md) — UI behavior and contribution
   contract.
+- [RoutePilot frontend redesign plan](FRONTEND_REDESIGN.zh-CN.md) — agreed
+  visual direction, branding scope, implementation phases, and acceptance
+  criteria. The [validation report](FRONTEND_REDESIGN_VALIDATION.zh-CN.md)
+  records the completed implementation, checks, screenshots, and reproduction steps.
+- [Professional workbench redesign plan](WORKBENCH_REDESIGN.zh-CN.md) — the
+  next layout and workflow redesign, with confirmed direction, prototype-first
+  delivery, per-route scope, and acceptance criteria; not yet implemented.
 - [ADRs](adr/README.md) — accepted architecture decisions.
 - [Releasing](RELEASING.md) and
   [maintainer policy](../.github/MAINTAINERS.md) — release and repository
@@ -78,3 +87,7 @@ deliberate deferrals. Deferred work must not be described as shipped.
    [Development](DEVELOPMENT.md) before merging.
 
 Last reviewed: 2026-08-09.
+
+- [工作台原型与 P0 基线](WORKBENCH_PROTOTYPE.zh-CN.md)：可点击预览、功能去向清单与本轮对照。
+
+- [工作台全页面改造验收记录](WORKBENCH_REDESIGN_VALIDATION.zh-CN.md)：获批原型后的实际页面结构、功能去向与回归结果。

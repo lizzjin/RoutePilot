@@ -6,7 +6,7 @@ Last reviewed: 2026-08-09.
 
 ## Product Contract
 
-ModelPort is free, MIT-licensed, self-hosted software for a 20–50 person
+RoutePilot is free, MIT-licensed, self-hosted software for a 20–50 person
 Chinese internal development team that uses local models and approved cloud
 Providers. The platform administrator is the primary operator; developers get
 scoped keys, stable logical models, their own request evidence, and copyable
@@ -20,7 +20,7 @@ The core user outcome is:
 
 Success is the first governed request within 30 minutes and sustained weekly
 team use without policy bypass—not Provider count, raw request volume, GitHub
-stars, or revenue. ModelPort has no paid edition, hosted service, or feature
+stars, or revenue. RoutePilot has no paid edition, hosted service, or feature
 tier.
 
 ## v0.1.x Small-Team Beta Freeze

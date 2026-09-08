@@ -1,7 +1,7 @@
 # Operations Agent
 
-`modelport-ops-agent` is an optional, free, open-source companion process for a
-single ModelPort instance. It evaluates sanitized runtime snapshots with
+`routepilot-ops-agent` is an optional, free, open-source companion process for a
+single RoutePilot instance. It evaluates sanitized runtime snapshots with
 deterministic rules and writes incidents back through a versioned API. It is
 off by default, is not a shell runner, and does not repair the system
 automatically.
@@ -25,15 +25,15 @@ cookies, raw Provider bodies, and database URLs.
 
 Sign in as an administrator, open **API 密钥**, and create a service account:
 
-- purpose: `modelport_ops_agent` (exact value);
+- purpose: `routepilot_ops_agent` (exact value);
 - expiry: no more than 90 days;
 - model scope: `__ops_agent_no_inference__`;
 - Provider scope: `__ops_agent_no_inference__`;
 - no team unless your operating policy explicitly requires one.
 
-The sentinel scopes make the key unusable for normal inference. ModelPort also
+The sentinel scopes make the key unusable for normal inference. RoutePilot also
 checks the service-account principal and exact purpose on every internal Agent
-request. Save the one-time secret in `.env` as `MODELPORT_OPS_API_KEY`.
+request. Save the one-time secret in `.env` as `ROUTEPILOT_OPS_API_KEY`.
 Heartbeat identity is bound server-side to that API key ID; the Agent cannot
 invent additional instance identities.
 
@@ -46,10 +46,10 @@ available; an explicit administrator selection always wins.
 
 Model analysis is advisory and is attached only to already-detected active
 incidents. It cannot create facts, change severity, close incidents, or execute
-actions. Create a second service account with purpose `modelport_ops_model` and
+actions. Create a second service account with purpose `routepilot_ops_model` and
 a least-privilege inference key limited to the selected model and Provider,
-then set it as `MODELPORT_OPS_MODEL_API_KEY`. Never reuse the Agent control key:
-ModelPort deliberately rejects that key on `/v1`.
+then set it as `ROUTEPILOT_OPS_MODEL_API_KEY`. Never reuse the Agent control key:
+RoutePilot deliberately rejects that key on `/v1`.
 
 ## Safe Rollout
 
@@ -58,7 +58,7 @@ default startup, and the persisted Agent setting defaults to disabled. First
 start the optional process in shadow mode:
 
 ```bash
-MODELPORT_OPS_MODE=shadow docker compose --profile ops-agent up -d ops-agent
+ROUTEPILOT_OPS_MODE=shadow docker compose --profile ops-agent up -d ops-agent
 docker compose logs --tail=100 ops-agent
 docker compose exec ops-agent curl -fsS http://127.0.0.1:38083/readyz
 ```
@@ -76,8 +76,8 @@ After checking at least one complete interval, explicitly enable incident
 writes in the deployment environment:
 
 ```env
-MODELPORT_OPS_MODE=read_only
-MODELPORT_OPS_INTERVAL_SECONDS=300
+ROUTEPILOT_OPS_MODE=read_only
+ROUTEPILOT_OPS_INTERVAL_SECONDS=300
 ```
 
 Then recreate only the Agent and inspect **运维事件** in the administrator
@@ -88,29 +88,29 @@ docker compose --profile ops-agent up -d --no-deps --force-recreate ops-agent
 ```
 
 To stop all evaluation immediately, turn off the persisted setting, set
-`MODELPORT_OPS_MODE=disabled`, or stop the optional container. Each path is
+`ROUTEPILOT_OPS_MODE=disabled`, or stop the optional container. Each path is
 fail-closed and never changes gateway readiness.
 
 ## Delivery And Recovery
 
-The Agent spool is `/var/lib/modelport-ops/spool.sqlite` in the
-`modelport-ops-spool` volume. It is capped at 10,000 observations. Identical
+The Agent spool is `/var/lib/routepilot-ops/spool.sqlite` in the
+`routepilot-ops-spool` volume. It is capped at 10,000 observations. Identical
 queued facts are deduplicated; the server independently deduplicates evidence.
 The Compose profile defaults to 0.5 CPU, 256 MiB memory, and 128 PIDs; override
 those explicit limits only after measuring the host.
 
 PostgreSQL stores the authoritative incident, evidence, timeline, heartbeat,
-and feedback records. Back up and restore it with the same ModelPort database
+and feedback records. Back up and restore it with the same RoutePilot database
 procedure. Deleting the SQLite volume only loses observations that were not yet
 accepted; it does not delete accepted incidents.
 
-An optional `MODELPORT_OPS_WEBHOOK_URL` receives a sanitized v1 JSON envelope
+An optional `ROUTEPILOT_OPS_WEBHOOK_URL` receives a sanitized v1 JSON envelope
 when an active observation is accepted. Webhook failure is logged and never
 blocks the incident ledger or the gateway.
 
 ## Current Boundaries
 
-- one Agent per ModelPort instance;
+- one Agent per RoutePilot instance;
 - no HA leadership or cross-instance incident merging;
 - no arbitrary queries, commands, or automatic changes;
 - optional model diagnosis uses a separately scoped key and sanitized facts;

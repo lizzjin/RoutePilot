@@ -30,10 +30,10 @@ Community support is best effort and has no response-time, availability, or
 resolution SLA. Provider outages, account billing, model availability, and
 third-party API behavior remain the responsibility of the Provider.
 
-ModelPort is free, self-hosted MIT software. This project provides no paid
-edition, paid support plan, hosted ModelPort service, response SLA, or LTS line.
+RoutePilot is free, self-hosted MIT software. This project provides no paid
+edition, paid support plan, hosted RoutePilot service, response SLA, or LTS line.
 A third-party reseller, host, or consultant cannot create obligations for the
-ModelPort maintainers.
+RoutePilot maintainers.
 
 ## Security
 

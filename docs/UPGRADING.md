@@ -1,6 +1,6 @@
 # Upgrading And Rollback
 
-ModelPort v0.1.x is a single-instance beta. It promises a predictable,
+RoutePilot v0.1.x is a single-instance beta. It promises a predictable,
 evidence-preserving maintenance window, not zero-downtime or rolling upgrades.
 Application and database rollback are separate decisions and may need to be
 performed together.
@@ -22,19 +22,19 @@ GitHub Release. Verify the release before editing deployment state:
 
 ```bash
 sha256sum --check SHA256SUMS
-gh attestation verify model-port-v0.1.0-linux-amd64.tar.gz \
-  --repo tiammomo/ModelPort
+gh attestation verify routepilot-v0.1.0-linux-amd64.tar.gz \
+  --repo lizzjin/RoutePilot
 gh attestation verify \
-  oci://ghcr.io/tiammomo/modelport@sha256:<backend-digest> \
-  --repo tiammomo/ModelPort
+  oci://ghcr.io/lizzjin/routepilot@sha256:<backend-digest> \
+  --repo lizzjin/RoutePilot
 cosign verify \
-  --certificate-identity-regexp='https://github.com/tiammomo/ModelPort/.github/workflows/release.yml@refs/tags/v0[.]1[.]0' \
+  --certificate-identity-regexp='https://github.com/lizzjin/RoutePilot/.github/workflows/release.yml@refs/tags/v0[.]1[.]0' \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-  ghcr.io/tiammomo/modelport@sha256:<backend-digest>
+  ghcr.io/lizzjin/routepilot@sha256:<backend-digest>
 ```
 
-Repeat the image verification for `modelport-dashboard` and, when enabled,
-`modelport-ops-agent`. Verification proves
+Repeat the image verification for `routepilot-dashboard` and, when enabled,
+`routepilot-ops-agent`. Verification proves
 release provenance; it does not prove that a Provider account or model remains
 compatible.
 
@@ -44,7 +44,7 @@ Select the manifest used by the running deployment before any Compose or helper
 command. The normal release profile is:
 
 ```bash
-export MODELPORT_COMPOSE_FILE="$PWD/deploy/release/compose.yml"
+export ROUTEPILOT_COMPOSE_FILE="$PWD/deploy/release/compose.yml"
 ```
 
 1. Read `CHANGELOG.md`, [Compatibility](COMPATIBILITY.md), and known limits.
@@ -62,8 +62,8 @@ export MODELPORT_COMPOSE_FILE="$PWD/deploy/release/compose.yml"
 
    ```bash
    scripts/backup-compose.sh create
-   scripts/backup-compose.sh verify backups/modelport-<UTC>.tar.gz
-   scripts/backup-compose.sh drill backups/modelport-<UTC>.tar.gz
+   scripts/backup-compose.sh verify backups/routepilot-<UTC>.tar.gz
+   scripts/backup-compose.sh drill backups/routepilot-<UTC>.tar.gz
    ```
 
    This helper is only for the bundled Compose PostgreSQL service. For the
@@ -84,11 +84,11 @@ Set the target images to the exact release digests in the shell or the
 operator-owned deployment environment:
 
 ```bash
-export MODELPORT_IMAGE='ghcr.io/tiammomo/modelport@sha256:<backend-digest>'
-export MODELPORT_DASHBOARD_IMAGE='ghcr.io/tiammomo/modelport-dashboard@sha256:<dashboard-digest>'
+export ROUTEPILOT_IMAGE='ghcr.io/lizzjin/routepilot@sha256:<backend-digest>'
+export ROUTEPILOT_DASHBOARD_IMAGE='ghcr.io/lizzjin/routepilot-dashboard@sha256:<dashboard-digest>'
 # Required only when the optional Compose profile is enabled.
-export MODELPORT_OPS_AGENT_IMAGE='ghcr.io/tiammomo/modelport-ops-agent@sha256:<agent-digest>'
-export MODELPORT_PULL_POLICY=always
+export ROUTEPILOT_OPS_AGENT_IMAGE='ghcr.io/lizzjin/routepilot-ops-agent@sha256:<agent-digest>'
+export ROUTEPILOT_PULL_POLICY=always
 ```
 
 Then:
@@ -98,10 +98,10 @@ Then:
    backend through Compose:
 
    ```bash
-   docker compose -f "$MODELPORT_COMPOSE_FILE" stop modelport
+   docker compose -f "$ROUTEPILOT_COMPOSE_FILE" stop routepilot
    ```
 
-   Compose sends SIGTERM. ModelPort stops accepting new connections, waits for
+   Compose sends SIGTERM. RoutePilot stops accepting new connections, waits for
    active HTTP bodies, then drains ledger finalizers. The default
    `stop_grace_period` is 11 minutes: the 600-second request timeout plus the
    30-second finalizer drain and margin. An operator may choose a different
@@ -115,8 +115,8 @@ Then:
 4. Pull and recreate the two application containers. Keep PostgreSQL running:
 
    ```bash
-   docker compose -f "$MODELPORT_COMPOSE_FILE" pull modelport dashboard
-   scripts/compose-up.sh modelport dashboard
+   docker compose -f "$ROUTEPILOT_COMPOSE_FILE" pull routepilot dashboard
+   scripts/compose-up.sh routepilot dashboard
    ```
 
 5. Watch the backend startup migration. Do not repeatedly restart a migration
@@ -126,7 +126,7 @@ Then:
 
    ```bash
    curl -fsS http://127.0.0.1:38082/livez
-   curl -fsS -H "Authorization: Bearer $MODELPORT_HEALTHCHECK_API_KEY" \
+   curl -fsS -H "Authorization: Bearer $ROUTEPILOT_HEALTHCHECK_API_KEY" \
      http://127.0.0.1:38082/readyz
    scripts/smoke-test.sh
    ```
@@ -140,7 +140,7 @@ For the phase-one external-database production template, export the selected
 manifest and run the production preflight before the same sequence:
 
 ```bash
-export MODELPORT_COMPOSE_FILE="$PWD/deploy/production/compose.single.yml"
+export ROUTEPILOT_COMPOSE_FILE="$PWD/deploy/production/compose.single.yml"
 ./scripts/production-preflight.sh
 ```
 

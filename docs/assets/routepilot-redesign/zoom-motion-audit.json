@@ -1,0 +1,314 @@
+{
+  "mockOnly": true,
+  "nativeBrowserZoom": true,
+  "results": [
+    {
+      "route": "dashboard",
+      "theme": "light",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "models",
+      "theme": "light",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "logs",
+      "theme": "light",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "api-keys",
+      "theme": "light",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "users",
+      "theme": "light",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "quotas",
+      "theme": "light",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "enterprise",
+      "theme": "light",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "governance",
+      "theme": "light",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "operations",
+      "theme": "light",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "settings",
+      "theme": "light",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "guide",
+      "theme": "light",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "login",
+      "theme": "light",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "missing-page",
+      "theme": "light",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "provider-form",
+      "theme": "light",
+      "zoom": 2,
+      "motion": {
+        "reduced": true,
+        "animation": "1e-05s",
+        "transition": "1e-05s"
+      },
+      "saveActionVisible": true
+    },
+    {
+      "route": "dashboard",
+      "theme": "dark",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "models",
+      "theme": "dark",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "logs",
+      "theme": "dark",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "api-keys",
+      "theme": "dark",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "users",
+      "theme": "dark",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "quotas",
+      "theme": "dark",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "enterprise",
+      "theme": "dark",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "governance",
+      "theme": "dark",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "operations",
+      "theme": "dark",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "settings",
+      "theme": "dark",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "guide",
+      "theme": "dark",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "login",
+      "theme": "dark",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "missing-page",
+      "theme": "dark",
+      "zoom": 2,
+      "geometry": {
+        "viewport": 720,
+        "document": 720,
+        "main": 720,
+        "content": 720
+      }
+    },
+    {
+      "route": "provider-form",
+      "theme": "dark",
+      "zoom": 2,
+      "motion": {
+        "reduced": true,
+        "animation": "1e-05s",
+        "transition": "1e-05s"
+      },
+      "saveActionVisible": true
+    }
+  ]
+}

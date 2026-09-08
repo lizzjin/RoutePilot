@@ -1,10 +1,10 @@
-# ModelPort 快速学习路径
+# RoutePilot 快速学习路径
 
 这份路线面向第一次接触模型网关、Rust 或运维平台的人员。目标不是一次读完
 所有文档，而是在 Linux 环境中逐步取得四个可验证结果：
 
 1. 能启动并判断服务是否健康；
-2. 能区分客户端密钥、ModelPort 和 Provider；
+2. 能区分客户端密钥、RoutePilot 和 Provider；
 3. 能通过日志、指标和备份完成基本运维；
 4. 能修改一处代码并选择正确的测试。
 
@@ -13,9 +13,9 @@
 ```text
 Claude Code / SDK
         |
-        | ModelPort API Key
+        | RoutePilot API Key
         v
-    ModelPort --------------> PostgreSQL
+    RoutePilot --------------> PostgreSQL
         |                  状态、请求、用量、审计
         |
         | Provider Key（只保存在服务端）
@@ -23,11 +23,11 @@ Claude Code / SDK
  DeepSeek / Anthropic / OpenAI-compatible / 本地模型
 ```
 
-Dashboard 是 ModelPort 的管理界面，不是聊天应用。ModelPort 负责鉴权、路由、
+Dashboard 是 RoutePilot 的管理界面，不是聊天应用。RoutePilot 负责鉴权、路由、
 策略、协议转换和证据记录，不负责运行模型。
 
 如果目标是本机 Qwen，请先走[本地推理联合上手](LOCAL_INFERENCE_STACK.md)；
-它把静态契约检查、GPU Runtime 和 ModelPort 分成可独立验证的阶段。
+它把静态契约检查、GPU Runtime 和 RoutePilot 分成可独立验证的阶段。
 
 ## 路线 A：30 分钟启动服务
 
@@ -35,9 +35,9 @@ Dashboard 是 ModelPort 的管理界面，不是聊天应用。ModelPort 负责�
 v2，不需要先学习 Rust。
 
 ```bash
-git clone https://github.com/tiammomo/ModelPort.git
-cd ModelPort
-cp deploy/docker/modelport.env.example .env
+git clone https://github.com/lizzjin/RoutePilot.git
+cd RoutePilot
+cp deploy/docker/routepilot.env.example .env
 cp config.example.toml config.toml
 ```
 
@@ -58,7 +58,7 @@ scripts/smoke-test.sh
 
 成功标准：
 
-- `postgres` 和 `modelport` 显示 healthy；
+- `postgres` 和 `routepilot` 显示 healthy；
 - `scripts/smoke-test.sh` 通过；
 - 可以打开 `http://127.0.0.1:33002` 并登录；
 - 到这里没有调用真实模型，不会消耗 Provider 额度。
@@ -71,15 +71,15 @@ scripts/smoke-test.sh
 
 | 密钥 | 给谁使用 | 是否可以交给客户端 |
 | --- | --- | --- |
-| Provider Key | ModelPort 访问上游 Provider | 不可以 |
-| ModelPort API Key | Claude Code、SDK 或内部应用访问 ModelPort | 可以，但应限制作用域 |
+| Provider Key | RoutePilot 访问上游 Provider | 不可以 |
+| RoutePilot API Key | Claude Code、SDK 或内部应用访问 RoutePilot | 可以，但应限制作用域 |
 
 第一次请求前先查看模型目录：
 
 ```bash
 source .env
 curl -fsS \
-  -H "x-api-key: $MODELPORT_AUTH_TOKEN" \
+  -H "x-api-key: $ROUTEPILOT_AUTH_TOKEN" \
   http://127.0.0.1:38082/v1/models
 ```
 
@@ -94,7 +94,7 @@ scripts/smoke-test.sh --upstream
 
 成功标准：
 
-- 客户端只知道 ModelPort 地址和 ModelPort Key；
+- 客户端只知道 RoutePilot 地址和 RoutePilot Key；
 - Provider Key 只存在于 `.env` 或服务端密钥系统；
 - 能在日志中把客户端请求对应到一次或多次 Provider attempt。
 
@@ -108,7 +108,7 @@ scripts/smoke-test.sh --upstream
 docker compose ps
 scripts/smoke-test.sh
 scripts/doctor.sh
-docker compose logs --tail=100 modelport
+docker compose logs --tail=100 routepilot
 ```
 
 需要掌握的三个端点：
@@ -204,8 +204,8 @@ scripts/check-all.sh
 | 概念 | 简单解释 |
 | --- | --- |
 | Provider | 真正处理模型请求的上游服务或本地运行时 |
-| Gateway request | 客户端向 ModelPort 发出的一次请求 |
-| Provider attempt | ModelPort 对某个 Provider 的一次实际尝试；回退时可能有多个 |
+| Gateway request | 客户端向 RoutePilot 发出的一次请求 |
+| Provider attempt | RoutePilot 对某个 Provider 的一次实际尝试；回退时可能有多个 |
 | Route | 请求选择 Provider 和模型的规则 |
 | Quota | 对用户或密钥的用量限制 |
 | Budget reservation | 发请求前预占预算，完成后结算或释放 |
@@ -217,7 +217,7 @@ scripts/check-all.sh
 1. `doctor --setup` 失败：先修 Linux、Docker、文件或 placeholder。
 2. 容器不健康：查看对应服务最近 100 行日志。
 3. `/livez` 成功但 `/readyz` 失败：优先检查 PostgreSQL、迁移和状态 revision。
-4. 返回 401/403：检查使用的是 ModelPort Key、账号状态和策略。
+4. 返回 401/403：检查使用的是 RoutePilot Key、账号状态和策略。
 5. 返回 429：检查本地限流、并发限制、配额或预算。
 6. 上游错误：在 Dashboard 先确认 Provider/credential 健康，再决定是否执行付费测试。
 

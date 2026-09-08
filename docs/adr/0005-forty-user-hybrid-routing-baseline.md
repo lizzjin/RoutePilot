@@ -5,12 +5,12 @@
 
 ## Context
 
-ModelPort is being prepared for a trusted organization of approximately forty
+RoutePilot is being prepared for a trusted organization of approximately forty
 people. One local Qwen runtime on a single NVIDIA GPU cannot provide forty
 simultaneous interactive generations, while sending every request to a hosted
 Provider would violate privacy, cost, and operator-control goals.
 
-The first production phase still has one ModelPort process. Active-active
+The first production phase still has one RoutePilot process. Active-active
 gateway operation is a later availability milestone and must not be implied by
 the current Compose deployment, OIDC session implementation, in-memory health,
 or rate-limit state.
@@ -19,15 +19,15 @@ or rate-limit state.
 
 ### Product and deployment boundary
 
-- ModelPort is the only client-facing gateway and policy decision point.
-- The current phase deploys one ModelPort instance on Linux.
+- RoutePilot is the only client-facing gateway and policy decision point.
+- The current phase deploys one RoutePilot instance on Linux.
 - Production state moves to an operator-managed high-availability PostgreSQL
   service. The PostgreSQL service in the root Compose file remains a local
   development and migration-drill dependency.
 - `local-inference-stack` owns each local model node, artifact integrity,
   runtime configuration, and host-bound acceptance evidence. It does not own
   user identity, routing, budget, or tool execution.
-- A later phase may run two stateless ModelPort instances. That phase requires
+- A later phase may run two stateless RoutePilot instances. That phase requires
   distributed sessions, limits, health, and failover evidence before it can be
   described as available.
 
@@ -74,7 +74,7 @@ limits and must not claim per-user fairness.
   model, Provider, usage, latency, cost, and bounded failure classification.
 - Content diagnostics require explicit project-scoped approval, encryption,
   visible status, and automatic expiry no later than twenty-four hours.
-- ModelPort validates and translates Tool Use but never executes arbitrary
+- RoutePilot validates and translates Tool Use but never executes arbitrary
   tools. Applications or a separately isolated tool runner own execution,
   approval, sandboxing, egress, and business credentials.
 - Automatic retry or Provider fallback is permitted only before any response
@@ -87,7 +87,7 @@ limits and must not claim per-user fairness.
   budgets, identity permissions, or production model promotion require two
   approvers. Low-risk changes may use one administrator. Break-glass changes
   are time-bounded and immediately audited. This production target is enforced
-  by enterprise mode or `MODELPORT_REQUIRE_DUAL_APPROVAL=1`; default Small-Team
+  by enterprise mode or `ROUTEPILOT_REQUIRE_DUAL_APPROVAL=1`; default Small-Team
   mode keeps the workflow optional and authorizes administrator writes through
   CSRF protection plus the audit trail.
 - The target monthly SLO is 99.9 percent for the gateway and 99.0 percent for
@@ -109,7 +109,7 @@ limits and must not claim per-user fairness.
 3. Add hybrid scheduling, budget enforcement, approved Provider governance,
    and circuit breakers.
 4. Move the production database and secrets to managed dependencies and add
-   standard telemetry. Validate a second ModelPort instance only after shared
+   standard telemetry. Validate a second RoutePilot instance only after shared
    state is complete.
 5. Roll out to five, then fifteen, then forty people. Add a local GPU node when
    cloud overflow exceeds 30 percent, `local_strict` 429 responses exceed 1
@@ -120,7 +120,7 @@ must pass its migration, recovery, privacy, and protocol acceptance gates.
 
 ## Consequences
 
-- One ModelPort instance is an explicit availability limitation in the first
+- One RoutePilot instance is an explicit availability limitation in the first
   phase, not an accidental claim of high availability.
 - Hybrid routing is policy-controlled and auditable rather than a silent
   availability shortcut.
@@ -132,7 +132,7 @@ must pass its migration, recovery, privacy, and protocol acceptance gates.
 
 ## Rejected alternatives
 
-- Forty people sharing one ModelPort API key: prevents identity, quota,
+- Forty people sharing one RoutePilot API key: prevents identity, quota,
   revocation, fairness, and useful audit evidence.
 - Always-cloud fallback: violates the default-local data boundary.
 - Silent post-token fallback or parallel real-request shadowing: can duplicate

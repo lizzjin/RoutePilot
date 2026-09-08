@@ -1,27 +1,27 @@
 # Configuration
 
-This document is the maintained reference for ModelPort configuration. Start
+This document is the maintained reference for RoutePilot configuration. Start
 from [`.env.example`](../.env.example) for local development or
-[`deploy/docker/modelport.env.example`](../deploy/docker/modelport.env.example)
+[`deploy/docker/routepilot.env.example`](../deploy/docker/routepilot.env.example)
 for Docker Compose.
 
 ## Sources
 
-ModelPort supports two base-configuration modes:
+RoutePilot supports two base-configuration modes:
 
 1. **Environment defaults:** used when no TOML configuration file exists.
    Built-in provider templates are enabled by credentials, provider-specific
-   values, or an explicit `MODELPORT_ENABLE_*` flag.
-2. **TOML:** set `MODELPORT_CONFIG`, or place a file at
-   `~/.config/modelport/config.toml`. TOML defines provider records, order,
+   values, or an explicit `ROUTEPILOT_ENABLE_*` flag.
+2. **TOML:** set `ROUTEPILOT_CONFIG`, or place a file at
+   `~/.config/routepilot/config.toml`. TOML defines provider records, order,
    aliases, server defaults, and the router-token environment variable.
 
-An environment file is read from `MODELPORT_ENV_FILE`, or from `.env` in the
+An environment file is read from `ROUTEPILOT_ENV_FILE`, or from `.env` in the
 current working directory when present. Local scripts source `.env` into the
 process. Docker Compose both supplies it as `env_file` and mounts it read-only
 at `/config/.env`.
 
-The process environment takes precedence over `MODELPORT_ENV_FILE`/`.env` for
+The process environment takes precedence over `ROUTEPILOT_ENV_FILE`/`.env` for
 the same key. Avoid defining conflicting values in both places. In Docker,
 remember that Compose copies `env_file` values into the process when the
 container is created.
@@ -32,10 +32,10 @@ records, model inventory, aliases, default provider, and provider order.
 ## Required Minimum: DeepSeek-Only Example
 
 ```env
-MODELPORT_AUTH_TOKEN=replace-with-a-long-random-local-token
-MODELPORT_ADMIN_USERNAME=admin
-MODELPORT_ADMIN_PASSWORD=replace-with-a-long-random-admin-password
-MODELPORT_DEFAULT_PROVIDER=deepseek
+ROUTEPILOT_AUTH_TOKEN=replace-with-a-long-random-local-token
+ROUTEPILOT_ADMIN_USERNAME=admin
+ROUTEPILOT_ADMIN_PASSWORD=replace-with-a-long-random-admin-password
+ROUTEPILOT_DEFAULT_PROVIDER=deepseek
 
 DEEPSEEK_ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic
 DEEPSEEK_ANTHROPIC_AUTH_TOKEN=replace-with-a-real-provider-key
@@ -43,13 +43,13 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 ```
 
 The client must send the effective router token. `ANTHROPIC_AUTH_TOKEN` is also
-accepted as the router-token fallback when `MODELPORT_AUTH_TOKEN` is absent,
+accepted as the router-token fallback when `ROUTEPILOT_AUTH_TOKEN` is absent,
 but deployments should set one unambiguous server token and make the client
 match it.
 
-This minimum is one supported topology, not a requirement that every ModelPort
+This minimum is one supported topology, not a requirement that every RoutePilot
 deployment install DeepSeek. At least one enabled Provider and a valid
-`MODELPORT_DEFAULT_PROVIDER` are required; a Qwen-only deployment can omit all
+`ROUTEPILOT_DEFAULT_PROVIDER` are required; a Qwen-only deployment can omit all
 DeepSeek values.
 
 Validate before startup:
@@ -70,12 +70,12 @@ Placeholder secrets, an invalid/missing default provider, broken aliases,
 unsafe provider definitions, and malformed guardrail values therefore do not
 silently enter service. Numeric environment variables are checked as unsigned
 integers and, where zero has no safe meaning, as greater than zero. In
-particular `MODELPORT_MAX_REQUEST_BODY_BYTES`,
-`MODELPORT_MAX_CONCURRENT_REQUESTS`, and the documented request-size, session,
+particular `ROUTEPILOT_MAX_REQUEST_BODY_BYTES`,
+`ROUTEPILOT_MAX_CONCURRENT_REQUESTS`, and the documented request-size, session,
 HTTP timeout/body, and SSE byte guardrails must be non-zero. Rate limiting has
 its separate explicit disable switch.
 
-The shared deployment preflight requires `MODELPORT_DATABASE_URL` and validates
+The shared deployment preflight requires `ROUTEPILOT_DATABASE_URL` and validates
 PostgreSQL URL syntax without echoing credentials, database TLS policy, pool
 min/max and acquisition-timeout bounds, enterprise lease timing, trusted-proxy
 IP/CIDR entries, and allowed-origin syntax. Enterprise mode additionally
@@ -107,7 +107,7 @@ policy_version = "builtin-v1"
 activation_percent = 0        # 0-100; used only by active mode
 
 [routing.groups.general]
-aliases = ["modelport-auto"]
+aliases = ["routepilot-auto"]
 default_profile = "balanced"
 
 [[routing.groups.general.candidates]]
@@ -133,7 +133,7 @@ assignment is per request. The other requests remain the canary control group.
 An active configuration with zero percent is valid but emits a warning.
 
 Clients may override the group/default profile with
-`x-modelport-routing-profile`. `x-modelport-session-id` adds a small,
+`x-routepilot-routing-profile`. `x-routepilot-session-id` adds a small,
 deterministic affinity tie-breaker; its raw value is neither logged nor
 persisted. Both headers are optional. Invalid profiles fail before Provider
 egress.
@@ -142,9 +142,9 @@ The following environment variables are emergency/runtime overrides for the
 corresponding TOML values:
 
 ```env
-MODELPORT_SMART_ROUTING_MODE=shadow
-MODELPORT_SMART_ROUTING_PROFILE=balanced
-MODELPORT_SMART_ROUTING_ACTIVATION_PERCENT=0
+ROUTEPILOT_SMART_ROUTING_MODE=shadow
+ROUTEPILOT_SMART_ROUTING_PROFILE=balanced
+ROUTEPILOT_SMART_ROUTING_ACTIVATION_PERCENT=0
 ```
 
 Candidate quality is currently a versioned operator prior, not a self-modifying
@@ -158,9 +158,9 @@ per group, and 1,024 aliases and candidates in total.
 Environment:
 
 ```env
-MODELPORT_CONFIG=config.toml
-MODELPORT_AUTH_TOKEN=replace-with-a-long-random-router-token
-MODELPORT_DEFAULT_PROVIDER=local_qwen
+ROUTEPILOT_CONFIG=config.toml
+ROUTEPILOT_AUTH_TOKEN=replace-with-a-long-random-router-token
+ROUTEPILOT_DEFAULT_PROVIDER=local_qwen
 QWEN_LOCAL_BASE_URL=http://qwen-runtime:8080/v1
 ```
 
@@ -169,7 +169,7 @@ unused upstream credential. For a host process, replace the Docker DNS address
 with the Qwen runtime's reachable loopback URL.
 
 The complete contract-aligned example is
-[`deploy/local-inference/modelport.local-qwen.toml`](../deploy/local-inference/modelport.local-qwen.toml).
+[`deploy/local-inference/routepilot.local-qwen.toml`](../deploy/local-inference/routepilot.local-qwen.toml).
 It is validated by the repository checks and should be copied or merged rather
 than edited in place.
 
@@ -178,7 +178,7 @@ default_provider = "local_qwen"
 provider_order = ["local_qwen"]
 
 [auth]
-token_env = "MODELPORT_AUTH_TOKEN"
+token_env = "ROUTEPILOT_AUTH_TOKEN"
 
 [providers.local_qwen]
 display_name = "Qwen3.5-9B Q5_K_M (local)"
@@ -215,7 +215,7 @@ model_max_output_tokens = { "qwen3.5-fast" = 4096, "qwen3.5-code" = 16384, "qwen
 ```
 
 Use an environment-backed API key field if the local runtime itself requires
-authentication; do not reuse ModelPort's client/router token as an upstream key
+authentication; do not reuse RoutePilot's client/router token as an upstream key
 unless the runtime was deliberately configured that way.
 
 ### DeepSeek official Anthropic only
@@ -228,7 +228,7 @@ server-side secret is `DEEPSEEK_ANTHROPIC_AUTH_TOKEN`.
 The dashboard's administrator-only balance action calls the official balance
 endpoint from the server with that credential. It can display availability and
 CNY/USD balances; it cannot recharge, refund, invoice, or replace the DeepSeek
-console's authoritative billing. ModelPort usage/cost records are local
+console's authoritative billing. RoutePilot usage/cost records are local
 governance evidence and must not be presented as the upstream invoice.
 
 ### Local Qwen plus DeepSeek
@@ -240,7 +240,7 @@ default_provider = "local_qwen"
 provider_order = ["local_qwen", "deepseek"]
 ```
 
-Keep both endpoint values in the ModelPort environment:
+Keep both endpoint values in the RoutePilot environment:
 
 ```env
 QWEN_LOCAL_BASE_URL=http://qwen-runtime:8080/v1
@@ -255,26 +255,26 @@ eligible for the fallback Provider and the failure must be retryable.
 
 ### CPA as an internal Provider
 
-CPA is an optional CLIProxyAPI account adapter behind ModelPort. Do not point
-clients directly to CPA and do not configure CPA as ModelPort's control plane.
+CPA is an optional CLIProxyAPI account adapter behind RoutePilot. Do not point
+clients directly to CPA and do not configure CPA as RoutePilot's control plane.
 In environment-default mode, enable its Codex and Claude channels
 independently:
 
 ```env
-MODELPORT_ENABLE_CPA_CODEX=1
+ROUTEPILOT_ENABLE_CPA_CODEX=1
 CPA_CODEX_BASE_URL=http://127.0.0.1:8317/v1
 CPA_CODEX_API_KEY=replace-with-cpa-client-api-key
 CPA_CODEX_MODEL=gpt-5.3-codex
 CPA_CODEX_MODELS=gpt-5.3-codex
 
-MODELPORT_ENABLE_CPA_CLAUDE=1
+ROUTEPILOT_ENABLE_CPA_CLAUDE=1
 CPA_CLAUDE_BASE_URL=http://127.0.0.1:8317
 CPA_CLAUDE_API_KEY=replace-with-cpa-client-api-key
 CPA_CLAUDE_MODEL=claude-sonnet-4-6
 CPA_CLAUDE_MODELS=claude-sonnet-4-6
 ```
 
-Setting either key or an explicit `MODELPORT_ENABLE_CPA_*` flag enables only
+Setting either key or an explicit `ROUTEPILOT_ENABLE_CPA_*` flag enables only
 that Provider. The two key variables may contain the same CPA client key; they
 stay separate so enabling one protocol never silently enables the other.
 
@@ -318,13 +318,13 @@ because the Anthropic adapter appends `/v1/messages`.
 
 Docker deployments should use `http://cpa:8317/v1` and
 `http://cpa:8317` only after attaching CPA under the single-label `cpa` DNS
-name to ModelPort's private network. Keep CPA unexposed. A private literal IP
-still requires `MODELPORT_ALLOW_PRIVATE_PROVIDER_URLS=1`; a public hostname
+name to RoutePilot's private network. Keep CPA unexposed. A private literal IP
+still requires `ROUTEPILOT_ALLOW_PRIVATE_PROVIDER_URLS=1`; a public hostname
 requires HTTPS.
 
-ModelPort owns request-level retries and cross-Provider fallback. Set CPA's
+RoutePilot owns request-level retries and cross-Provider fallback. Set CPA's
 `request-retry: 0` and bound `max-retry-credentials` initially so one
-ModelPort attempt cannot fan out across an unbounded CPA account pool. See the
+RoutePilot attempt cannot fan out across an unbounded CPA account pool. See the
 [CPA Provider contract](PROVIDERS.md#cpa-codex-and-claude-account-adapter).
 
 ### QuantPilot client boundary
@@ -336,87 +336,87 @@ needs, commonly:
 - `deepseek:deepseek-v4-flash`
 - `GET /v1/models` and `POST /v1/chat/completions`
 
-Store that client key in QuantPilot as `MODELPORT_API_KEY`. Never copy
-`DEEPSEEK_ANTHROPIC_AUTH_TOKEN`, a Qwen upstream key, the complete ModelPort
+Store that client key in QuantPilot as `ROUTEPILOT_API_KEY`. Never copy
+`DEEPSEEK_ANTHROPIC_AUTH_TOKEN`, a Qwen upstream key, the complete RoutePilot
 `.env`, or provider credential-pool material into QuantPilot. A Qwen-only client
-key may omit every DeepSeek scope; ModelPort itself may also run Qwen-only.
+key may omit every DeepSeek scope; RoutePilot itself may also run Qwen-only.
 
-QuantPilot's official-direct `deepseek-v4-flash` profile bypasses ModelPort and
+QuantPilot's official-direct `deepseek-v4-flash` profile bypasses RoutePilot and
 uses its own `DEEPSEEK_API_KEY`; it is a separate path from the namespaced
-`deepseek:deepseek-v4-flash` ModelPort model. ModelPort is not involved in the
+`deepseek:deepseek-v4-flash` RoutePilot model. RoutePilot is not involved in the
 direct path and cannot govern its usage or balance.
 
 ## Server, Authentication, And State
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `MODELPORT_BIND` | `127.0.0.1:17878` | Backend listen address. |
-| `MODELPORT_MAX_REQUEST_BODY_BYTES` | `33554432` | Axum request-body limit for all routes; must be greater than zero. |
-| `MODELPORT_MAX_CONCURRENT_REQUESTS` | `64` | Process-wide concurrency layer; must be greater than zero. |
-| `MODELPORT_MAX_CONCURRENT_STREAMS` | inherits `MODELPORT_MAX_CONCURRENT_REQUESTS` | Maximum concurrent streaming response bodies. Exhaustion returns HTTP 429 with `Retry-After: 1`; the permit is held until the body completes or is dropped. |
-| `MODELPORT_AUTH_TOKEN` | required | Legacy router token. |
-| `MODELPORT_ALLOW_NO_AUTH` | off | Dangerous isolated-test override. Never use on a shared network. |
-| `MODELPORT_REQUIRE_CONTROL_API_KEYS` | off | Reject the legacy token wherever data-plane authentication is evaluated (`/v1/*`, `/metrics`, `/readyz`, and detailed health); require dashboard-issued keys. |
-| `MODELPORT_ADMIN_USERNAME` | `admin` | First-admin bootstrap username. Used only when the auth store is empty. |
-| `MODELPORT_ADMIN_PASSWORD` | effective router token fallback | First-admin password; set it explicitly. It and the fallback must pass strong-password checks. |
-| `MODELPORT_ADMIN_EMAIL` | `admin@modelport.local` | First-admin bootstrap email. |
-| `MODELPORT_ADMIN_SESSION_TTL_SECONDS` | `43200` | Dashboard session lifetime. |
-| `MODELPORT_ADMIN_COOKIE_SECURE` | off | Add `Secure` to the dashboard cookie. Set to `1` behind HTTPS. |
-| `MODELPORT_REQUIRE_DUAL_APPROVAL` | off; always on in enterprise mode | Require an approved change request from two distinct administrators before high-risk identity, Provider, model, or hard-budget writes. Small-Team mode otherwise relies on the administrator session, CSRF protection, and audit trail so a one-admin first install remains operable. |
-| `MODELPORT_OIDC_ISSUER` | unset | OIDC issuer discovery URL. OIDC console sign-in stays disabled when no OIDC values are configured. |
-| `MODELPORT_OIDC_CLIENT_ID` | unset | OIDC client identifier; required with issuer and redirect URI when OIDC is enabled. |
-| `MODELPORT_OIDC_CLIENT_SECRET` | unset | Optional confidential-client secret. Leave unset only when the identity provider accepts the supported public-client code exchange. |
-| `MODELPORT_OIDC_REDIRECT_URI` | unset | Exact external callback URL; its path must be `/admin/auth/oidc/callback` with no query or fragment. |
-| `MODELPORT_OIDC_LABEL` | `Single sign-on` | Login-button label. |
-| `MODELPORT_OIDC_AUTO_PROVISION` | off | Create missing ordinary users after a valid OIDC login. Keep off initially and pre-create users; it never grants administrator access. |
-| `MODELPORT_OIDC_USERNAME_CLAIM` | `preferred_username` | ID-token claim used as the ModelPort username. |
-| `MODELPORT_OIDC_EMAIL_CLAIM` | `email` | ID-token claim read as the ModelPort email. Initial linking/JIT requires the standard `email` claim plus `email_verified=true`; verification is not inherited by a custom claim name. |
-| `MODELPORT_OIDC_ALLOW_INSECURE_HTTP` | off | Allow HTTP only for loopback OIDC development URLs. Never enable it for a remote or production identity provider. |
-| `MODELPORT_STATE_DIR` | `.modelport` | Working directory for explicit backup output. Runtime state is not stored here. |
-| `MODELPORT_DATABASE_URL` | required at runtime | PostgreSQL target for the operational ledger and low-frequency auth/control documents. Compose constructs an internal default unless explicitly overridden. |
-| `MODELPORT_ENTERPRISE_DATABASE_URL` | inherits `MODELPORT_DATABASE_URL` | Optional separate PostgreSQL target for the operational ledger and embedded migrations. `MODELPORT_DATABASE_URL` is still required. |
-| `MODELPORT_DATABASE_TLS_MODE` | `prefer`; `verify-full` in enterprise mode | SQLx PostgreSQL TLS mode: `disable`, `allow`, `prefer`, `require`, `verify-ca`, or `verify-full`. Enterprise mode rejects every value except `verify-full`. Certificate options such as `sslrootcert` can be supplied in the PostgreSQL URL. |
-| `MODELPORT_DATABASE_MAX_CONNECTIONS` | `16` | Maximum connections in the normalized ledger pool. Each auth/control document worker independently caps its pool at one connection. |
-| `MODELPORT_DATABASE_MIN_CONNECTIONS` | `0` | Minimum eagerly maintained PostgreSQL connections, capped at the pool maximum. |
-| `MODELPORT_DATABASE_ACQUIRE_TIMEOUT_SECS` | `10` | Maximum wait to acquire a PostgreSQL connection. |
-| `MODELPORT_LEDGER_LEASE_TTL_SECS` | `300` | Lifetime of a request/attempt ownership lease; minimum 30 seconds. Active requests renew at one-third of this interval. |
-| `MODELPORT_LEDGER_RECONCILE_INTERVAL_SECS` | `60` | Interval for reclaiming expired `started` rows; minimum 5 seconds and strictly smaller than the lease TTL. |
-| `MODELPORT_FINALIZATION_DRAIN_TIMEOUT_SECONDS` | `30` | Graceful-shutdown deadline for tracked streaming ledger finalizers; valid range `1..300`. |
-| `MODELPORT_REQUEST_DETAIL_RETENTION_DAYS` | `30` | Age after which an explicit admin retention apply redacts request identity/network/error/idempotency details, redacts mutable Provider-attempt details, and removes routing-decision evidence. |
-| `MODELPORT_USER_USAGE_RETENTION_DAYS` | `90` | Age after which an explicit retention apply de-identifies user-level usage rows while preserving required aggregate/budget evidence. Must not be shorter than request-detail retention. |
-| `MODELPORT_AUDIT_RETENTION_DAYS` | `395` | Age after which an explicit retention apply removes ordinary governance audit events. Must not be shorter than user-usage retention; immutable budget events remain. |
-| `MODELPORT_RETENTION_LEGAL_HOLD` | off | When `1`, retention dry-run still previews but an apply returns `applied=false` and changes no retained data. Restart required. |
-| `MODELPORT_ENTERPRISE_MODE` | off | Fail-closed production profile. Requires database TLS `verify-full`, secure admin cookies, dashboard-issued control API keys, HTTPS-only allowed origins, explicit trusted proxies, and enabled CSRF protection. |
+| `ROUTEPILOT_BIND` | `127.0.0.1:17878` | Backend listen address. |
+| `ROUTEPILOT_MAX_REQUEST_BODY_BYTES` | `33554432` | Axum request-body limit for all routes; must be greater than zero. |
+| `ROUTEPILOT_MAX_CONCURRENT_REQUESTS` | `64` | Process-wide concurrency layer; must be greater than zero. |
+| `ROUTEPILOT_MAX_CONCURRENT_STREAMS` | inherits `ROUTEPILOT_MAX_CONCURRENT_REQUESTS` | Maximum concurrent streaming response bodies. Exhaustion returns HTTP 429 with `Retry-After: 1`; the permit is held until the body completes or is dropped. |
+| `ROUTEPILOT_AUTH_TOKEN` | required | Legacy router token. |
+| `ROUTEPILOT_ALLOW_NO_AUTH` | off | Dangerous isolated-test override. Never use on a shared network. |
+| `ROUTEPILOT_REQUIRE_CONTROL_API_KEYS` | off | Reject the legacy token wherever data-plane authentication is evaluated (`/v1/*`, `/metrics`, `/readyz`, and detailed health); require dashboard-issued keys. |
+| `ROUTEPILOT_ADMIN_USERNAME` | `admin` | First-admin bootstrap username. Used only when the auth store is empty. |
+| `ROUTEPILOT_ADMIN_PASSWORD` | effective router token fallback | First-admin password; set it explicitly. It and the fallback must pass strong-password checks. |
+| `ROUTEPILOT_ADMIN_EMAIL` | `admin@routepilot.local` | First-admin bootstrap email. |
+| `ROUTEPILOT_ADMIN_SESSION_TTL_SECONDS` | `43200` | Dashboard session lifetime. |
+| `ROUTEPILOT_ADMIN_COOKIE_SECURE` | off | Add `Secure` to the dashboard cookie. Set to `1` behind HTTPS. |
+| `ROUTEPILOT_REQUIRE_DUAL_APPROVAL` | off; always on in enterprise mode | Require an approved change request from two distinct administrators before high-risk identity, Provider, model, or hard-budget writes. Small-Team mode otherwise relies on the administrator session, CSRF protection, and audit trail so a one-admin first install remains operable. |
+| `ROUTEPILOT_OIDC_ISSUER` | unset | OIDC issuer discovery URL. OIDC console sign-in stays disabled when no OIDC values are configured. |
+| `ROUTEPILOT_OIDC_CLIENT_ID` | unset | OIDC client identifier; required with issuer and redirect URI when OIDC is enabled. |
+| `ROUTEPILOT_OIDC_CLIENT_SECRET` | unset | Optional confidential-client secret. Leave unset only when the identity provider accepts the supported public-client code exchange. |
+| `ROUTEPILOT_OIDC_REDIRECT_URI` | unset | Exact external callback URL; its path must be `/admin/auth/oidc/callback` with no query or fragment. |
+| `ROUTEPILOT_OIDC_LABEL` | `Single sign-on` | Login-button label. |
+| `ROUTEPILOT_OIDC_AUTO_PROVISION` | off | Create missing ordinary users after a valid OIDC login. Keep off initially and pre-create users; it never grants administrator access. |
+| `ROUTEPILOT_OIDC_USERNAME_CLAIM` | `preferred_username` | ID-token claim used as the RoutePilot username. |
+| `ROUTEPILOT_OIDC_EMAIL_CLAIM` | `email` | ID-token claim read as the RoutePilot email. Initial linking/JIT requires the standard `email` claim plus `email_verified=true`; verification is not inherited by a custom claim name. |
+| `ROUTEPILOT_OIDC_ALLOW_INSECURE_HTTP` | off | Allow HTTP only for loopback OIDC development URLs. Never enable it for a remote or production identity provider. |
+| `ROUTEPILOT_STATE_DIR` | `.routepilot` | Working directory for explicit backup output. Runtime state is not stored here. |
+| `ROUTEPILOT_DATABASE_URL` | required at runtime | PostgreSQL target for the operational ledger and low-frequency auth/control documents. Compose constructs an internal default unless explicitly overridden. |
+| `ROUTEPILOT_ENTERPRISE_DATABASE_URL` | inherits `ROUTEPILOT_DATABASE_URL` | Optional separate PostgreSQL target for the operational ledger and embedded migrations. `ROUTEPILOT_DATABASE_URL` is still required. |
+| `ROUTEPILOT_DATABASE_TLS_MODE` | `prefer`; `verify-full` in enterprise mode | SQLx PostgreSQL TLS mode: `disable`, `allow`, `prefer`, `require`, `verify-ca`, or `verify-full`. Enterprise mode rejects every value except `verify-full`. Certificate options such as `sslrootcert` can be supplied in the PostgreSQL URL. |
+| `ROUTEPILOT_DATABASE_MAX_CONNECTIONS` | `16` | Maximum connections in the normalized ledger pool. Each auth/control document worker independently caps its pool at one connection. |
+| `ROUTEPILOT_DATABASE_MIN_CONNECTIONS` | `0` | Minimum eagerly maintained PostgreSQL connections, capped at the pool maximum. |
+| `ROUTEPILOT_DATABASE_ACQUIRE_TIMEOUT_SECS` | `10` | Maximum wait to acquire a PostgreSQL connection. |
+| `ROUTEPILOT_LEDGER_LEASE_TTL_SECS` | `300` | Lifetime of a request/attempt ownership lease; minimum 30 seconds. Active requests renew at one-third of this interval. |
+| `ROUTEPILOT_LEDGER_RECONCILE_INTERVAL_SECS` | `60` | Interval for reclaiming expired `started` rows; minimum 5 seconds and strictly smaller than the lease TTL. |
+| `ROUTEPILOT_FINALIZATION_DRAIN_TIMEOUT_SECONDS` | `30` | Graceful-shutdown deadline for tracked streaming ledger finalizers; valid range `1..300`. |
+| `ROUTEPILOT_REQUEST_DETAIL_RETENTION_DAYS` | `30` | Age after which an explicit admin retention apply redacts request identity/network/error/idempotency details, redacts mutable Provider-attempt details, and removes routing-decision evidence. |
+| `ROUTEPILOT_USER_USAGE_RETENTION_DAYS` | `90` | Age after which an explicit retention apply de-identifies user-level usage rows while preserving required aggregate/budget evidence. Must not be shorter than request-detail retention. |
+| `ROUTEPILOT_AUDIT_RETENTION_DAYS` | `395` | Age after which an explicit retention apply removes ordinary governance audit events. Must not be shorter than user-usage retention; immutable budget events remain. |
+| `ROUTEPILOT_RETENTION_LEGAL_HOLD` | off | When `1`, retention dry-run still previews but an apply returns `applied=false` and changes no retained data. Restart required. |
+| `ROUTEPILOT_ENTERPRISE_MODE` | off | Fail-closed production profile. Requires database TLS `verify-full`, secure admin cookies, dashboard-issued control API keys, HTTPS-only allowed origins, explicit trusted proxies, and enabled CSRF protection. |
 
 Bootstrap variables do not overwrite existing users. Dashboard sessions are
 process-local and are invalidated by restart.
 
 OIDC is an optional console-login method and is disabled by default. Once any
-required OIDC value is configured, set `MODELPORT_OIDC_ISSUER`,
-`MODELPORT_OIDC_CLIENT_ID`, and `MODELPORT_OIDC_REDIRECT_URI` together. Register
+required OIDC value is configured, set `ROUTEPILOT_OIDC_ISSUER`,
+`ROUTEPILOT_OIDC_CLIENT_ID`, and `ROUTEPILOT_OIDC_REDIRECT_URI` together. Register
 the exact external callback ending in `/admin/auth/oidc/callback`; this path is
 fixed. Automatic provisioning remains disabled unless explicitly enabled.
 
 ```env
-MODELPORT_OIDC_ISSUER=https://identity.example.com/realms/modelport
-MODELPORT_OIDC_CLIENT_ID=modelport
-MODELPORT_OIDC_REDIRECT_URI=https://modelport.example.com/admin/auth/oidc/callback
+ROUTEPILOT_OIDC_ISSUER=https://identity.example.com/realms/routepilot
+ROUTEPILOT_OIDC_CLIENT_ID=routepilot
+ROUTEPILOT_OIDC_REDIRECT_URI=https://routepilot.example.com/admin/auth/oidc/callback
 # Optional for a confidential client:
-MODELPORT_OIDC_CLIENT_SECRET=replace-with-client-secret
-MODELPORT_OIDC_LABEL=Company SSO
-MODELPORT_OIDC_AUTO_PROVISION=0
-MODELPORT_OIDC_USERNAME_CLAIM=preferred_username
-MODELPORT_OIDC_EMAIL_CLAIM=email
+ROUTEPILOT_OIDC_CLIENT_SECRET=replace-with-client-secret
+ROUTEPILOT_OIDC_LABEL=Company SSO
+ROUTEPILOT_OIDC_AUTO_PROVISION=0
+ROUTEPILOT_OIDC_USERNAME_CLAIM=preferred_username
+ROUTEPILOT_OIDC_EMAIL_CLAIM=email
 # Loopback development only:
-# MODELPORT_OIDC_ALLOW_INSECURE_HTTP=1
+# ROUTEPILOT_OIDC_ALLOW_INSECURE_HTTP=1
 ```
 
 For production OIDC, serve one HTTPS origin and also set:
 
 ```env
-MODELPORT_ADMIN_COOKIE_SECURE=1
-MODELPORT_ALLOWED_ORIGINS=https://modelport.example.com
-MODELPORT_REQUIRE_CONTROL_API_KEYS=1
+ROUTEPILOT_ADMIN_COOKIE_SECURE=1
+ROUTEPILOT_ALLOWED_ORIGINS=https://routepilot.example.com
+ROUTEPILOT_REQUIRE_CONTROL_API_KEYS=1
 ```
 
 OIDC authenticates dashboard users only. Requiring control-plane API keys keeps
@@ -436,12 +436,12 @@ Compose database remains usable. For any remote or production database, use
 using `require` encrypts transport but does not enforce the enterprise hostname
 and certificate policy.
 
-At startup, ModelPort migrates the normalized organization/project/environment,
+At startup, RoutePilot migrates the normalized organization/project/environment,
 gateway-request, Provider-attempt, budget, and audit schema. Terminal request
 rows are the usage source for logs, Dashboard ranges, quota/spend checks, and
 management statistics. Auth and low-frequency control definitions may still
 use files, but a running server has no memory fallback for the operational
-ledger and requires `MODELPORT_DATABASE_URL`. `/readyz` verifies all stores.
+ledger and requires `ROUTEPILOT_DATABASE_URL`. `/readyz` verifies all stores.
 
 `0005_current_operational_schema.sql` preserves existing normalized request and
 attempt rows. It backfills conservative values for dimensions absent from the
@@ -452,40 +452,40 @@ Always back up PostgreSQL and exercise the migration against a restored copy
 before upgrading production.
 
 Each PostgreSQL request and Provider-attempt row carries an instance lease.
-ModelPort renews it throughout non-stream and streaming lifecycles. Startup and
+RoutePilot renews it throughout non-stream and streaming lifecycles. Startup and
 the periodic reconciler terminalize only expired `started` rows as
 `lease_expired_unreconciled`; because Provider evidence is unknown after a
 crash, those rows retain zero usage and `chargeable=false` pending future
 manual evidence or adjustment.
 
-Compose's default URL directly interpolates `MODELPORT_POSTGRES_PASSWORD`
+Compose's default URL directly interpolates `ROUTEPILOT_POSTGRES_PASSWORD`
 without percent-encoding. Prefer a long URL-safe password containing letters,
 digits, `_`, and `-`. If the raw PostgreSQL password contains reserved URL
 characters such as `@`, `:`, `/`, `%`, or `#`, set an explicitly percent-encoded
-complete `MODELPORT_DATABASE_URL`; keep `MODELPORT_POSTGRES_PASSWORD` as the raw
+complete `ROUTEPILOT_DATABASE_URL`; keep `ROUTEPILOT_POSTGRES_PASSWORD` as the raw
 password used to initialize PostgreSQL.
 
 ## Security And Network
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `MODELPORT_TRUSTED_PROXIES` | loopback | Comma-separated proxy IPs/CIDRs allowed to supply forwarded client IP headers. |
-| `MODELPORT_ALLOWED_ORIGINS` | unset | Extra comma-separated absolute HTTP(S) origins accepted for dashboard write checks. Entries are scheme + host + optional port only; userinfo, path, query, and fragment are rejected. This does not enable CORS. |
-| `MODELPORT_DISABLE_CSRF` | off | Emergency local-debug bypass for dashboard write protection. |
-| `MODELPORT_EXPOSE_DETAILED_HEALTH` | off | Expose detailed `/health` without authentication. |
-| `MODELPORT_ALLOW_PRIVATE_PROVIDER_URLS` | off | Allow literal private provider addresses. IPv4-mapped IPv6 literals are normalized before this check. Use only on trusted networks. |
-| `MODELPORT_ALLOW_INSECURE_PROVIDER_HTTP` | off | Permit plain HTTP for non-local/non-custom Providers. Emergency trusted-network override; HTTPS is the safe default. |
-| `MODELPORT_INCLUDE_UNAVAILABLE_PROVIDERS` | off | Keep file-config providers that lack required keys; useful for diagnostics, not normal routing. |
+| `ROUTEPILOT_TRUSTED_PROXIES` | loopback | Comma-separated proxy IPs/CIDRs allowed to supply forwarded client IP headers. |
+| `ROUTEPILOT_ALLOWED_ORIGINS` | unset | Extra comma-separated absolute HTTP(S) origins accepted for dashboard write checks. Entries are scheme + host + optional port only; userinfo, path, query, and fragment are rejected. This does not enable CORS. |
+| `ROUTEPILOT_DISABLE_CSRF` | off | Emergency local-debug bypass for dashboard write protection. |
+| `ROUTEPILOT_EXPOSE_DETAILED_HEALTH` | off | Expose detailed `/health` without authentication. |
+| `ROUTEPILOT_ALLOW_PRIVATE_PROVIDER_URLS` | off | Allow literal private provider addresses. IPv4-mapped IPv6 literals are normalized before this check. Use only on trusted networks. |
+| `ROUTEPILOT_ALLOW_INSECURE_PROVIDER_HTTP` | off | Permit plain HTTP for non-local/non-custom Providers. Emergency trusted-network override; HTTPS is the safe default. |
+| `ROUTEPILOT_INCLUDE_UNAVAILABLE_PROVIDERS` | off | Keep file-config providers that lack required keys; useful for diagnostics, not normal routing. |
 
 Forwarded headers are considered only when the connected peer matches
-`MODELPORT_TRUSTED_PROXIES`. ModelPort appends that peer to the received
+`ROUTEPILOT_TRUSTED_PROXIES`. RoutePilot appends that peer to the received
 `X-Forwarded-For` chain, walks from right to left, removes explicitly trusted
 proxy hops, and uses the first untrusted address. Do not trust an entire client
 network just to make forwarding work. A single-hop proxy should overwrite XFF
 with its observed `$remote_addr` instead of preserving an untrusted incoming
 chain.
 
-Before every outbound Provider request, ModelPort resolves the hostname, rejects
+Before every outbound Provider request, RoutePilot resolves the hostname, rejects
 an answer set containing a private, link-local, metadata, or unspecified address
 unless that Provider is explicitly allowed to use private networking, and pins
 the original hostname to the validated addresses for the connection. Redirects
@@ -502,25 +502,25 @@ protocol header.
 Remote Provider records must use `https://` by default. Plain `http://` sends
 the Provider API key, request content, and response content without transport
 encryption; any host or network device on the path can read or alter them. Set
-`MODELPORT_ALLOW_INSECURE_PROVIDER_HTTP=1` only for an explicitly trusted
+`ROUTEPILOT_ALLOW_INSECURE_PROVIDER_HTTP=1` only for an explicitly trusted
 internal upstream whose network boundary you control, and prefer TLS even
 there. Providers classified as local/custom (`custom`, `ollama`, and
 `local_*`) may still use HTTP for loopback or local-runtime integration. The
 override does not weaken private/metadata-IP checks; those remain controlled
-separately by `MODELPORT_ALLOW_PRIVATE_PROVIDER_URLS`.
+separately by `ROUTEPILOT_ALLOW_PRIVATE_PROVIDER_URLS`.
 
 ## HTTP Transport
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `MODELPORT_HTTP_CONNECT_TIMEOUT_SECS` | `10` | Upstream connect timeout. |
-| `MODELPORT_HTTP_REQUEST_TIMEOUT_SECS` | `600` | Complete non-stream timeout and total upstream SSE lifecycle timeout, including connection, response headers, and event-body reads. |
-| `MODELPORT_HTTP_STREAM_IDLE_TIMEOUT_SECS` | `300` | Maximum silence between upstream stream chunks after the handshake. |
-| `MODELPORT_HTTP_MAX_RESPONSE_BYTES` | `33554432` | Maximum non-stream/error body accepted from upstream. |
-| `MODELPORT_HTTP_SSE_MAX_LINE_BYTES` | `1048576` | Maximum buffered SSE line. |
-| `MODELPORT_HTTP_SSE_MAX_EVENT_BYTES` | `8388608` | Maximum bytes accumulated for one SSE event. |
-| `MODELPORT_HTTP_SSE_MAX_STREAM_BYTES` | `67108864` | Maximum raw bytes accepted for one upstream stream. |
-| `MODELPORT_HTTP_USER_AGENT` | `model-port/<version>` | Upstream User-Agent override. |
+| `ROUTEPILOT_HTTP_CONNECT_TIMEOUT_SECS` | `10` | Upstream connect timeout. |
+| `ROUTEPILOT_HTTP_REQUEST_TIMEOUT_SECS` | `600` | Complete non-stream timeout and total upstream SSE lifecycle timeout, including connection, response headers, and event-body reads. |
+| `ROUTEPILOT_HTTP_STREAM_IDLE_TIMEOUT_SECS` | `300` | Maximum silence between upstream stream chunks after the handshake. |
+| `ROUTEPILOT_HTTP_MAX_RESPONSE_BYTES` | `33554432` | Maximum non-stream/error body accepted from upstream. |
+| `ROUTEPILOT_HTTP_SSE_MAX_LINE_BYTES` | `1048576` | Maximum buffered SSE line. |
+| `ROUTEPILOT_HTTP_SSE_MAX_EVENT_BYTES` | `8388608` | Maximum bytes accumulated for one SSE event. |
+| `ROUTEPILOT_HTTP_SSE_MAX_STREAM_BYTES` | `67108864` | Maximum raw bytes accepted for one upstream stream. |
+| `ROUTEPILOT_HTTP_USER_AGENT` | `routepilot/<version>` | Upstream User-Agent override. |
 
 Upstream redirects are disabled. A live SSE stream is bounded by the total
 request timeout measured from the outbound request start. Each event-body read
@@ -532,7 +532,7 @@ them deliberately.
 An SSE handshake requires a 2xx status other than 204 and the
 `text/event-stream` media type. The request timeout covers connection through
 response headers. Non-2xx and wrong-content-type error bodies are then bounded
-by `MODELPORT_HTTP_MAX_RESPONSE_BYTES` and by both a total body-read timeout
+by `ROUTEPILOT_HTTP_MAX_RESPONSE_BYTES` and by both a total body-read timeout
 using the request-timeout value and the resettable stream-idle timeout, so a
 slow-drip error cannot hold the connection indefinitely. Established event
 streams use the total request timeout, idle timeout, and SSE byte limits and
@@ -542,23 +542,23 @@ must still end with the protocol's required termination event.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `MODELPORT_RATE_LIMIT_DISABLED` | off | Disable every process-local rate dimension. |
-| `MODELPORT_RATE_LIMIT_WINDOW_SECONDS` | `60` | Sliding-window duration. |
-| `MODELPORT_RATE_LIMIT_GLOBAL_PER_MINUTE` | `6000` | Global request count per configured window. |
-| `MODELPORT_RATE_LIMIT_API_KEY_PER_MINUTE` | `600` | Identity count per window. |
-| `MODELPORT_RATE_LIMIT_IP_PER_MINUTE` | `1200` | Client-IP count per window. |
-| `MODELPORT_RATE_LIMIT_PROVIDER_PER_MINUTE` | `3000` | Resolved-provider count per window. |
-| `MODELPORT_RATE_LIMIT_MODEL_PER_MINUTE` | `1200` | Resolved-model count per window. |
-| `MODELPORT_MAX_MODEL_NAME_CHARS` | `240` | Maximum model-name characters. |
-| `MODELPORT_MAX_MESSAGES` | `200` | Maximum messages per request. |
-| `MODELPORT_MAX_MESSAGES_JSON_CHARS` | `2097152` | Maximum serialized messages characters. |
-| `MODELPORT_MAX_SYSTEM_JSON_CHARS` | `262144` | Maximum serialized system characters. |
-| `MODELPORT_MAX_TOOLS` | `256` | Maximum Tool Use definitions. |
-| `MODELPORT_MAX_TOOLS_JSON_CHARS` | `1048576` | Maximum serialized tools characters. |
-| `MODELPORT_MAX_OUTPUT_TOKENS` | `131072` | Maximum accepted Anthropic `max_tokens` or OpenAI `max_completion_tokens`/`max_tokens`. |
+| `ROUTEPILOT_RATE_LIMIT_DISABLED` | off | Disable every process-local rate dimension. |
+| `ROUTEPILOT_RATE_LIMIT_WINDOW_SECONDS` | `60` | Sliding-window duration. |
+| `ROUTEPILOT_RATE_LIMIT_GLOBAL_PER_MINUTE` | `6000` | Global request count per configured window. |
+| `ROUTEPILOT_RATE_LIMIT_API_KEY_PER_MINUTE` | `600` | Identity count per window. |
+| `ROUTEPILOT_RATE_LIMIT_IP_PER_MINUTE` | `1200` | Client-IP count per window. |
+| `ROUTEPILOT_RATE_LIMIT_PROVIDER_PER_MINUTE` | `3000` | Resolved-provider count per window. |
+| `ROUTEPILOT_RATE_LIMIT_MODEL_PER_MINUTE` | `1200` | Resolved-model count per window. |
+| `ROUTEPILOT_MAX_MODEL_NAME_CHARS` | `240` | Maximum model-name characters. |
+| `ROUTEPILOT_MAX_MESSAGES` | `200` | Maximum messages per request. |
+| `ROUTEPILOT_MAX_MESSAGES_JSON_CHARS` | `2097152` | Maximum serialized messages characters. |
+| `ROUTEPILOT_MAX_SYSTEM_JSON_CHARS` | `262144` | Maximum serialized system characters. |
+| `ROUTEPILOT_MAX_TOOLS` | `256` | Maximum Tool Use definitions. |
+| `ROUTEPILOT_MAX_TOOLS_JSON_CHARS` | `1048576` | Maximum serialized tools characters. |
+| `ROUTEPILOT_MAX_OUTPUT_TOKENS` | `131072` | Maximum accepted Anthropic `max_tokens` or OpenAI `max_completion_tokens`/`max_tokens`. |
 
 Every `POST /v1/messages` request must include integer `max_tokens > 0` and the
-value must be at most `MODELPORT_MAX_OUTPUT_TOKENS`. This is validated locally
+value must be at most `ROUTEPILOT_MAX_OUTPUT_TOKENS`. This is validated locally
 before Provider routing. The Provider's `max_tokens_field` only selects the
 outbound OpenAI-compatible field name; it does not make the client field
 optional or change the global cap.
@@ -587,7 +587,7 @@ The complete built-in catalog and current defaults are in
 <PROVIDER>_BASE_URL
 <PROVIDER>_MODEL
 <PROVIDER>_MODELS=model-a,model-b
-MODELPORT_ENABLE_<PROVIDER>=1
+ROUTEPILOT_ENABLE_<PROVIDER>=1
 ```
 
 Names that intentionally differ include:
@@ -600,7 +600,7 @@ Names that intentionally differ include:
 | `deepseek_openai` | `DEEPSEEK_OPENAI_API_KEY` (fallback `DEEPSEEK_API_KEY`) | `DEEPSEEK_OPENAI_BASE_URL` | `DEEPSEEK_OPENAI_MODEL` |
 | `mimo` | `MIMO_OPENAI_API_KEY` | `MIMO_OPENAI_BASE_URL` (fallback `BASE_URL`) | `MIMO_MODEL` |
 | `anthropic` | `ANTHROPIC_API_KEY` | `ANTHROPIC_UPSTREAM_BASE_URL` | `ANTHROPIC_UPSTREAM_MODEL` |
-| `openai` | `MODELPORT_OPENAI_API_KEY` (legacy fallback `OPENAI_API_KEY`) | `MODELPORT_OPENAI_BASE_URL` (legacy fallback `OPENAI_BASE_URL`) | `MODELPORT_OPENAI_MODEL` (legacy fallback `OPENAI_MODEL`) |
+| `openai` | `ROUTEPILOT_OPENAI_API_KEY` (legacy fallback `OPENAI_API_KEY`) | `ROUTEPILOT_OPENAI_BASE_URL` (legacy fallback `OPENAI_BASE_URL`) | `ROUTEPILOT_OPENAI_MODEL` (legacy fallback `OPENAI_MODEL`) |
 | `gemini` | `GEMINI_API_KEY` (fallback `GOOGLE_API_KEY`) | `GEMINI_OPENAI_BASE_URL` | `GEMINI_MODEL` |
 | `dashscope` | `DASHSCOPE_API_KEY` (fallback `QWEN_API_KEY`) | `DASHSCOPE_BASE_URL` | `DASHSCOPE_MODEL` |
 | `kimi` | `MOONSHOT_API_KEY` (fallback `KIMI_API_KEY`) | `KIMI_BASE_URL` | `KIMI_MODEL` |
@@ -615,7 +615,7 @@ DEEPSEEK_MODELS
 DEEPSEEK_OPENAI_MODELS
 MIMO_MODELS
 ANTHROPIC_UPSTREAM_MODELS
-MODELPORT_OPENAI_MODELS
+ROUTEPILOT_OPENAI_MODELS
 OPENROUTER_MODELS
 GEMINI_MODELS
 XAI_MODELS
@@ -632,17 +632,17 @@ VLLM_MODELS
 LLAMACPP_MODELS
 ```
 
-The `MODELPORT_OPENAI_*` namespace is deliberately server-specific. Standard
+The `ROUTEPILOT_OPENAI_*` namespace is deliberately server-specific. Standard
 `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`, and `OPENAI_MODELS` remain
-fallbacks for compatibility, but using one without its `MODELPORT_OPENAI_*`
+fallbacks for compatibility, but using one without its `ROUTEPILOT_OPENAI_*`
 counterpart produces a configuration warning. New deployments should reserve
 standard `OPENAI_*` variables for SDK/client processes. A configured `openai`
 Provider whose `/v1` base URL points to the same local listener as
-`MODELPORT_BIND` is rejected as a self-referential routing loop.
+`ROUTEPILOT_BIND` is rejected as a self-referential routing loop.
 
 Local runtimes use `SGLANG_*`, `VLLM_*`, `LLAMACPP_*`, or `OLLAMA_*` and are
-enabled with the corresponding `MODELPORT_ENABLE_*` flag. `custom` is enabled
-by a custom URL, model, key, or `MODELPORT_ENABLE_CUSTOM=1`.
+enabled with the corresponding `ROUTEPILOT_ENABLE_*` flag. `custom` is enabled
+by a custom URL, model, key, or `ROUTEPILOT_ENABLE_CUSTOM=1`.
 Optional runtime credentials are `SGLANG_API_KEY`, `VLLM_API_KEY`,
 `LLAMACPP_API_KEY`, and `OLLAMA_API_KEY`; set `api_key_required=true` in TOML
 when the runtime must reject unauthenticated calls.
@@ -656,10 +656,10 @@ when the runtime must reject unauthenticated calls.
   (including a fallback name) is present.
 - `BASE_URL` can activate `mimo`; avoid exporting a generic value unintentionally.
 - In TOML mode, providers that require a missing key are filtered unless they
-  are the configured default or `MODELPORT_INCLUDE_UNAVAILABLE_PROVIDERS=1`.
+  are the configured default or `ROUTEPILOT_INCLUDE_UNAVAILABLE_PROVIDERS=1`.
 - TOML providers with `api_key_required=false` remain visible even if their
   local runtime is offline. Catalog visibility is not a health check.
-- `MODELPORT_<PROVIDER_ID>_BUFFER_STREAM_TEXT=1` enables the built-in buffered
+- `ROUTEPILOT_<PROVIDER_ID>_BUFFER_STREAM_TEXT=1` enables the built-in buffered
   generation path for that provider ID. It awaits and converts a complete
   non-stream upstream response before creating local SSE, so pre-header errors
   can fallback and reported usage can be accounted. This is a compatibility
@@ -708,8 +708,8 @@ stream_idle_timeout_ms = 300000   # optional; resets after each SSE data chunk
 # cookies, Host/framing, forwarding, request-ID, trace, and User-Agent headers
 # are reserved and rejected during validation.
 [providers.example.static_headers]
-HTTP-Referer = "https://modelport.example"
-X-Title = "ModelPort"
+HTTP-Referer = "https://routepilot.example"
+X-Title = "RoutePilot"
 
 [providers.example.retry]
 max_attempts = 2       # includes the first request; 1 disables same-Provider retry
@@ -840,7 +840,7 @@ and `max`. An explicit client control wins over logical-model defaults, exact
 model defaults, and Provider defaults. OpenAI clients send `reasoning_effort`;
 Anthropic clients keep native `thinking`. Known OpenAI-compatible dialects are
 `openai`, `deepseek`, `openrouter`, `qwen`, `zai`, `string_thinking`, and
-`llama_cpp`; native Anthropic providers use `native_anthropic`. ModelPort does
+`llama_cpp`; native Anthropic providers use `native_anthropic`. RoutePilot does
 not silently choose a nearby effort when the requested level is absent.
 `reasoning_effort_map` can map a portable effort to an exact upstream string.
 Budget and effort remain separate: a `thinking.budget_tokens` value is rejected
@@ -858,7 +858,7 @@ transport failures, HTTP 429, and HTTP 5xx are retried. Authentication, quota,
 ordinary invalid requests, and protocol/schema failures are not automatically
 retried. A numeric or HTTP-date `Retry-After` is honored within
 `retry.max_delay_ms` and the global 60-second bound. Once a streaming response
-has crossed the downstream header boundary, ModelPort never starts a fallback.
+has crossed the downstream header boundary, RoutePilot never starts a fallback.
 
 `tool_use.streaming_arguments` is a runtime Tool Use argument strategy. For an
 OpenAI-compatible provider, `delta` preserves incremental argument fragments,
@@ -869,7 +869,7 @@ upstream implements the advertised behavior; certify each provider/model with
 real acceptance calls.
 
 `tool_use.response_validation` defaults to `best_effort`. Set it to `strict`
-for a trusted local or certified OpenAI-compatible runtime: ModelPort then
+for a trusted local or certified OpenAI-compatible runtime: RoutePilot then
 rejects missing or undeclared function names, non-object or invalid JSON
 arguments, duplicate call IDs, `tool_choice`/parallel-count violations, and
 inconsistent tool-call finish reasons. In a live stream, a violation is
@@ -877,7 +877,7 @@ reported as an Anthropic `error` event after the SSE handshake.
 
 `tool_use.repair_invalid_arguments` defaults to `false` and is valid only for
 an OpenAI-compatible provider with `response_validation="strict"`. For a
-non-stream Anthropic Messages request, ModelPort may make exactly one additional
+non-stream Anthropic Messages request, RoutePilot may make exactly one additional
 attempt against the same provider when the first tool call fails its declared
 JSON Schema. The retry prompt contains neither arguments nor validation paths,
 the failed candidate is never delivered, both attempts enter the ledger and
@@ -894,7 +894,7 @@ is a validation error.
 llama.cpp OpenAI-compatible extensions. `thinking.type="disabled"` sends
 `chat_template_kwargs.enable_thinking=false`; `enabled` or `adaptive` enables
 thinking and sends `thinking_budget_tokens`. Budget precedence is the explicit
-request value, then the requested ModelPort alias in `model_budget_tokens`, then
+request value, then the requested RoutePilot alias in `model_budget_tokens`, then
 `default_budget_tokens`. Optional `default_enabled` is the Provider fallback
 when the client protocol has no portable thinking control, especially OpenAI
 Chat Completions. `model_enabled` overrides that fallback by requested logical
@@ -905,7 +905,7 @@ model ID is unchanged, so these aliases do not add model memory. Providers
 without this explicitly configured mode retain their existing native behavior.
 
 `sampling.mode="llama_cpp"` applies a profile selected by the originally
-requested ModelPort model or alias. Supported profile defaults are
+requested RoutePilot model or alias. Supported profile defaults are
 `temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty`, and
 `repeat_penalty`. Explicit client values already present in the converted
 request take precedence; unlisted models are unchanged. Profiles are valid only
@@ -914,7 +914,7 @@ llama.cpp extensions. Validation rejects empty profile names, non-finite values,
 and unsafe ranges before reload.
 
 `token_counting.mode="anthropic"` enables authenticated
-`POST /v1/messages/count_tokens` for that Provider. ModelPort rewrites aliases
+`POST /v1/messages/count_tokens` for that Provider. RoutePilot rewrites aliases
 to the resolved upstream model and forwards the Anthropic Count Tokens body to
 the Provider's native endpoint. It returns only the Provider-reported integer
 `input_tokens`; it never substitutes the local characters/4 usage heuristic.
@@ -982,14 +982,14 @@ auto-provisions the normalized catalog rows for that trusted binding.
 Clients may send all three assertion headers:
 
 ```text
-X-ModelPort-Organization-Id: org_local
-X-ModelPort-Project-Id: prj_quantpilot
-X-ModelPort-Environment-Id: env_development
+X-RoutePilot-Organization-Id: org_local
+X-RoutePilot-Project-Id: prj_quantpilot
+X-RoutePilot-Environment-Id: env_development
 ```
 
 Omitting them uses the key binding. A partial tuple is 400; a different tuple is
 403. Headers never create authority. Give every consuming application its own
-key and ModelPort project; do not share QuantPilot's key with future products.
+key and RoutePilot project; do not share QuantPilot's key with future products.
 
 ## Client, Compose, Script, And Dashboard Variables
 
@@ -997,26 +997,26 @@ These names are consumed outside the backend configuration loader:
 
 | Variable | Consumer | Meaning |
 | --- | --- | --- |
-| `ANTHROPIC_BASE_URL` | Claude client | ModelPort API origin. |
-| `ANTHROPIC_AUTH_TOKEN` | Claude client; server fallback | Client token; also the server token fallback when `MODELPORT_AUTH_TOKEN` is absent. |
+| `ANTHROPIC_BASE_URL` | Claude client | RoutePilot API origin. |
+| `ANTHROPIC_AUTH_TOKEN` | Claude client; server fallback | Client token; also the server token fallback when `ROUTEPILOT_AUTH_TOKEN` is absent. |
 | `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_*_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL` | Claude client | Client-side selected model names. |
-| `MODELPORT_API_PUBLISH`, `MODELPORT_DASHBOARD_PUBLISH` | Compose | Host publish address/port. |
-| `MODELPORT_POSTGRES_DB`, `MODELPORT_POSTGRES_USER`, `MODELPORT_POSTGRES_PASSWORD` | Compose/PostgreSQL | Internal database bootstrap. |
-| `MODELPORT_IMAGE`, `MODELPORT_DASHBOARD_IMAGE` | Compose | Release images; use version tags for evaluation and immutable digests for shared/production use. |
-| `MODELPORT_PULL_POLICY` | Compose | Image pull policy; root source-build Compose defaults to `never`, release Compose to `missing`. Production upgrades set `always`. |
-| `MODELPORT_COMPOSE_FILE` | `scripts/compose-up.sh`, `scripts/doctor.sh` | Selected Compose manifest; defaults to the root source-build profile. |
-| `MODELPORT_LOCAL_BUILD` | `scripts/compose-up.sh` | Set to `1` after `scripts/build-container.sh` to select the two `:local` images and disable pulls. |
-| `MODELPORT_HEALTHCHECK_API_KEY` | Compose healthcheck | Dedicated scoped key for authenticated `/readyz`; local Compose falls back to the legacy router token when omitted. |
-| `MODELPORT_STOP_GRACE_PERIOD` | Compose | Backend SIGTERM-to-SIGKILL window; defaults to 11 minutes. |
-| `MODELPORT_RUNTIME_ENV_FILE`, `MODELPORT_CONFIG_FILE`, `MODELPORT_DATABASE_CA_FILE`, `MODELPORT_OWNERSHIP_FILE` | Production Compose/preflight | Operator-owned runtime secret, reviewed config, PostgreSQL CA, and named operations-ownership paths required by the single-instance production profile. |
+| `ROUTEPILOT_API_PUBLISH`, `ROUTEPILOT_DASHBOARD_PUBLISH` | Compose | Host publish address/port. |
+| `ROUTEPILOT_POSTGRES_DB`, `ROUTEPILOT_POSTGRES_USER`, `ROUTEPILOT_POSTGRES_PASSWORD` | Compose/PostgreSQL | Internal database bootstrap. |
+| `ROUTEPILOT_IMAGE`, `ROUTEPILOT_DASHBOARD_IMAGE` | Compose | Release images; use version tags for evaluation and immutable digests for shared/production use. |
+| `ROUTEPILOT_PULL_POLICY` | Compose | Image pull policy; root source-build Compose defaults to `never`, release Compose to `missing`. Production upgrades set `always`. |
+| `ROUTEPILOT_COMPOSE_FILE` | `scripts/compose-up.sh`, `scripts/doctor.sh` | Selected Compose manifest; defaults to the root source-build profile. |
+| `ROUTEPILOT_LOCAL_BUILD` | `scripts/compose-up.sh` | Set to `1` after `scripts/build-container.sh` to select the two `:local` images and disable pulls. |
+| `ROUTEPILOT_HEALTHCHECK_API_KEY` | Compose healthcheck | Dedicated scoped key for authenticated `/readyz`; local Compose falls back to the legacy router token when omitted. |
+| `ROUTEPILOT_STOP_GRACE_PERIOD` | Compose | Backend SIGTERM-to-SIGKILL window; defaults to 11 minutes. |
+| `ROUTEPILOT_RUNTIME_ENV_FILE`, `ROUTEPILOT_CONFIG_FILE`, `ROUTEPILOT_DATABASE_CA_FILE`, `ROUTEPILOT_OWNERSHIP_FILE` | Production Compose/preflight | Operator-owned runtime secret, reviewed config, PostgreSQL CA, and named operations-ownership paths required by the single-instance production profile. |
 | `RUST_LOG` | tracing | Backend log filter. |
-| `MODELPORT_RUNTIME_DIR`, `MODELPORT_PID_FILE`, `MODELPORT_LOG_FILE` | local scripts | Background process files. |
-| `MODELPORT_FORCE_BUILD` | local scripts | Force rebuilding a local binary. |
-| `MODELPORT_DASHBOARD_URL` | acceptance | Dashboard origin to check. |
-| `MODELPORT_TOOL_USE_MOCK_HOST` | Tool Use acceptance | Hostname reachable by the backend for the temporary mock. |
-| `MODELPORT_CHECK_NPM_CI` | aggregate checks | Force a clean locked dashboard install. |
-| `MODELPORT_VITE_PROXY_TARGET` | Vite dev/E2E | Backend origin for Vite's same-origin proxy; defaults to `http://127.0.0.1:38082`. |
-| `VITE_MODELPORT_MOCK` | dashboard build/dev | UI mock mode; never enable for production. |
+| `ROUTEPILOT_RUNTIME_DIR`, `ROUTEPILOT_PID_FILE`, `ROUTEPILOT_LOG_FILE` | local scripts | Background process files. |
+| `ROUTEPILOT_FORCE_BUILD` | local scripts | Force rebuilding a local binary. |
+| `ROUTEPILOT_DASHBOARD_URL` | acceptance | Dashboard origin to check. |
+| `ROUTEPILOT_TOOL_USE_MOCK_HOST` | Tool Use acceptance | Hostname reachable by the backend for the temporary mock. |
+| `ROUTEPILOT_CHECK_NPM_CI` | aggregate checks | Force a clean locked dashboard install. |
+| `ROUTEPILOT_VITE_PROXY_TARGET` | Vite dev/E2E | Backend origin for Vite's same-origin proxy; defaults to `http://127.0.0.1:38082`. |
+| `VITE_ROUTEPILOT_MOCK` | dashboard build/dev | UI mock mode; never enable for production. |
 | `VITE_API_BASE_URL` | dashboard build | Browser API prefix/origin. Cross-origin use requires a separately designed CORS proxy. |
 | `PLAYWRIGHT_BASE_URL`, `PLAYWRIGHT_SKIP_WEBSERVER` | Playwright | E2E target and dev-server control. |
 
@@ -1024,5 +1024,5 @@ Client model variables do not reconfigure the server catalog. A client name must
 resolve through an enabled provider, alias, exact model, prefix, or intentional
 unknown-model passthrough.
 
-Variables beginning `MODELPORT_TEST_` are test-only implementation details and
+Variables beginning `ROUTEPILOT_TEST_` are test-only implementation details and
 are not supported deployment configuration.

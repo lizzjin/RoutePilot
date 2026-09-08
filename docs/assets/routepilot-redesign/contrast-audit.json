@@ -1,0 +1,462 @@
+[
+  {
+    "theme": "light",
+    "foreground": "foreground",
+    "background": "background",
+    "foregroundColor": "#23251d",
+    "backgroundColor": "#eeefe9",
+    "ratio": 13.412774748694945,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "foreground",
+    "background": "card",
+    "foregroundColor": "#23251d",
+    "backgroundColor": "#ffffff",
+    "ratio": 15.511505183374013,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "body",
+    "background": "surface-doc",
+    "foregroundColor": "#4d4f46",
+    "backgroundColor": "#fcfcfa",
+    "ratio": 8.104888736071747,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "muted-foreground",
+    "background": "background",
+    "foregroundColor": "#626459",
+    "backgroundColor": "#eeefe9",
+    "ratio": 5.2083450061566126,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "muted-foreground",
+    "background": "muted",
+    "foregroundColor": "#626459",
+    "backgroundColor": "#e5e7e0",
+    "ratio": 4.829640753027217,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "primary-foreground",
+    "background": "primary",
+    "foregroundColor": "#23251d",
+    "backgroundColor": "#f7a501",
+    "ratio": 7.6355923991958825,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "primary-foreground",
+    "background": "primary-hover",
+    "foregroundColor": "#23251d",
+    "backgroundColor": "#dd9001",
+    "ratio": 5.9565452186712635,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "primary-foreground",
+    "background": "primary-pressed",
+    "foregroundColor": "#23251d",
+    "backgroundColor": "#dd9001",
+    "ratio": 5.9565452186712635,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "success-foreground",
+    "background": "success",
+    "foregroundColor": "#ffffff",
+    "backgroundColor": "#21684c",
+    "ratio": 6.668459789813257,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "warning-foreground",
+    "background": "warning",
+    "foregroundColor": "#191a17",
+    "backgroundColor": "#b17816",
+    "ratio": 4.634006940968752,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "info-foreground",
+    "background": "info",
+    "foregroundColor": "#191a17",
+    "backgroundColor": "#2c84e0",
+    "ratio": 4.564398357716988,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "destructive-foreground",
+    "background": "destructive",
+    "foregroundColor": "#ffffff",
+    "backgroundColor": "#a3302a",
+    "ratio": 6.9685938089121535,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "success-text",
+    "background": "success-soft",
+    "foregroundColor": "#21684c",
+    "backgroundColor": "#d9eddf",
+    "ratio": 5.439418214093429,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "warning-text",
+    "background": "warning-soft",
+    "foregroundColor": "#805400",
+    "backgroundColor": "#fff1cf",
+    "ratio": 5.880509627376216,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "info-text",
+    "background": "info-soft",
+    "foregroundColor": "#1d4ed8",
+    "backgroundColor": "#dceaf6",
+    "ratio": 5.470760997050191,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "destructive-text",
+    "background": "destructive-soft",
+    "foregroundColor": "#a3302a",
+    "backgroundColor": "#f7d6d3",
+    "ratio": 5.148160846592562,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "category-text",
+    "background": "category-soft",
+    "foregroundColor": "#633486",
+    "backgroundColor": "#e7d8ee",
+    "ratio": 6.532088233943959,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "link",
+    "background": "background",
+    "foregroundColor": "#1d4ed8",
+    "backgroundColor": "#eeefe9",
+    "ratio": 5.794879156280519,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "code-foreground",
+    "background": "code-background",
+    "foregroundColor": "#f2f3ed",
+    "backgroundColor": "#191a17",
+    "ratio": 15.663023351114168,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "input",
+    "background": "card",
+    "foregroundColor": "#6c6e63",
+    "backgroundColor": "#ffffff",
+    "ratio": 5.187527042765486,
+    "minimum": 3,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "input",
+    "background": "background",
+    "foregroundColor": "#6c6e63",
+    "backgroundColor": "#eeefe9",
+    "ratio": 4.485646679985342,
+    "minimum": 3,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "ring",
+    "background": "background",
+    "foregroundColor": "#1d4ed8",
+    "backgroundColor": "#eeefe9",
+    "ratio": 5.794879156280519,
+    "minimum": 3,
+    "passed": true
+  },
+  {
+    "theme": "light",
+    "foreground": "ring",
+    "background": "card",
+    "foregroundColor": "#1d4ed8",
+    "backgroundColor": "#ffffff",
+    "ratio": 6.701618401398807,
+    "minimum": 3,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "foreground",
+    "background": "background",
+    "foregroundColor": "#f2f3ed",
+    "backgroundColor": "#191a17",
+    "ratio": 15.663023351114168,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "foreground",
+    "background": "card",
+    "foregroundColor": "#f2f3ed",
+    "backgroundColor": "#23251d",
+    "ratio": 13.900207602802018,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "body",
+    "background": "surface-doc",
+    "foregroundColor": "#d5d7cc",
+    "backgroundColor": "#23251d",
+    "ratio": 10.65221518287005,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "muted-foreground",
+    "background": "background",
+    "foregroundColor": "#b6b7af",
+    "backgroundColor": "#191a17",
+    "ratio": 8.640653050100935,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "muted-foreground",
+    "background": "muted",
+    "foregroundColor": "#b6b7af",
+    "backgroundColor": "#303229",
+    "ratio": 6.432375774893122,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "primary-foreground",
+    "background": "primary",
+    "foregroundColor": "#23251d",
+    "backgroundColor": "#f7a501",
+    "ratio": 7.6355923991958825,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "primary-foreground",
+    "background": "primary-hover",
+    "foregroundColor": "#23251d",
+    "backgroundColor": "#dd9001",
+    "ratio": 5.9565452186712635,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "primary-foreground",
+    "background": "primary-pressed",
+    "foregroundColor": "#23251d",
+    "backgroundColor": "#dd9001",
+    "ratio": 5.9565452186712635,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "success-foreground",
+    "background": "success",
+    "foregroundColor": "#191a17",
+    "backgroundColor": "#8bd3ac",
+    "ratio": 9.997139726061475,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "warning-foreground",
+    "background": "warning",
+    "foregroundColor": "#191a17",
+    "backgroundColor": "#f2c66d",
+    "ratio": 10.881640541719698,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "info-foreground",
+    "background": "info",
+    "foregroundColor": "#191a17",
+    "backgroundColor": "#9fc9f2",
+    "ratio": 10.080199220633965,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "destructive-foreground",
+    "background": "destructive",
+    "foregroundColor": "#191a17",
+    "backgroundColor": "#f2a39c",
+    "ratio": 8.73465992083604,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "success-text",
+    "background": "success-soft",
+    "foregroundColor": "#8bd3ac",
+    "backgroundColor": "#203a2b",
+    "ratio": 7.05910148299841,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "warning-text",
+    "background": "warning-soft",
+    "foregroundColor": "#f2c66d",
+    "backgroundColor": "#3b301a",
+    "ratio": 8.05212874844694,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "info-text",
+    "background": "info-soft",
+    "foregroundColor": "#9fc9f2",
+    "backgroundColor": "#223448",
+    "ratio": 7.327617819727203,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "destructive-text",
+    "background": "destructive-soft",
+    "foregroundColor": "#f2a39c",
+    "backgroundColor": "#422825",
+    "ratio": 6.7190682574864224,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "category-text",
+    "background": "category-soft",
+    "foregroundColor": "#cba9e9",
+    "backgroundColor": "#342840",
+    "ratio": 6.820282096191766,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "link",
+    "background": "background",
+    "foregroundColor": "#8bbcff",
+    "backgroundColor": "#191a17",
+    "ratio": 8.934994668515074,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "code-foreground",
+    "background": "code-background",
+    "foregroundColor": "#f2f3ed",
+    "backgroundColor": "#191a17",
+    "ratio": 15.663023351114168,
+    "minimum": 4.5,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "input",
+    "background": "card",
+    "foregroundColor": "#838777",
+    "backgroundColor": "#23251d",
+    "ratio": 4.208071894521344,
+    "minimum": 3,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "input",
+    "background": "background",
+    "foregroundColor": "#838777",
+    "backgroundColor": "#191a17",
+    "ratio": 4.741736974760622,
+    "minimum": 3,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "ring",
+    "background": "background",
+    "foregroundColor": "#8bbcff",
+    "backgroundColor": "#191a17",
+    "ratio": 8.934994668515074,
+    "minimum": 3,
+    "passed": true
+  },
+  {
+    "theme": "dark",
+    "foreground": "ring",
+    "background": "card",
+    "foregroundColor": "#8bbcff",
+    "backgroundColor": "#23251d",
+    "ratio": 7.929393836564386,
+    "minimum": 3,
+    "passed": true
+  }
+]

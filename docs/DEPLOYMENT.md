@@ -1,6 +1,6 @@
 # Deployment
 
-ModelPort supports two maintained single-host deployment paths. Start with
+RoutePilot supports two maintained single-host deployment paths. Start with
 Docker Compose unless host integration requires systemd.
 
 ## Choose A Path
@@ -23,7 +23,7 @@ clients
    |
 same-origin HTTPS reverse proxy
    |--------------------|
-dashboard            ModelPort
+dashboard            RoutePilot
                          |
                      PostgreSQL
                          |
@@ -31,15 +31,15 @@ dashboard            ModelPort
 ```
 
 An optional CPA instance belongs beside other internal Providers, never in
-front of ModelPort:
+front of RoutePilot:
 
 ```text
-clients -> HTTPS -> ModelPort -> private CPA -> Codex/Claude accounts
+clients -> HTTPS -> RoutePilot -> private CPA -> Codex/Claude accounts
                             \-> other Providers
 ```
 
 - For systemd, bind CPA to `127.0.0.1:8317`.
-- For containers, attach CPA to ModelPort's private network under a
+- For containers, attach CPA to RoutePilot's private network under a
   single-label service name such as `cpa`; do not publish `8317`.
 - Keep CPA OAuth/auth files in a separate access-controlled persistent path.
 - Disable CPA remote management unless a separately authenticated
@@ -48,7 +48,7 @@ clients -> HTTPS -> ModelPort -> private CPA -> Codex/Claude accounts
 - Keep the backend and PostgreSQL ports private.
 - Terminate HTTPS at a trusted same-origin proxy.
 - Store Provider credentials only in the server environment or secret input.
-- Give applications dashboard-issued, scoped ModelPort client API keys.
+- Give applications dashboard-issued, scoped RoutePilot client API keys.
 - Operate one backend instance on one trusted host or small trusted network.
 
 Multi-instance rate limits, sessions, stream permits, and complete Provider
@@ -58,7 +58,7 @@ as active-active or public multi-tenant.
 ## Before Shared Use
 
 1. Complete the [Production checklist](PRODUCTION.md).
-2. Set `MODELPORT_ENTERPRISE_MODE=1` and resolve every startup failure rather
+2. Set `ROUTEPILOT_ENTERPRISE_MODE=1` and resolve every startup failure rather
    than disabling its guardrails.
 3. Use PostgreSQL TLS `verify-full` for a remote production database.
 4. Configure exact HTTPS origins and trusted proxy CIDRs.
